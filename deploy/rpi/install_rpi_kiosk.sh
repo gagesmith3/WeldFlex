@@ -30,10 +30,14 @@ echo "[1/8] Installing system packages..."
 sudo apt update
 
 CHROMIUM_PACKAGE=""
-if apt-cache show chromium-browser >/dev/null 2>&1; then
-  CHROMIUM_PACKAGE="chromium-browser"
-elif apt-cache show chromium >/dev/null 2>&1; then
+chromium_candidate="$(apt-cache policy chromium | awk '/Candidate:/ {print $2}')"
+chromium_browser_candidate="$(apt-cache policy chromium-browser | awk '/Candidate:/ {print $2}')"
+
+# Prefer modern package naming first (Debian/Raspberry Pi OS Bookworm/Trixie).
+if [[ -n "$chromium_candidate" && "$chromium_candidate" != "(none)" ]]; then
   CHROMIUM_PACKAGE="chromium"
+elif [[ -n "$chromium_browser_candidate" && "$chromium_browser_candidate" != "(none)" ]]; then
+  CHROMIUM_PACKAGE="chromium-browser"
 else
   echo "Unable to find a Chromium package ('chromium-browser' or 'chromium')."
   echo "Install Chromium manually, then re-run this installer."
@@ -103,10 +107,10 @@ echo "[8/8] Installing and enabling kiosk service..."
 chmod +x "$REPO_ROOT/deploy/rpi/kiosk-launch.sh"
 
 KIOSK_BROWSER_CMD=""
-if command -v chromium-browser >/dev/null 2>&1; then
-  KIOSK_BROWSER_CMD="chromium-browser"
-elif command -v chromium >/dev/null 2>&1; then
+if command -v chromium >/dev/null 2>&1; then
   KIOSK_BROWSER_CMD="chromium"
+elif command -v chromium-browser >/dev/null 2>&1; then
+  KIOSK_BROWSER_CMD="chromium-browser"
 else
   echo "Chromium command not found after install."
   echo "Install Chromium manually and set WELDFLEX_BROWSER_CMD in the kiosk service."

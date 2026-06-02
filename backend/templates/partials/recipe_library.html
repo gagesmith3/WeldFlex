@@ -1,0 +1,22 @@
+{% from "components/ui.html" import action_button, labeled_block with context %}
+{% call labeled_block('Save Current As Recipe', 'recipe_name') %}
+  <input id="recipe_name" name="recipe_name" type="text" placeholder="e.g. plate_a_rev1">
+  {{ action_button('Save Recipe', variant='recipe-save', icon='save', hx_post='/ui/recipes/save', hx_include='#recipe_name,#studs_text', hx_target='#command-result', hx_on_after_request="htmx.ajax('GET','/ui/recipes','#recipe-library')") }}
+{% endcall %}
+
+{% call labeled_block('Recipe Library', 'selected_recipe') %}
+  <select id="selected_recipe" name="selected_recipe" aria-label="Recipe Library" title="Recipe Library">
+    {% if recipes %}
+      {% for recipe in recipes %}
+      <option value="{{ recipe.name }}">{{ recipe.name }}</option>
+      {% endfor %}
+    {% else %}
+      <option value="">No recipes saved</option>
+    {% endif %}
+  </select>
+
+  <div class="recipe-actions">
+    {{ action_button('Load Recipe', variant='recipe-load', icon='folder_open', hx_post='/ui/recipes/load', hx_include='#selected_recipe', hx_target='#studs-input-block') }}
+    {{ action_button('Delete Recipe', variant='recipe-delete', icon='trash_2', hx_post='/ui/recipes/delete', hx_include='#selected_recipe', hx_target='#command-result', confirm='Delete selected recipe?', hx_on_after_request="htmx.ajax('GET','/ui/recipes','#recipe-library')") }}
+  </div>
+{% endcall %}

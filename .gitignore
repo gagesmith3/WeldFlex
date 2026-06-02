@@ -1,0 +1,12 @@
+venv/
+__pycache__/
+*.pyc
+.env
+
+# FAIRINO SDK build artifacts
+fairino-python-sdk-main/**/build/**
+fairino-python-sdk-main/linux/fairino/build/
+fairino-python-sdk-main/windows/fairino/build/
+fairino-python-sdk-main/**/__pycache__/
+*.obj
+*.o

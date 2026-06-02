@@ -1,0 +1,16 @@
+[Unit]
+Description=WeldFlex Backend Service
+After=network-online.target weldflex-update.service
+Wants=network-online.target weldflex-update.service
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/WeldFlex
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/pi/WeldFlex/venv/bin/python -m backend.app
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

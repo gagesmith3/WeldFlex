@@ -1,0 +1,23 @@
+<div class="table-head">
+	<label>Stud Coordinates Table (0 to 508 mm)</label>
+	<button class="btn table-add" type="button" id="add-row-btn">Add Row</button>
+</div>
+
+<div class="coord-table-wrap">
+	<table class="coord-table" id="coord-table">
+		<thead>
+			<tr>
+				<th>#</th>
+				<th>X (mm)</th>
+				<th>Y (mm)</th>
+				<th>Action</th>
+			</tr>
+		</thead>
+		<tbody id="coord-table-body"></tbody>
+	</table>
+</div>
+
+<input type="hidden" id="studs_text" name="studs_text" value="{{ studs_text or '' }}">
+{% if error %}
+<p class="input-error">{{ error }}</p>
+{% endif %}

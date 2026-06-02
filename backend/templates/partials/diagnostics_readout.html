@@ -1,0 +1,16 @@
+<div class="diagnostics-grid">
+  <div class="status {% if ok %}ok{% else %}error{% endif %}">
+    <div class="row"><span>Connection</span><strong>{{ 'Online' if snapshot.online else 'Offline' }}</strong></div>
+    <div class="row"><span>Program State</span><strong>{{ snapshot.program_state }}</strong></div>
+    <div class="row"><span>Current Line</span><strong>{{ snapshot.current_line }}</strong></div>
+    <div class="row"><span>Robot IP</span><strong>{{ snapshot.robot_ip }}</strong></div>
+    {% if snapshot.error %}
+    <p>{{ snapshot.error }}</p>
+    {% endif %}
+  </div>
+
+  <div class="result {% if ok %}ok{% else %}error{% endif %}">
+    <div class="result-header">Raw Diagnostics</div>
+    <pre>{{ status | tojson(indent=2) }}</pre>
+  </div>
+</div>

@@ -1,0 +1,26 @@
+{% from "components/ui.html" import action_button, metric_card with context %}
+<div class="hero-controls hero-controls-top">
+  {% if summary.start_button_label == 'Run' %}
+    {{ action_button('Run', variant='run', icon='play', loading_icon='loader_2', hx_post='/ui/home/run-next', hx_target='#global-command-result', hx_sync='#home-current-run:replace', hx_on_click='this.disabled=true;this.classList.add("is-running")', hx_on_after_request='if(event.detail.failed){this.disabled=false;this.classList.remove("is-running")}', class_name='is-running' if summary.cycle_running else '', disabled=not summary.can_run_next) }}
+  {% else %}
+    {{ action_button('Start From Library', variant='run', icon='play', href='/part-library') }}
+  {% endif %}
+  {{ action_button('Pause', variant='pause', icon='pause', hx_post='/ui/pause', hx_target='#global-command-result', disabled=not summary.can_pause) }}
+  {{ action_button('Stop', variant='stop', icon='square', hx_post='/ui/stop', hx_target='#global-command-result', disabled=not summary.can_stop) }}
+</div>
+
+<div class="hero-metrics hero-metrics-stacked">
+  {{ metric_card('Current Part', summary.current_part, 'clipboard') }}
+  <div class="metric-card">
+    <div class="metric-icon">{{ icon_safe('activity', fallback='circle', width=14, height=14) }}</div>
+    <span class="metric-label">Progress</span>
+    <strong class="metric-value">{{ summary.progress_label }}</strong>
+    <progress class="progress-track" max="100" value="{{ summary.progress_percent }}" aria-label="Current production progress"></progress>
+  </div>
+</div>
+
+<div class="run-summary-card run-summary-{{ summary.last_command_status }}">
+  <div class="run-summary-row"><span>Started</span><strong>{{ summary.started_at }}</strong></div>
+  <div class="run-summary-row"><span>Last Command</span><strong>{{ summary.last_command }}</strong></div>
+  <div class="run-summary-row"><span>Last Update</span><strong>{{ summary.last_command_at }}</strong></div>
+</div>

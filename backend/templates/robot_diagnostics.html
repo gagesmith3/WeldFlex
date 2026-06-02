@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% from "components/ui.html" import htmx_mount, panel_shell with context %}
+
+{% block body %}
+<div class="page-body">
+  {% call panel_shell('Robot Diagnostics', 'Live robot state, communication health, and error context.', class_name='diagnostics-shell') %}
+    {{ htmx_mount('diagnostics-readout', '/ui/diagnostics', 'load, every ' ~ (status_interval_ms or 1000) ~ 'ms', 'innerHTML') }}
+  {% endcall %}
+</div>
+{% endblock %}

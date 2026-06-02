@@ -1,0 +1,13 @@
+[Unit]
+Description=WeldFlex Boot Update Check
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=pi
+WorkingDirectory=/home/pi/WeldFlex
+ExecStart=/home/pi/WeldFlex/deploy/rpi/update_on_boot.sh
+
+[Install]
+WantedBy=multi-user.target

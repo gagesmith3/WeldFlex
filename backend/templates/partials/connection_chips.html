@@ -1,0 +1,29 @@
+{% from "components/ui.html" import status_chip with context %}
+{% set state_icon = 'square' %}
+{% if snapshot.program_state == 'running' %}
+  {% set state_icon = 'play' %}
+{% elif snapshot.program_state == 'paused' %}
+  {% set state_icon = 'pause' %}
+{% elif snapshot.program_state == 'stopped' %}
+  {% set state_icon = 'square' %}
+{% endif %}
+
+<div class="chip-grid chip-grid-compact">
+  {{ status_chip(
+      'Connection',
+      'ONLINE' if snapshot.online else 'OFFLINE',
+      icon='link_2' if snapshot.online else 'link_2_off',
+      state='ok' if snapshot.online else 'error',
+      compact=true,
+      tooltip=snapshot.error or ''
+    )
+  }}
+  {{ status_chip(
+      'State',
+      snapshot.program_state,
+      icon=state_icon,
+      compact=true,
+      tooltip=snapshot.error or ''
+    )
+  }}
+</div>

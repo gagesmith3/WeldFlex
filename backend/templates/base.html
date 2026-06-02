@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>WeldFlex - {{ page_title or "Operator" }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/operator.css') }}">
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <script defer src="{{ url_for('static', filename='js/operator_fallback.js') }}"></script>
+  {% block head_extra %}{% endblock %}
+</head>
+<body>
+  {% from "components/ui.html" import action_button, htmx_mount, icon_link, result_mount with context %}
+  <main class="app-shell">
+    <header class="app-header universal-navbar">
+      <div class="app-header-left">
+        {{ icon_link('/', 'home', '', 'home-btn', 'Back to Home') }}
+        <div class="title-block">
+          <h1>WeldFlex Operator<span class="beta-badge">BETA</span></h1>
+          <p>LYNX4 Powered Automated Stud Welding</p>
+        </div>
+      </div>
+      <div class="app-header-right nav-status-wrap">
+        {{ htmx_mount('connection-chips', '/ui/connection', 'load, every 1000ms', 'innerHTML', 'nav-chips') }}
+        {{ action_button('STOP', variant='estop-btn', icon='alert_octagon', hx_post='/ui/stop', hx_target='#global-command-result') }}
+      </div>
+    </header>
+
+    <div class="app-content-scroll">
+      {{ result_mount('global-command-result', class_name='global-command-result') }}
+
+      {% block body %}{% endblock %}
+    </div>
+  </main>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

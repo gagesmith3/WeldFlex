@@ -1,0 +1,124 @@
+{% macro icon_link(href, icon, label='', class_name='', title='') -%}
+<a class="{{ class_name }}" href="{{ href }}" {% if title %}title="{{ title }}"{% endif %} {% if label %}aria-label="{{ label }}"{% endif %}>
+  {{ icon_safe(icon, fallback='circle', width=18, height=18, class_='icon-inline') }}
+  {% if label %}<span>{{ label }}</span>{% endif %}
+</a>
+{%- endmacro %}
+
+{% macro action_button(label, variant='primary', icon='', loading_icon='', href='', hx_post='', hx_target='', hx_swap='innerHTML', button_type='button', class_name='', confirm='', hx_include='', hx_sync='', hx_on_click='', hx_on_after_request='', disabled=false) -%}
+{% set classes = 'btn ' ~ variant ~ (' ' ~ class_name if class_name else '') ~ (' is-disabled' if disabled else '') %}
+{% if href and not disabled %}
+<a class="{{ classes }}" href="{{ href }}">
+  {% if icon %}<span class="btn-icon">{{ icon_safe(icon, fallback='circle', width=14, height=14) }}</span>{% endif %}
+  {% if loading_icon %}<span class="btn-icon-loading">{{ icon_safe(loading_icon, fallback='loader', width=14, height=14) }}</span>{% endif %}
+  <span>{{ label }}</span>
+</a>
+{% elif href and disabled %}
+<span class="{{ classes }}" aria-disabled="true">
+  {% if icon %}<span class="btn-icon">{{ icon_safe(icon, fallback='circle', width=14, height=14) }}</span>{% endif %}
+  {% if loading_icon %}<span class="btn-icon-loading">{{ icon_safe(loading_icon, fallback='loader', width=14, height=14) }}</span>{% endif %}
+  <span>{{ label }}</span>
+</span>
+{% else %}
+<button
+  class="{{ classes }}"
+  type="{{ button_type }}"
+  {% if disabled %}disabled{% endif %}
+  {% if hx_post %}hx-post="{{ hx_post }}"{% endif %}
+  {% if hx_target %}hx-target="{{ hx_target }}"{% endif %}
+  {% if hx_swap %}hx-swap="{{ hx_swap }}"{% endif %}
+  {% if confirm %}hx-confirm="{{ confirm }}"{% endif %}
+  {% if hx_include %}hx-include="{{ hx_include }}"{% endif %}
+  {% if hx_sync %}hx-sync="{{ hx_sync }}"{% endif %}
+  {% if hx_on_click %}hx-on:click="{{ hx_on_click }}"{% endif %}
+  {% if hx_on_after_request %}hx-on::after-request="{{ hx_on_after_request }}"{% endif %}
+>
+  {% if icon %}<span class="btn-icon">{{ icon_safe(icon, fallback='circle', width=14, height=14) }}</span>{% endif %}
+  {% if loading_icon %}<span class="btn-icon-loading">{{ icon_safe(loading_icon, fallback='loader', width=14, height=14) }}</span>{% endif %}
+  <span>{{ label }}</span>
+</button>
+{% endif %}
+{%- endmacro %}
+
+{% macro status_chip(label, value, icon='', state='neutral', compact=false, tooltip='') -%}
+{% set state_class = 'chip-' ~ state if state in ['ok', 'error'] else '' %}
+<div class="chip {{ 'chip-compact' if compact else '' }} {{ state_class }}" {% if tooltip %}title="{{ tooltip }}"{% endif %}>
+  <div class="chip-row">
+    {% if icon %}<span class="chip-icon">{{ icon_safe(icon, fallback='circle', width=14, height=14) }}</span>{% endif %}
+    <span class="chip-label">{{ label }}</span>
+  </div>
+  <strong class="chip-value">{{ value }}</strong>
+</div>
+{%- endmacro %}
+
+{% macro metric_card(label, value, icon='') -%}
+<div class="metric-card">
+  {% if icon %}<div class="metric-icon">{{ icon_safe(icon, fallback='circle', width=14, height=14) }}</div>{% endif %}
+  <span class="metric-label">{{ label }}</span>
+  <strong class="metric-value">{{ value }}</strong>
+</div>
+{%- endmacro %}
+
+{% macro nav_card(href, icon, title, description) -%}
+<a class="home-nav-card" href="{{ href }}">
+  <div class="home-nav-icon">{{ icon_safe(icon, fallback='circle', width=18, height=18) }}</div>
+  <h3>{{ title }}</h3>
+  <p>{{ description }}</p>
+</a>
+{%- endmacro %}
+
+{% macro panel_shell(title='', subtitle='', class_name='') -%}
+<section class="panel {{ class_name }}">
+  {% if title %}<h2>{{ title }}</h2>{% endif %}
+  {% if subtitle %}<p class="panel-note">{{ subtitle }}</p>{% endif %}
+  {{ caller() }}
+</section>
+{%- endmacro %}
+
+{% macro htmx_mount(id, endpoint, trigger='load', swap='innerHTML', class_name='', hx_include='') -%}
+<div
+  id="{{ id }}"
+  {% if class_name %}class="{{ class_name }}"{% endif %}
+  hx-get="{{ endpoint }}"
+  hx-trigger="{{ trigger }}"
+  hx-swap="{{ swap }}"
+  {% if hx_include %}hx-include="{{ hx_include }}"{% endif %}
+></div>
+{%- endmacro %}
+
+{% macro live_status_mount(id='status-box', endpoint='/ui/status', interval='1000ms') -%}
+{{ htmx_mount(id, endpoint, 'load, every ' ~ interval, 'innerHTML') }}
+{%- endmacro %}
+
+{% macro result_mount(id='command-result', class_name='command-result') -%}
+<div id="{{ id }}" class="{{ class_name }}"></div>
+{%- endmacro %}
+
+{% macro command_result_card(ok, title, payload) -%}
+<div class="result {% if ok %}ok{% else %}error{% endif %}">
+  <div class="result-header">{{ title }} {% if ok %}OK{% else %}Failed{% endif %}</div>
+  <pre>{{ payload | tojson(indent=2) }}</pre>
+</div>
+{%- endmacro %}
+
+{% macro robot_status_card(ok, status) -%}
+{% if ok %}
+<div class="status ok">
+  <div class="row"><span>Program State</span><strong>{{ status.program_state }}</strong></div>
+  <div class="row"><span>Raw State</span><strong>{{ status.program_state_raw }}</strong></div>
+  <div class="row"><span>Current Line</span><strong>{{ status.current_line }}</strong></div>
+</div>
+{% else %}
+<div class="status error">
+  <div class="row"><span>Status</span><strong>Unavailable</strong></div>
+  <p>{{ status.error }}</p>
+</div>
+{% endif %}
+{%- endmacro %}
+
+{% macro labeled_block(label, for_id='', class_name='') -%}
+<div class="recipe-block {{ class_name }}">
+  <label {% if for_id %}for="{{ for_id }}"{% endif %}>{{ label }}</label>
+  {{ caller() }}
+</div>
+{%- endmacro %}

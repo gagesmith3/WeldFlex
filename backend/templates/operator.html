@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% from "components/ui.html" import htmx_mount, panel_shell, result_mount with context %}
+
+{% block head_extra %}
+  <script defer src="{{ url_for('static', filename='js/coordinate_table.js') }}"></script>
+{% endblock %}
+
+{% block body %}
+<div class="app-body">
+  <aside class="left-drawer">
+    {% call panel_shell('Recipe Library') %}
+      {{ htmx_mount('recipe-library', '/ui/recipes', 'load', 'innerHTML') }}
+    {% endcall %}
+  </aside>
+
+  <section class="workspace">
+    {% call panel_shell('Stud Program Input', class_name='form-panel') %}
+      <form
+        hx-post="/ui/run"
+        hx-target="#command-result"
+        hx-swap="innerHTML"
+      >
+        <div id="studs-input-block">
+          {% include "partials/studs_input.html" %}
+        </div>
+      </form>
+    {% endcall %}
+
+    {% call panel_shell('Designer Preview', class_name='status-panel') %}
+      {{ htmx_mount('studs-preview', '/ui/studs-preview', 'load, studs-changed from:body', 'innerHTML', '', '#studs_text, #coord-table-body input') }}
+      {{ result_mount('command-result', 'command-result') }}
+    {% endcall %}
+  </section>
+</div>
+{% endblock %}

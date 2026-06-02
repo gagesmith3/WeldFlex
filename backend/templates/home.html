@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% from "components/ui.html" import htmx_mount, nav_card, panel_shell with context %}
+
+{% block body %}
+<div class="home-body">
+  {% call panel_shell('Current Production Run', class_name='home-hero') %}
+    {{ htmx_mount('home-current-run', '/ui/home-current-run', 'load, every ' ~ (status_interval_ms or 1000) ~ 'ms', 'innerHTML') }}
+  {% endcall %}
+
+  {% call panel_shell('Navigation', class_name='home-nav-panel') %}
+    <section class="home-nav-grid">
+      {{ nav_card('/part-library', 'library', 'Part Library', 'Browse and manage saved production parts.') }}
+      {{ nav_card('/part-designer', 'pen_tool', 'Part Designer', 'Edit stud coordinate tables and recipes.') }}
+      {{ nav_card('/robot-diagnostics', 'activity', 'Robot Diagnostics', 'Inspect connection, runtime state, and faults.') }}
+      {{ nav_card('/settings', 'settings', 'Settings', 'Configure application and robot integration.') }}
+    </section>
+  {% endcall %}
+</div>
+{% endblock %}

@@ -28,7 +28,19 @@ echo "Target home: $TARGET_HOME"
 echo
 echo "[1/8] Installing system packages..."
 sudo apt update
-sudo apt install -y python3-venv chromium-browser unclutter git
+
+CHROMIUM_PACKAGE=""
+if apt-cache show chromium-browser >/dev/null 2>&1; then
+  CHROMIUM_PACKAGE="chromium-browser"
+elif apt-cache show chromium >/dev/null 2>&1; then
+  CHROMIUM_PACKAGE="chromium"
+else
+  echo "Unable to find a Chromium package ('chromium-browser' or 'chromium')."
+  echo "Install Chromium manually, then re-run this installer."
+  exit 1
+fi
+
+sudo apt install -y python3-venv "$CHROMIUM_PACKAGE" unclutter git
 
 echo
 echo "[2/8] Creating Python virtual environment..."
@@ -89,11 +101,24 @@ rm -f "$TMP_BACKEND"
 echo
 echo "[8/8] Installing and enabling kiosk service..."
 chmod +x "$REPO_ROOT/deploy/rpi/kiosk-launch.sh"
+
+KIOSK_BROWSER_CMD=""
+if command -v chromium-browser >/dev/null 2>&1; then
+  KIOSK_BROWSER_CMD="chromium-browser"
+elif command -v chromium >/dev/null 2>&1; then
+  KIOSK_BROWSER_CMD="chromium"
+else
+  echo "Chromium command not found after install."
+  echo "Install Chromium manually and set WELDFLEX_BROWSER_CMD in the kiosk service."
+  exit 1
+fi
+
 TMP_KIOSK="$(mktemp)"
 sed \
   -e "s|^User=.*$|User=$TARGET_USER|" \
   -e "s|^WorkingDirectory=.*$|WorkingDirectory=$REPO_ROOT|" \
   -e "s|^Environment=XAUTHORITY=.*$|Environment=XAUTHORITY=$TARGET_HOME/.Xauthority|" \
+  -e "s|^Environment=WELDFLEX_BROWSER_CMD=.*$|Environment=WELDFLEX_BROWSER_CMD=$KIOSK_BROWSER_CMD|" \
   -e "s|^ExecStart=.*$|ExecStart=$REPO_ROOT/deploy/rpi/kiosk-launch.sh|" \
   "$REPO_ROOT/deploy/rpi/weldflex-kiosk.service" > "$TMP_KIOSK"
 sudo cp "$TMP_KIOSK" /etc/systemd/system/weldflex-kiosk.service

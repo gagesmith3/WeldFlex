@@ -10,6 +10,7 @@ WorkingDirectory=/home/pi/WeldFlex
 Environment=DISPLAY=:0
 Environment=XAUTHORITY=/home/pi/.Xauthority
 Environment=WELDFLEX_KIOSK_URL=http://127.0.0.1:5000
+Environment=WELDFLEX_BROWSER_CMD=chromium-browser
 ExecStart=/home/pi/WeldFlex/deploy/rpi/kiosk-launch.sh
 Restart=always
 RestartSec=2

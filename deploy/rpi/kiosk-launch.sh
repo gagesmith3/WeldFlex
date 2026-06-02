@@ -2,6 +2,7 @@
 set -euo pipefail
 
 URL="${WELDFLEX_KIOSK_URL:-http://127.0.0.1:5000}"
+BROWSER_CMD="${WELDFLEX_BROWSER_CMD:-chromium-browser}"
 
 # Prevent display power-down/blanking.
 xset s off
@@ -14,7 +15,7 @@ if command -v unclutter >/dev/null 2>&1; then
 fi
 
 while true; do
-  chromium-browser \
+  "$BROWSER_CMD" \
     --kiosk \
     --start-fullscreen \
     --incognito \

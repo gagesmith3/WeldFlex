@@ -202,7 +202,7 @@ chmod +x deploy/rpi/install_rpi_kiosk.sh
 
 What it does:
 
-- Installs required OS packages (`python3-venv`, `chromium-browser`, `unclutter`, `git`)
+- Installs required OS packages (`python3-venv`, Chromium, `unclutter`, `git`)
 - Creates `venv` and installs `requirements.txt`
 - Creates `.env` from `.env.example` if missing
 - Sets `WELDFLEX_FAIRINO_PATH` to the repo Linux SDK path
@@ -232,6 +232,12 @@ After install, edit `.env` to confirm robot/controller IP values for your networ
 
 ```bash
 sudo apt update
+sudo apt install -y python3-venv chromium unclutter
+```
+
+If `chromium` is unavailable on your image, try:
+
+```bash
 sudo apt install -y python3-venv chromium-browser unclutter
 ```
 
@@ -310,6 +316,7 @@ sudo systemctl status weldflex-kiosk.service
 ```
 
 Kiosk URL defaults to `http://127.0.0.1:5000` and can be changed in `deploy/rpi/weldflex-kiosk.service` via `WELDFLEX_KIOSK_URL`.
+Browser command can be overridden in `deploy/rpi/weldflex-kiosk.service` via `WELDFLEX_BROWSER_CMD` (for example `chromium` on newer Pi OS).
 Update source defaults to `origin/main` and can be changed by editing `deploy/rpi/update_on_boot.sh`.
 
 ### 8) Verify end-to-end

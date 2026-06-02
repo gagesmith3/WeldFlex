@@ -7,6 +7,34 @@ import sys
 from pathlib import Path
 
 
+def _prepare_import_paths(workspace_root: Path) -> None:
+    # Ensure local package imports (backend, fairino) resolve when script is executed directly.
+    if str(workspace_root) not in sys.path:
+        sys.path.insert(0, str(workspace_root))
+
+    try:
+        from dotenv import load_dotenv  # type: ignore
+    except Exception:
+        load_dotenv = None
+
+    if load_dotenv is not None:
+        env_file = workspace_root / ".env"
+        if env_file.exists():
+            load_dotenv(env_file)
+
+    candidates = [
+        os.getenv("WELDFLEX_FAIRINO_PATH", ""),
+        str(workspace_root / "fairino-python-sdk-main" / "linux"),
+        str(workspace_root / "fairino-python-sdk-main" / "windows"),
+    ]
+    for candidate in candidates:
+        if not candidate:
+            continue
+        path = Path(candidate)
+        if (path / "fairino").is_dir() and str(path) not in sys.path:
+            sys.path.insert(0, str(path))
+
+
 def check_fairino_import() -> tuple[bool, str]:
     try:
         from fairino import Robot  # type: ignore
@@ -37,6 +65,7 @@ def check_app_health() -> tuple[bool, str]:
 
 def main() -> int:
     workspace_root = Path(__file__).resolve().parents[1]
+    _prepare_import_paths(workspace_root)
 
     summary = {
         "python": sys.version.split()[0],

@@ -77,7 +77,10 @@ fi
 
 echo
 echo "[5/8] Running preflight checks..."
-python "$REPO_ROOT/scripts/rpi_preflight.py"
+if ! python "$REPO_ROOT/scripts/rpi_preflight.py"; then
+  echo "Warning: Preflight checks reported issues."
+  echo "Continuing install so services are configured; review preflight output above."
+fi
 
 echo
 echo "[6/8] Installing and enabling boot update service..."

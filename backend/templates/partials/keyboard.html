@@ -1,0 +1,58 @@
+<div id="wf-kbd" class="wf-kbd wf-kbd-hidden" aria-hidden="true" role="group" aria-label="On-screen keyboard">
+
+  {# ── Numeric pad ── #}
+  <div class="wf-kbd-panel" data-panel="num">
+    <div class="wf-kbd-row">
+      <button type="button" class="wf-key" data-key="7">7</button>
+      <button type="button" class="wf-key" data-key="8">8</button>
+      <button type="button" class="wf-key" data-key="9">9</button>
+      <button type="button" class="wf-key wf-key-fn" data-key="backspace">⌫</button>
+    </div>
+    <div class="wf-kbd-row">
+      <button type="button" class="wf-key" data-key="4">4</button>
+      <button type="button" class="wf-key" data-key="5">5</button>
+      <button type="button" class="wf-key" data-key="6">6</button>
+      <button type="button" class="wf-key wf-key-fn" data-key="clear">C</button>
+    </div>
+    <div class="wf-kbd-row">
+      <button type="button" class="wf-key" data-key="1">1</button>
+      <button type="button" class="wf-key" data-key="2">2</button>
+      <button type="button" class="wf-key" data-key="3">3</button>
+      <button type="button" class="wf-key wf-key-fn" data-key="negate">+/−</button>
+    </div>
+    <div class="wf-kbd-row">
+      <button type="button" class="wf-key wf-key-wide" data-key="0">0</button>
+      <button type="button" class="wf-key" data-key=".">.</button>
+      <button type="button" class="wf-key wf-key-enter" data-key="enter">↵</button>
+    </div>
+  </div>
+
+  {# ── Alpha keyboard (QWERTY) ── #}
+  <div class="wf-kbd-panel" data-panel="alpha" hidden>
+    <div class="wf-kbd-row">
+      {% for ch in ['q','w','e','r','t','y','u','i','o','p'] %}
+      <button type="button" class="wf-key" data-key="{{ ch }}" data-alpha="{{ ch }}">{{ ch }}</button>
+      {% endfor %}
+    </div>
+    <div class="wf-kbd-row wf-kbd-centered">
+      {% for ch in ['a','s','d','f','g','h','j','k','l'] %}
+      <button type="button" class="wf-key" data-key="{{ ch }}" data-alpha="{{ ch }}">{{ ch }}</button>
+      {% endfor %}
+    </div>
+    <div class="wf-kbd-row">
+      <button type="button" class="wf-key wf-key-fn wf-key-shift" data-key="shift">⇧</button>
+      {% for ch in ['z','x','c','v','b','n','m'] %}
+      <button type="button" class="wf-key" data-key="{{ ch }}" data-alpha="{{ ch }}">{{ ch }}</button>
+      {% endfor %}
+      <button type="button" class="wf-key wf-key-fn" data-key="backspace">⌫</button>
+    </div>
+    <div class="wf-kbd-row">
+      <button type="button" class="wf-key wf-key-fn" data-key="-">−</button>
+      <button type="button" class="wf-key wf-key-fn" data-key="_">_</button>
+      <button type="button" class="wf-key wf-key-space" data-key=" ">space</button>
+      <button type="button" class="wf-key wf-key-fn" data-key="clear">C</button>
+      <button type="button" class="wf-key wf-key-enter" data-key="enter">↵</button>
+    </div>
+  </div>
+
+</div>

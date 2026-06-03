@@ -1,6 +1,6 @@
 {% from "components/ui.html" import action_button, labeled_block with context %}
 {% call labeled_block('Save Current As Recipe', 'recipe_name') %}
-  <input id="recipe_name" name="recipe_name" type="text" placeholder="e.g. plate_a_rev1">
+  <input id="recipe_name" name="recipe_name" type="text" inputmode="none" data-kbd="alpha" placeholder="e.g. plate_a_rev1">
   {{ action_button('Save Recipe', variant='recipe-save', icon='save', hx_post='/ui/recipes/save', hx_include='#recipe_name,#studs_text', hx_target='#toast-rack', hx_on_after_request="htmx.ajax('GET','/ui/recipes','#recipe-library')") }}
 {% endcall %}
 

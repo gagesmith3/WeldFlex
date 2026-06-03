@@ -7,23 +7,23 @@
     <form class="settings-grid" hx-post="/ui/settings/save" hx-target="#toast-rack" hx-swap="innerHTML">
       <div>
         <label for="robot_ip">Robot IP</label>
-        <input id="robot_ip" name="robot_ip" type="text" value="{{ settings.robot_ip }}" required>
+        <input id="robot_ip" name="robot_ip" type="text" inputmode="none" data-kbd="alpha" value="{{ settings.robot_ip }}" required>
       </div>
       <div>
         <label for="controller_host">Controller Host</label>
-        <input id="controller_host" name="controller_host" type="text" value="{{ settings.controller_host }}" required>
+        <input id="controller_host" name="controller_host" type="text" inputmode="none" data-kbd="alpha" value="{{ settings.controller_host }}" required>
       </div>
       <div>
         <label for="program_path">Program Path</label>
-        <input id="program_path" name="program_path" type="text" value="{{ settings.program_path }}" required>
+        <input id="program_path" name="program_path" type="text" inputmode="none" data-kbd="alpha" value="{{ settings.program_path }}" required>
       </div>
       <div>
         <label for="studs_data_path">Studs Data Path</label>
-        <input id="studs_data_path" name="studs_data_path" type="text" value="{{ settings.studs_data_path }}" required>
+        <input id="studs_data_path" name="studs_data_path" type="text" inputmode="none" data-kbd="alpha" value="{{ settings.studs_data_path }}" required>
       </div>
       <div>
         <label for="status_interval_ms">Status Poll Interval (ms)</label>
-        <input id="status_interval_ms" name="status_interval_ms" type="number" min="250" max="10000" value="{{ settings.status_interval_ms }}" required>
+        <input id="status_interval_ms" name="status_interval_ms" type="text" inputmode="none" data-kbd="num" value="{{ settings.status_interval_ms }}" required>
       </div>
 
       <div class="settings-actions">

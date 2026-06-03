@@ -37,7 +37,7 @@
                     </div>
                     <input type="hidden" name="recipe_name" value="{{ recipe.name }}">
                     <label for="run_count_{{ loop.index }}">How many parts?</label>
-                    <input id="run_count_{{ loop.index }}" name="run_count" type="number" min="1" max="100" value="1" required>
+                    <input id="run_count_{{ loop.index }}" name="run_count" type="text" inputmode="none" data-kbd="num" value="1" required>
                     <div class="modal-actions">
                       <button type="button" class="btn recipe-load" onclick="document.getElementById('run-modal-{{ loop.index }}').close()">Cancel</button>
                       {{ action_button('Run', variant='run', icon='play', button_type='submit') }}

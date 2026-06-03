@@ -1127,3 +1127,101 @@ pre {
     grid-template-columns: 1fr;
   }
 }
+
+/* ── On-screen keyboard ── */
+.wf-kbd {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 850;
+  background: #16191f;
+  border-top: 1px solid #2a2f3d;
+  padding: 10px 12px 14px;
+  display: flex;
+  justify-content: center;
+  transform: translateY(0);
+  transition: transform 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.wf-kbd-hidden {
+  transform: translateY(110%);
+  pointer-events: none;
+}
+
+.wf-kbd[data-mode="num"] {
+  justify-content: center;
+}
+
+.wf-kbd-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+
+.wf-kbd-panel[data-panel="num"] {
+  max-width: 316px;
+}
+
+.wf-kbd-row {
+  display: flex;
+  gap: 6px;
+}
+
+.wf-kbd-centered {
+  justify-content: center;
+}
+
+.wf-key {
+  flex: 1;
+  height: 46px;
+  min-width: 0;
+  border: 1px solid #2e3447;
+  border-radius: 8px;
+  background: #222737;
+  color: #dce6f5;
+  font-size: 1.05rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  -webkit-user-select: none;
+  user-select: none;
+  transition: background 60ms ease;
+  touch-action: manipulation;
+}
+
+.wf-key:active,
+.wf-key.wf-key-active {
+  background: #2d3650;
+}
+
+.wf-key-fn {
+  background: #1a1e2a;
+  color: #8a9ab8;
+  font-size: 0.85rem;
+}
+
+.wf-key-shift {
+  flex: 1.4;
+}
+
+.wf-key-wide {
+  flex: 2;
+}
+
+.wf-key-space {
+  flex: 5;
+  font-size: 0.78rem;
+  color: #5a6880;
+}
+
+.wf-key-enter {
+  background: #173b28;
+  color: #4ade80;
+  border-color: #2e6b45;
+  font-size: 1.1rem;
+}

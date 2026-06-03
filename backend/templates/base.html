@@ -31,6 +31,8 @@
     </div>
   </main>
   <div id="toast-rack" class="toast-rack" aria-live="polite"></div>
+  {% include "partials/keyboard.html" %}
+  <script defer src="{{ url_for('static', filename='js/keyboard.js') }}"></script>
   {% block scripts %}{% endblock %}
 
 </body>

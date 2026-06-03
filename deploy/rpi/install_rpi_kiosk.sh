@@ -44,7 +44,20 @@ else
   exit 1
 fi
 
-sudo apt install -y python3-venv "$CHROMIUM_PACKAGE" unclutter git
+sudo apt install -y python3-venv "$CHROMIUM_PACKAGE" unclutter git onboard at-spi2-core
+
+echo
+echo "[1b/8] Configuring onboard virtual keyboard (auto-show on input focus)..."
+ONBOARD_OVERRIDE=/usr/share/glib-2.0/schemas/99_onboard-weldflex.gschema.override
+sudo tee "$ONBOARD_OVERRIDE" > /dev/null <<'OVERRIDE'
+[org.onboard]
+auto-show-enabled=true
+start-minimized=true
+
+[org.onboard.auto-show]
+enabled=true
+OVERRIDE
+sudo glib-compile-schemas /usr/share/glib-2.0/schemas/
 
 echo
 echo "[2/8] Creating Python virtual environment..."

@@ -29,6 +29,76 @@ body {
   min-height: 100vh;
   height: 100vh;
   overflow: hidden;
+  /* Kiosk: disable text drag-selection and tap highlight */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+}
+
+/* Re-enable selection inside actual input controls */
+input, textarea, select, [contenteditable] {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* ── Splash overlay ── */
+.kiosk-splash {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  background: linear-gradient(165deg, #0e2f4a, #1a4d6e);
+  transition: opacity 0.4s ease;
+}
+
+.kiosk-splash.kiosk-splash-done {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.kiosk-splash-title {
+  color: #e8f4ff;
+  font-size: 2rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  margin: 0;
+}
+
+.kiosk-splash-sub {
+  color: rgba(200, 225, 245, 0.75);
+  font-size: 0.9rem;
+  margin: 0;
+}
+
+.kiosk-splash-badge {
+  display: inline-block;
+  margin-left: 10px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.65rem;
+  vertical-align: middle;
+  letter-spacing: 0.06em;
+  background: #ffd66b;
+  color: #5a3f00;
+  font-weight: 700;
+}
+
+.kiosk-splash-spinner {
+  width: 36px;
+  height: 36px;
+  border: 3px solid rgba(200, 225, 245, 0.2);
+  border-top-color: #7ec8f0;
+  border-radius: 50%;
+  animation: splash-spin 0.8s linear infinite;
+}
+
+@keyframes splash-spin {
+  to { transform: rotate(360deg); }
 }
 
 .app-shell {

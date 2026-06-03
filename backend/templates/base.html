@@ -33,5 +33,20 @@
     </div>
   </main>
   {% block scripts %}{% endblock %}
+
+  <div id="kiosk-splash" class="kiosk-splash" aria-hidden="true">
+    <p class="kiosk-splash-title">WeldFlex<span class="kiosk-splash-badge">BETA</span></p>
+    <p class="kiosk-splash-sub">LYNX4 Powered Automated Stud Welding</p>
+    <div class="kiosk-splash-spinner"></div>
+  </div>
+  <script>
+    (function () {
+      var s = document.getElementById('kiosk-splash');
+      function hide() { s.classList.add('kiosk-splash-done'); }
+      if (document.readyState === 'complete') { setTimeout(hide, 150); }
+      else { window.addEventListener('load', function () { setTimeout(hide, 150); }); }
+      setTimeout(hide, 6000); // hard fallback
+    })();
+  </script>
 </body>
 </html>

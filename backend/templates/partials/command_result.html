@@ -1,2 +1,20 @@
-{% from "components/ui.html" import command_result_card with context %}
-{{ command_result_card(ok, title, payload) }}
+<div class="toast toast-{{ 'ok' if ok else 'error' }}" id="active-toast">
+  <span class="toast-dot"></span>
+  <div class="toast-body">
+    <strong class="toast-title">{{ title }}: {{ 'OK' if ok else 'Failed' }}</strong>
+    {% if not ok and payload.error is defined %}
+    <p class="toast-msg">{{ payload.error }}</p>
+    {% endif %}
+  </div>
+</div>
+<script>
+(function(){
+  var t = document.getElementById('active-toast');
+  if (!t) return;
+  setTimeout(function(){ t.classList.add('toast-dismiss'); }, 3500);
+  setTimeout(function(){
+    var r = document.getElementById('toast-rack');
+    if (r) r.innerHTML = '';
+  }, 4100);
+})();
+</script>

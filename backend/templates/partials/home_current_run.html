@@ -1,12 +1,12 @@
 {% from "components/ui.html" import action_button, metric_card with context %}
 <div class="hero-controls hero-controls-top">
   {% if summary.start_button_label == 'Run' %}
-    {{ action_button('Run', variant='run', icon='play', loading_icon='loader_2', hx_post='/ui/home/run-next', hx_target='#global-command-result', hx_sync='#home-current-run:replace', hx_on_click='this.disabled=true;this.classList.add("is-running")', hx_on_after_request='if(event.detail.failed){this.disabled=false;this.classList.remove("is-running")}', class_name='is-running' if summary.cycle_running else '', disabled=not summary.can_run_next) }}
+    {{ action_button('Run', variant='run', icon='play', loading_icon='loader_2', hx_post='/ui/home/run-next', hx_target='#toast-rack', hx_sync='#home-current-run:replace', hx_on_click='this.disabled=true;this.classList.add("is-running")', hx_on_after_request='if(event.detail.failed){this.disabled=false;this.classList.remove("is-running")}', class_name='is-running' if summary.cycle_running else '', disabled=not summary.can_run_next) }}
   {% else %}
     {{ action_button('Start From Library', variant='run', icon='play', href='/part-library') }}
   {% endif %}
-  {{ action_button('Pause', variant='pause', icon='pause', hx_post='/ui/pause', hx_target='#global-command-result', disabled=not summary.can_pause) }}
-  {{ action_button('Stop', variant='stop', icon='square', hx_post='/ui/stop', hx_target='#global-command-result', disabled=not summary.can_stop) }}
+  {{ action_button('Pause', variant='pause', icon='pause', hx_post='/ui/pause', hx_target='#toast-rack', disabled=not summary.can_pause) }}
+  {{ action_button('Stop', variant='stop', icon='square', hx_post='/ui/stop', hx_target='#toast-rack', disabled=not summary.can_stop) }}
 </div>
 
 <div class="hero-metrics hero-metrics-stacked">

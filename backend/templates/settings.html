@@ -4,7 +4,7 @@
 {% block body %}
 <div class="page-body">
   {% call panel_shell('Settings', 'Set runtime robot and polling settings for this app session.', class_name='settings-shell') %}
-    <form class="settings-grid" hx-post="/ui/settings/save" hx-target="#settings-result" hx-swap="innerHTML">
+    <form class="settings-grid" hx-post="/ui/settings/save" hx-target="#toast-rack" hx-swap="innerHTML">
       <div>
         <label for="robot_ip">Robot IP</label>
         <input id="robot_ip" name="robot_ip" type="text" value="{{ settings.robot_ip }}" required>
@@ -30,7 +30,6 @@
         {{ action_button('Save Runtime Settings', variant='run', icon='save', button_type='submit') }}
       </div>
     </form>
-    {{ result_mount('settings-result', 'command-result') }}
   {% endcall %}
 </div>
 {% endblock %}

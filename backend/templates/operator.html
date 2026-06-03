@@ -17,7 +17,7 @@
     {% call panel_shell('Stud Program Input', class_name='form-panel') %}
       <form
         hx-post="/ui/run"
-        hx-target="#command-result"
+        hx-target="#toast-rack"
         hx-swap="innerHTML"
       >
         <div id="studs-input-block">
@@ -28,7 +28,6 @@
 
     {% call panel_shell('Designer Preview', class_name='status-panel') %}
       {{ htmx_mount('studs-preview', '/ui/studs-preview', 'load, studs-changed from:body', 'innerHTML', '', '#studs_text, #coord-table-body input') }}
-      {{ result_mount('command-result', 'command-result') }}
     {% endcall %}
   </section>
 </div>

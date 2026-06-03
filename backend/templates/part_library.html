@@ -24,11 +24,11 @@
               <td class="table-actions">
                 <button type="button" class="btn run" onclick="document.getElementById('run-modal-{{ loop.index }}').showModal()">Run</button>
                 <button type="submit" class="btn recipe-delete" formmethod="post" formaction="/ui/library/delete" form="lib-delete-{{ loop.index }}" hx-confirm="Delete part '{{ recipe.name }}'?">Delete</button>
-                <form id="lib-delete-{{ loop.index }}" hx-post="/ui/library/delete" hx-target="#library-result" hx-swap="innerHTML" class="inline-form">
+                <form id="lib-delete-{{ loop.index }}" hx-post="/ui/library/delete" hx-target="#toast-rack" hx-swap="innerHTML" class="inline-form">
                   <input type="hidden" name="recipe_name" value="{{ recipe.name }}">
                 </form>
                 <dialog id="run-modal-{{ loop.index }}" class="run-dialog">
-                  <form hx-post="/ui/library/run" hx-target="#run-modal-result-{{ loop.index }}" hx-swap="innerHTML" class="run-dialog-form">
+                  <form hx-post="/ui/library/run" hx-target="#toast-rack" hx-swap="innerHTML" class="run-dialog-form">
                     <h3>Launch Production Run</h3>
                     <div class="run-detail-list">
                       <p><strong>Part:</strong> {{ recipe.name }}</p>
@@ -42,7 +42,6 @@
                       <button type="button" class="btn recipe-load" onclick="document.getElementById('run-modal-{{ loop.index }}').close()">Cancel</button>
                       {{ action_button('Run', variant='run', icon='play', button_type='submit') }}
                     </div>
-                    <div id="run-modal-result-{{ loop.index }}" class="command-result"></div>
                   </form>
                 </dialog>
               </td>
@@ -57,7 +56,6 @@
       </table>
     </div>
 
-    {{ result_mount('library-result', 'command-result') }}
   {% endcall %}
 </div>
 {% endblock %}

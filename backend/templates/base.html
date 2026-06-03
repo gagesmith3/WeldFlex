@@ -22,16 +22,15 @@
       </div>
       <div class="app-header-right nav-status-wrap">
         {{ htmx_mount('connection-chips', '/ui/connection', 'load, every 1000ms', 'innerHTML', 'nav-chips') }}
-        {{ action_button('STOP', variant='estop-btn', icon='alert_octagon', hx_post='/ui/stop', hx_target='#global-command-result') }}
+        {{ action_button('STOP', variant='estop-btn', icon='alert_octagon', hx_post='/ui/stop', hx_target='#toast-rack') }}
       </div>
     </header>
 
     <div class="app-content-scroll">
-      {{ result_mount('global-command-result', class_name='global-command-result') }}
-
       {% block body %}{% endblock %}
     </div>
   </main>
+  <div id="toast-rack" class="toast-rack" aria-live="polite"></div>
   {% block scripts %}{% endblock %}
 
 </body>

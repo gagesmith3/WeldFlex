@@ -133,6 +133,15 @@ input, textarea, select, [contenteditable] {
   font-weight: 700;
 }
 
+.title-version {
+  display: block;
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  opacity: 0.72;
+  margin-top: 3px;
+  color: #d0e8ff;
+}
+
 .app-header-right {
   border: 1px solid rgba(220, 236, 250, 0.35);
   background: rgba(10, 31, 49, 0.22);
@@ -950,7 +959,11 @@ pre {
     grid-template-columns: 1.2fr 1fr;
     gap: 10px;
   }
-  .app-header h1 { font-size: 1.1rem; }
+  .app-header-left { align-items: stretch; gap: 8px; }
+  .home-btn { width: 48px; height: auto; border-radius: 10px; }
+  .home-btn svg { width: 22px; height: 22px; }
+  .app-header h1 { font-size: 0.92rem; line-height: 1.2; }
+  .title-version { font-size: 0.6rem; margin-top: 2px; }
   .title-block p { display: none; }
   .app-header-right { padding: 8px; }
   .nav-status-wrap { gap: 8px; }

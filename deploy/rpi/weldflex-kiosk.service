@@ -1,6 +1,6 @@
 [Unit]
 Description=WeldFlex Kiosk Browser
-After=graphical.target network-online.target weldflex-backend.service
+After=graphical.target network-online.target weldflex-update.service weldflex-backend.service
 Wants=network-online.target
 
 [Service]

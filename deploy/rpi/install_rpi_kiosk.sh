@@ -44,7 +44,7 @@ else
   exit 1
 fi
 
-sudo apt install -y python3-venv "$CHROMIUM_PACKAGE" unclutter git onboard at-spi2-core
+sudo apt install -y python3-venv "$CHROMIUM_PACKAGE" unclutter git onboard at-spi2-core plymouth imagemagick
 
 echo
 echo "[1b/8] Configuring onboard virtual keyboard (auto-show on input focus)..."
@@ -148,6 +148,30 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now weldflex-update.service
 sudo systemctl enable --now weldflex-backend.service
 sudo systemctl enable --now weldflex-kiosk.service
+
+echo
+echo "[9/8] Configuring Plymouth boot splash..."
+SPLASH_SRC="$REPO_ROOT/deploy/rpi/splash.jpg"
+PLYMOUTH_DEST=/usr/share/plymouth/themes/pix/splash.png
+if [[ -f "$SPLASH_SRC" ]]; then
+  # Composite logo centred on a dark background, output 800x480 PNG.
+  convert \
+    \( -size 800x480 xc:'#1c1c1e' \) \
+    \( "$SPLASH_SRC" -fuzz 15% -transparent white -resize 640x320 \) \
+    -gravity center -composite \
+    "$PLYMOUTH_DEST"
+  sudo plymouth-set-default-theme --rebuild-initrd pix
+  # Enable quiet splash in boot cmdline (handles both legacy and firmware paths).
+  for CMDLINE in /boot/firmware/cmdline.txt /boot/cmdline.txt; do
+    if [[ -f "$CMDLINE" ]] && ! grep -q 'splash' "$CMDLINE"; then
+      sudo sed -i 's/$/ quiet splash plymouth.ignore-serial-consoles/' "$CMDLINE"
+      echo "Added splash to $CMDLINE"
+    fi
+  done
+  echo "Plymouth splash configured."
+else
+  echo "Warning: deploy/rpi/splash.jpg not found — skipping Plymouth setup."
+fi
 
 echo
 echo "Install complete."

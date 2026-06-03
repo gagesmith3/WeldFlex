@@ -14,10 +14,11 @@
 ## 1. Lua Scripts
 | Status | Goal | Notes |
 |--------|------|-------|
-| `[ ]` | Add `studCycle.lua` to repo | Currently lives only on robot controller — needs to be versioned |
+| `[x]` | Add `studCycle.lua` to repo | Done 2026-06-03 — `robot/lua/studCycle.lua` |
 | `[ ]` | Validate generated `studs_data.lua` format before upload | Bounds check, non-empty guard, format assertion |
 | `[ ]` | Add error handling inside `studCycle.lua` | Handle missing data file, out-of-bounds stud, weld fault |
 | `[ ]` | Support per-stud weld parameters (dwell, force, etc.) | Currently all studs use identical robot program settings |
+| `[ ]` | Replace `weld.lua` stub with digital IO weld trigger | Current stub just moves Z down/up; real welder needs IO sequence |
 
 ---
 

@@ -3,93 +3,110 @@
 
 {% block body %}
 <div class="jog-page">
-  <div class="jog-sidebar">
-    <div class="jog-nav-row">
-      {{ action_button('Back to Calibration', variant='recipe-load', icon='arrow_left', href='/calibration') }}
-      {{ action_button('STOP JOG', variant='stop', icon='square', hx_post='/ui/jog/stop', hx_target='#toast-rack', class_name='jog-stop-btn') }}
+  <div class="jog-nav-row">
+    {{ action_button('Back to Calibration', variant='recipe-load', icon='arrow_left', href='/calibration') }}
+    {{ action_button('STOP JOG', variant='stop', icon='square', hx_post='/ui/jog/stop', hx_target='#toast-rack', class_name='jog-stop-btn') }}
+  </div>
+
+  {% call panel_shell('Jog Console', 'All live position data, jog settings, and move controls stay on one screen.', class_name='jog-console-panel') %}
+    <div class="jog-console-body">
+      <section class="jog-console-section jog-live-section">
+        <div class="jog-section-heading">
+          <h3>Live Position</h3>
+          <p>Refreshes automatically while the page is open.</p>
+        </div>
+        {{ htmx_mount('jog-status', '/ui/jog/status', 'load, every ' ~ (status_interval_ms or 1000) ~ 'ms', 'innerHTML') }}
+      </section>
+
+      <section class="jog-console-section jog-settings-section">
+        <div class="jog-section-heading">
+          <h3>Jog Settings</h3>
+          <p>Rotational cartesian moves use the same cartesian step field and are interpreted in degrees.</p>
+        </div>
+        <div id="jog-settings" class="jog-settings-form">
+          <div class="jog-settings-grid">
+            <div class="jog-setting-field">
+              <label for="cartesian_frame">Cartesian frame</label>
+              <select id="cartesian_frame" name="cartesian_frame">
+                <option value="tool">Tool</option>
+                <option value="base">Base</option>
+                <option value="workpiece">Workpiece</option>
+              </select>
+            </div>
+            <div class="jog-setting-field">
+              <label for="cartesian_step">Cartesian step (mm / deg)</label>
+              <input id="cartesian_step" name="cartesian_step" type="text" value="5" inputmode="none" data-kbd="num">
+            </div>
+            <div class="jog-setting-field">
+              <label for="joint_step">Joint step (deg)</label>
+              <input id="joint_step" name="joint_step" type="text" value="2" inputmode="none" data-kbd="num">
+            </div>
+            <div class="jog-setting-field">
+              <label for="jog_velocity">Velocity (%)</label>
+              <input id="jog_velocity" name="jog_velocity" type="text" value="20" inputmode="none" data-kbd="num">
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div class="jog-controls-grid">
+        <section class="jog-console-section jog-control-panel">
+          <div class="jog-section-heading">
+            <h3>Cartesian Jog</h3>
+            <p>Use the selected frame for X, Y, Z, Rx, Ry, and Rz moves.</p>
+          </div>
+          <div class="jog-axis-grid">
+            {% for axis_label, axis_name in [('X', 'x'), ('Y', 'y'), ('Z', 'z'), ('Rx', 'rx'), ('Ry', 'ry'), ('Rz', 'rz')] %}
+            <div class="jog-axis-card">
+              <span class="jog-axis-name">{{ axis_label }}</span>
+              <div class="jog-axis-buttons">
+                <button class="btn jog-axis-btn jog-axis-negative"
+                        type="button"
+                        hx-post="/ui/jog/move"
+                        hx-target="#toast-rack"
+                        hx-include="#jog-settings"
+                        hx-vals='{"mode":"cartesian","axis":"{{ axis_name }}","direction":"negative"}'>- {{ axis_label }}</button>
+                <button class="btn jog-axis-btn jog-axis-positive"
+                        type="button"
+                        hx-post="/ui/jog/move"
+                        hx-target="#toast-rack"
+                        hx-include="#jog-settings"
+                        hx-vals='{"mode":"cartesian","axis":"{{ axis_name }}","direction":"positive"}'>+ {{ axis_label }}</button>
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+        </section>
+
+        <section class="jog-console-section jog-control-panel">
+          <div class="jog-section-heading">
+            <h3>Joint Jog</h3>
+            <p>Jog each robot joint directly in degrees.</p>
+          </div>
+          <div class="jog-axis-grid">
+            {% for joint_label, joint_name in [('J1', 'j1'), ('J2', 'j2'), ('J3', 'j3'), ('J4', 'j4'), ('J5', 'j5'), ('J6', 'j6')] %}
+            <div class="jog-axis-card">
+              <span class="jog-axis-name">{{ joint_label }}</span>
+              <div class="jog-axis-buttons">
+                <button class="btn jog-axis-btn jog-axis-negative"
+                        type="button"
+                        hx-post="/ui/jog/move"
+                        hx-target="#toast-rack"
+                        hx-include="#jog-settings"
+                        hx-vals='{"mode":"joint","axis":"{{ joint_name }}","direction":"negative"}'>- {{ joint_label }}</button>
+                <button class="btn jog-axis-btn jog-axis-positive"
+                        type="button"
+                        hx-post="/ui/jog/move"
+                        hx-target="#toast-rack"
+                        hx-include="#jog-settings"
+                        hx-vals='{"mode":"joint","axis":"{{ joint_name }}","direction":"positive"}'>+ {{ joint_label }}</button>
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+        </section>
+      </div>
     </div>
-
-    {% call panel_shell('Live Position', 'Refreshes automatically while the page is open.', class_name='jog-status-panel') %}
-      {{ htmx_mount('jog-status', '/ui/jog/status', 'load, every ' ~ (status_interval_ms or 1000) ~ 'ms', 'innerHTML') }}
-    {% endcall %}
-
-    {% call panel_shell('Jog Settings', 'Choose the cartesian frame plus motion distance and speed.', class_name='jog-settings-panel') %}
-      <div id="jog-settings" class="jog-settings-form">
-        <div class="jog-settings-grid">
-          <div>
-            <label for="cartesian_frame">Cartesian frame</label>
-            <select id="cartesian_frame" name="cartesian_frame">
-              <option value="tool">Tool</option>
-              <option value="base">Base</option>
-              <option value="workpiece">Workpiece</option>
-            </select>
-          </div>
-          <div>
-            <label for="cartesian_step">Cartesian step (mm / deg)</label>
-            <input id="cartesian_step" name="cartesian_step" type="text" value="5" inputmode="none" data-kbd="num">
-          </div>
-          <div>
-            <label for="joint_step">Joint step (deg)</label>
-            <input id="joint_step" name="joint_step" type="text" value="2" inputmode="none" data-kbd="num">
-          </div>
-          <div>
-            <label for="jog_velocity">Velocity (%)</label>
-            <input id="jog_velocity" name="jog_velocity" type="text" value="20" inputmode="none" data-kbd="num">
-          </div>
-        </div>
-      </div>
-      <p class="panel-note jog-settings-note">Rotational cartesian moves use the same cartesian step field and are interpreted in degrees.</p>
-    {% endcall %}
-  </div>
-
-  <div class="jog-main">
-    {% call panel_shell('Cartesian Jog', 'Use the selected frame for X, Y, Z, Rx, Ry, and Rz moves.', class_name='jog-control-panel') %}
-      <div class="jog-axis-grid">
-        {% for axis_label, axis_name in [('X', 'x'), ('Y', 'y'), ('Z', 'z'), ('Rx', 'rx'), ('Ry', 'ry'), ('Rz', 'rz')] %}
-        <div class="jog-axis-card">
-          <span class="jog-axis-name">{{ axis_label }}</span>
-          <div class="jog-axis-buttons">
-            <button class="btn jog-axis-btn jog-axis-negative"
-                    type="button"
-                    hx-post="/ui/jog/move"
-                    hx-target="#toast-rack"
-                    hx-include="#jog-settings"
-                    hx-vals='{"mode":"cartesian","axis":"{{ axis_name }}","direction":"negative"}'>- {{ axis_label }}</button>
-            <button class="btn jog-axis-btn jog-axis-positive"
-                    type="button"
-                    hx-post="/ui/jog/move"
-                    hx-target="#toast-rack"
-                    hx-include="#jog-settings"
-                    hx-vals='{"mode":"cartesian","axis":"{{ axis_name }}","direction":"positive"}'>+ {{ axis_label }}</button>
-          </div>
-        </div>
-        {% endfor %}
-      </div>
-    {% endcall %}
-
-    {% call panel_shell('Joint Jog', 'Jog each robot joint directly in degrees.', class_name='jog-control-panel') %}
-      <div class="jog-axis-grid">
-        {% for joint_label, joint_name in [('J1', 'j1'), ('J2', 'j2'), ('J3', 'j3'), ('J4', 'j4'), ('J5', 'j5'), ('J6', 'j6')] %}
-        <div class="jog-axis-card">
-          <span class="jog-axis-name">{{ joint_label }}</span>
-          <div class="jog-axis-buttons">
-            <button class="btn jog-axis-btn jog-axis-negative"
-                    type="button"
-                    hx-post="/ui/jog/move"
-                    hx-target="#toast-rack"
-                    hx-include="#jog-settings"
-                    hx-vals='{"mode":"joint","axis":"{{ joint_name }}","direction":"negative"}'>- {{ joint_label }}</button>
-            <button class="btn jog-axis-btn jog-axis-positive"
-                    type="button"
-                    hx-post="/ui/jog/move"
-                    hx-target="#toast-rack"
-                    hx-include="#jog-settings"
-                    hx-vals='{"mode":"joint","axis":"{{ joint_name }}","direction":"positive"}'>+ {{ joint_label }}</button>
-          </div>
-        </div>
-        {% endfor %}
-      </div>
-    {% endcall %}
-  </div>
+  {% endcall %}
 </div>
 {% endblock %}

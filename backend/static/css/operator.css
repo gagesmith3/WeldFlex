@@ -73,6 +73,10 @@ input, textarea, select, [contenteditable] {
   flex-direction: column;
 }
 
+.app-content-scroll-locked {
+  overflow: hidden;
+}
+
 .app-header h1 {
   margin: 0;
   font-size: 1.6rem;
@@ -1365,99 +1369,185 @@ pre {
 }
 
 .jog-page {
-  display: grid;
-  grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
-  gap: 16px;
   padding: 16px;
-  flex: 1;
+  height: 100%;
   min-height: 0;
-}
-
-.jog-sidebar,
-.jog-main {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  min-height: 0;
+  overflow: hidden;
 }
 
 .jog-nav-row {
   display: flex;
   gap: 10px;
-  flex-wrap: wrap;
+  align-items: center;
 }
 
 .jog-stop-btn {
   margin-left: auto;
 }
 
-.jog-settings-form,
-.jog-status-block {
+.jog-console-panel {
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
 }
 
-.jog-settings-grid {
+.jog-console-body {
+  flex: 1;
+  min-height: 0;
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 14px;
 }
 
-.jog-settings-note {
-  margin-top: 12px;
+.jog-console-section {
+  min-height: 0;
+}
+
+.jog-section-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.jog-section-heading h3 {
+  margin: 0;
+  font-size: 1rem;
+  color: #24455f;
+}
+
+.jog-section-heading p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+  text-align: right;
+}
+
+.jog-status-block,
+.jog-settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.jog-chip-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .jog-readout-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.jog-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
+}
+
+.jog-setting-field label {
+  margin: 0 0 6px;
+  font-size: 0.82rem;
+}
+
+.jog-setting-field input,
+.jog-setting-field select {
+  padding: 9px 10px;
 }
 
 .jog-readout-card {
   border: 1px solid var(--line);
   border-radius: 12px;
-  padding: 12px;
+  padding: 10px;
   background: #f7fbff;
 }
 
 .jog-readout-card h3 {
-  margin: 0 0 10px;
-  font-size: 0.96rem;
+  margin: 0 0 8px;
+  font-size: 0.88rem;
+}
+
+.jog-value-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.jog-value-cell {
+  border: 1px solid #d5e1eb;
+  border-radius: 10px;
+  padding: 8px 9px;
+  background: #fff;
+}
+
+.jog-value-cell span {
+  display: block;
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.jog-value-cell strong {
+  display: block;
+  margin-top: 3px;
+  font-size: 0.92rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.jog-controls-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  min-height: 0;
+}
+
+.jog-control-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .jog-axis-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
 }
 
 .jog-axis-card {
   border: 1px solid var(--line);
   border-radius: 12px;
-  padding: 12px;
+  padding: 10px;
   background: #f7fbff;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
 .jog-axis-name {
-  font-size: 0.98rem;
+  font-size: 0.88rem;
   font-weight: 700;
   color: #24455f;
+  text-align: center;
 }
 
 .jog-axis-buttons {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 10px;
+  gap: 8px;
 }
 
 .btn.jog-axis-btn {
   justify-content: center;
-  min-height: 54px;
-  font-size: 0.96rem;
+  min-height: 46px;
+  font-size: 0.82rem;
+  padding: 8px 10px;
 }
 
 .btn.jog-axis-negative {
@@ -1628,14 +1718,14 @@ pre {
     padding: 10px;
   }
 
-  .jog-page {
-    grid-template-columns: 1fr;
+  .jog-console-body,
+  .jog-controls-grid {
     gap: 10px;
   }
 
-  .jog-sidebar,
-  .jog-main {
-    gap: 10px;
+  .jog-section-heading {
+    flex-direction: column;
+    align-items: flex-start;
   }
 
   .jog-settings-grid,
@@ -1650,12 +1740,18 @@ pre {
     gap: 8px;
   }
   .pos-cell strong { font-size: 0.82rem; }
+  .jog-chip-grid,
+  .jog-controls-grid,
+  .jog-value-grid {
+    grid-template-columns: 1fr;
+  }
   .btn.jog-btn { padding: 8px 4px; font-size: 0.82rem; }
 }
 
 @media (max-width: 600px) {
   .jog-nav-row {
     flex-direction: column;
+    align-items: stretch;
   }
 
   .jog-stop-btn {
@@ -1664,6 +1760,9 @@ pre {
 
   .calibration-body { grid-template-columns: 1fr; }
 }
+
+/* Ensure [hidden] always wins over display:flex/grid rules in this stylesheet. */
+[hidden] { display: none !important; }
 
 /* ── On-screen keyboard ── */
 .wf-kbd {

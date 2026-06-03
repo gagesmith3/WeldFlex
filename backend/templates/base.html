@@ -26,7 +26,7 @@
       </div>
     </header>
 
-    <div class="app-content-scroll">
+    <div class="app-content-scroll {{ content_class or '' }}">
       {% block body %}{% endblock %}
     </div>
   </main>

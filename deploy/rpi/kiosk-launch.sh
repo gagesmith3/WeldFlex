@@ -28,11 +28,6 @@ if command -v unclutter >/dev/null 2>&1; then
   unclutter -idle 0.1 -root &
 fi
 
-# Start on-screen keyboard (auto-shows when a text input gains focus).
-if command -v onboard >/dev/null 2>&1; then
-  onboard --layout=Phone --size=800x160 &
-fi
-
 # Wait for the Flask backend before launching Chromium so the browser never
 # shows an "unable to connect" error page on startup.
 echo "Waiting for backend at $URL ..."

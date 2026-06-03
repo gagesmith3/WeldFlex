@@ -411,7 +411,12 @@ def create_app() -> Flask:
 
     @app.get("/jog")
     def jog() -> Any:
-        return render_template("jog.html", page_title="Jog", status_interval_ms=runtime_settings["status_interval_ms"])
+        return render_template(
+            "jog.html",
+            page_title="Jog",
+            status_interval_ms=runtime_settings["status_interval_ms"],
+            content_class="app-content-scroll-locked",
+        )
 
     @app.get("/ui/jog/status")
     def ui_jog_status() -> Any:

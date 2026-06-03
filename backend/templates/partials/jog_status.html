@@ -7,7 +7,7 @@
 {% endif %}
 
 <div class="jog-status-block">
-  <div class="chip-grid">
+  <div class="chip-grid jog-chip-grid">
     {{ status_chip(
         'Connection',
         'ONLINE' if snapshot.connected else 'OFFLINE',
@@ -20,10 +20,20 @@
         'Program',
         snapshot.program_state,
         icon=state_icon,
+        compact=true,
         tooltip=snapshot.error or ''
       )
     }}
-    {{ status_chip('Line', snapshot.current_line, icon='list_tree') }}
+    {{ status_chip(
+        'Connection',
+        'ONLINE' if snapshot.connected else 'OFFLINE',
+        icon='link_2' if snapshot.connected else 'link_2_off',
+        compact=true,
+        state='ok' if snapshot.connected else 'error',
+        tooltip=snapshot.error or ''
+      )
+    }}
+    {{ status_chip('Line', snapshot.current_line, icon='list_tree', compact=true) }}
   </div>
 
   {% if snapshot.error %}
@@ -33,9 +43,9 @@
   <div class="jog-readout-grid">
     <section class="jog-readout-card">
       <h3>TCP Pose</h3>
-      <div class="jog-readout-table">
+      <div class="jog-value-grid">
         {% for label, value in [('X', snapshot.tcp_pose_labels[0]), ('Y', snapshot.tcp_pose_labels[1]), ('Z', snapshot.tcp_pose_labels[2]), ('Rx', snapshot.tcp_pose_labels[3]), ('Ry', snapshot.tcp_pose_labels[4]), ('Rz', snapshot.tcp_pose_labels[5])] %}
-        <div class="row">
+        <div class="jog-value-cell">
           <span>{{ label }}</span>
           <strong>{{ value }}</strong>
         </div>
@@ -45,9 +55,9 @@
 
     <section class="jog-readout-card">
       <h3>Joint Position</h3>
-      <div class="jog-readout-table">
+      <div class="jog-value-grid">
         {% for label, value in [('J1', snapshot.joint_labels[0]), ('J2', snapshot.joint_labels[1]), ('J3', snapshot.joint_labels[2]), ('J4', snapshot.joint_labels[3]), ('J5', snapshot.joint_labels[4]), ('J6', snapshot.joint_labels[5])] %}
-        <div class="row">
+        <div class="jog-value-cell">
           <span>{{ label }}</span>
           <strong>{{ value }}</strong>
         </div>

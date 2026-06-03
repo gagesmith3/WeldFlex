@@ -145,10 +145,18 @@ class WeldFlexRobotService:
                 return
             self._upload_with_ftp(tmp_path, remote_file)
 
+    def _upload_static_lua_scripts(self) -> None:
+        lua_dir = Path(__file__).resolve().parents[1] / "robot" / "lua"
+        for script_name in ("studCycle.lua", "weld.lua"):
+            script_path = lua_dir / script_name
+            if script_path.exists():
+                self.upload_lua(script_path.read_text(encoding="utf-8"), f"/fruser/{script_name}")
+
     def upload_load_run(self, studs: list[dict[str, float]], remote_file: str) -> dict[str, Any]:
         studs_data_lua = build_studs_data_lua(studs)
 
         with self._lock:
+            self._upload_static_lua_scripts()
             self.upload_lua(studs_data_lua, self.studs_data_path)
             robot = self._client()
             try:

@@ -16,7 +16,7 @@
       <div class="app-header-left">
         {{ icon_link('/', 'home', '', 'home-btn', 'Back to Home') }}
         <div class="title-block">
-          <h1>WeldFlex Operator<span class="beta-badge">BETA</span></h1>
+          <h1>WeldFlex Operator<span class="beta-badge">BETA {{ git_sha }}</span></h1>
           <p>LYNX4 Powered Automated Stud Welding</p>
         </div>
       </div>
@@ -36,7 +36,7 @@
 
   <div id="kiosk-splash" class="kiosk-splash" aria-hidden="true">
     <p class="kiosk-splash-title">WeldFlex<span class="kiosk-splash-badge">BETA</span></p>
-    <p class="kiosk-splash-sub">LYNX4 Powered Automated Stud Welding</p>
+    <p class="kiosk-splash-sub">LYNX4 Powered Automated Stud Welding &nbsp;·&nbsp; {{ git_sha }}</p>
     <div class="kiosk-splash-spinner"></div>
   </div>
   <script>

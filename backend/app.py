@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -56,6 +57,17 @@ def create_app() -> Flask:
             return ""
 
     app.jinja_env.globals["icon_safe"] = icon_safe
+
+    try:
+        _git_sha = subprocess.check_output(
+            ["git", "rev-parse", "--short=7", "HEAD"],
+            cwd=Path(__file__).resolve().parents[1],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+    except Exception:
+        _git_sha = "unknown"
+    app.jinja_env.globals["git_sha"] = _git_sha
 
     robot_ip = os.getenv("WELDFLEX_ROBOT_IP", "192.168.58.2")
     controller_host = os.getenv("WELDFLEX_CONTROLLER_HOST", robot_ip)

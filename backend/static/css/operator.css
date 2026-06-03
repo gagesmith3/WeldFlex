@@ -1023,19 +1023,19 @@ pre {
   .panel h2 { font-size: 1rem; margin-top: 0; margin-bottom: 8px; }
   .page-body { padding: 10px; }
 
-  /* ── Home page: 2-column, fits ~425px content area ── */
+  /* ── Home page: stacked — run card full width, nav strip below ── */
   .home-body {
-    grid-template-columns: 1.2fr 0.9fr;
+    grid-template-columns: 1fr;
     padding: 10px;
     gap: 10px;
   }
   .home-hero { min-height: 0; }
 
-  /* Nav grid: keep 2×2 */
-  .home-nav-grid { grid-template-columns: 1fr 1fr; gap: 8px; }
-  .home-nav-card { padding: 10px; }
+  /* Nav grid: 1 row × 4 columns */
+  .home-nav-grid { grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .home-nav-card { padding: 10px; display: flex; flex-direction: column; align-items: center; text-align: center; }
   .home-nav-card p { display: none; }
-  .home-nav-card h3 { font-size: 0.88rem; margin: 4px 0 0; }
+  .home-nav-card h3 { font-size: 0.82rem; margin: 4px 0 0; }
   .home-nav-icon { width: 26px; height: 26px; margin-bottom: 4px; border-radius: 8px; }
 
   /* Metric cards: side-by-side instead of stacked */

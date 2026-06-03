@@ -2,7 +2,18 @@
 set -euo pipefail
 
 URL="${WELDFLEX_KIOSK_URL:-http://127.0.0.1:5000}"
-BROWSER_CMD="${WELDFLEX_BROWSER_CMD:-chromium-browser}"
+
+# Resolve browser binary — explicit override wins, otherwise auto-detect.
+if [[ -n "${WELDFLEX_BROWSER_CMD:-}" ]]; then
+  BROWSER_CMD="$WELDFLEX_BROWSER_CMD"
+elif command -v chromium >/dev/null 2>&1; then
+  BROWSER_CMD="chromium"
+elif command -v chromium-browser >/dev/null 2>&1; then
+  BROWSER_CMD="chromium-browser"
+else
+  echo "No Chromium browser found. Install chromium or chromium-browser." >&2
+  exit 1
+fi
 
 # Prevent display power-down/blanking.
 xset s off

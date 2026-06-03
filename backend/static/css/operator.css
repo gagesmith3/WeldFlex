@@ -892,18 +892,6 @@ pre {
 }
 
 @media (max-width: 900px) {
-  .app-header {
-    grid-template-columns: 1fr;
-  }
-
-  .nav-status-wrap {
-    grid-template-columns: 1fr;
-  }
-
-  .estop-btn {
-    width: 100%;
-  }
-
   .home-body {
     grid-template-columns: 1fr;
   }
@@ -939,6 +927,61 @@ pre {
 
   .settings-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+/* 800x480 kiosk display — compact header, larger touch targets */
+@media (max-width: 820px) {
+  .app-header {
+    padding: 8px 12px;
+    grid-template-columns: 1.2fr 1fr;
+    gap: 10px;
+  }
+
+  .app-header h1 {
+    font-size: 1.1rem;
+  }
+
+  .title-block p {
+    display: none;
+  }
+
+  .app-header-right {
+    padding: 8px;
+  }
+
+  .nav-status-wrap {
+    gap: 8px;
+  }
+
+  .btn {
+    min-height: 44px;
+    padding: 10px 14px;
+  }
+
+  .estop-btn {
+    min-height: 44px;
+  }
+
+  input,
+  select,
+  textarea {
+    padding: 12px 10px;
+    font-size: 1rem;
+  }
+}
+
+@media (max-width: 600px) {
+  .app-header {
+    grid-template-columns: 1fr;
+  }
+
+  .nav-status-wrap {
+    grid-template-columns: 1fr;
+  }
+
+  .estop-btn {
+    width: 100%;
   }
 }
 

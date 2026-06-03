@@ -1,18 +1,36 @@
 from __future__ import annotations
 
+import math
 from typing import Sequence
+
+MAX_OFFSET_MM = 2000.0
 
 
 def _format_number(value: float | int) -> str:
-    """Format numbers for Lua while keeping integers compact."""
     as_float = float(value)
     if as_float.is_integer():
         return str(int(as_float))
     return f"{as_float:.3f}".rstrip("0").rstrip(".")
 
 
+def validate_studs(studs: Sequence[dict[str, float]]) -> None:
+    if not studs:
+        raise ValueError("No stud coordinates provided.")
+    for i, stud in enumerate(studs, start=1):
+        x = stud.get("x")
+        y = stud.get("y")
+        if x is None or y is None:
+            raise ValueError(f"Stud {i}: missing x or y value.")
+        if not math.isfinite(x) or not math.isfinite(y):
+            raise ValueError(f"Stud {i}: coordinates must be finite numbers.")
+        if abs(x) > MAX_OFFSET_MM or abs(y) > MAX_OFFSET_MM:
+            raise ValueError(
+                f"Stud {i}: ({x}, {y}) mm exceeds the ±{int(MAX_OFFSET_MM)} mm limit — check for a data-entry error."
+            )
+
+
 def build_studs_data_lua(studs: Sequence[dict[str, float]]) -> str:
-    """Build a Lua data file that defines the dynamic studs table."""
+    validate_studs(studs)
     studs_lua = ",\n".join(
         f"    {{x={_format_number(stud['x'])}, y={_format_number(stud['y'])}}}" for stud in studs
     )

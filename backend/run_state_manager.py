@@ -6,6 +6,9 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 
+CYCLE_LOST_TIMEOUT_S = 30.0
+
+
 class RunStateManager:
     def __init__(self) -> None:
         self._state: dict[str, Any] = {
@@ -16,6 +19,7 @@ class RunStateManager:
             "cycle_running": False,
             "cycle_seen_running": False,
             "cycle_stopped_since": 0.0,
+            "cycle_unknown_since": 0.0,
             "started_at": "",
             "last_command": "No command sent yet",
             "last_command_status": "idle",
@@ -53,6 +57,7 @@ class RunStateManager:
                     "cycle_running": False,
                     "cycle_seen_running": False,
                     "cycle_stopped_since": 0.0,
+                    "cycle_unknown_since": 0.0,
                     "started_at": self._utc_now_str(),
                 }
             )
@@ -69,6 +74,7 @@ class RunStateManager:
                     "cycle_running": True,
                     "cycle_seen_running": False,
                     "cycle_stopped_since": 0.0,
+                    "cycle_unknown_since": 0.0,
                     "started_at": self._utc_now_str(),
                 }
             )
@@ -82,6 +88,7 @@ class RunStateManager:
                     "cycle_running": False,
                     "cycle_seen_running": False,
                     "cycle_stopped_since": 0.0,
+                    "cycle_unknown_since": 0.0,
                 }
             )
 
@@ -110,6 +117,7 @@ class RunStateManager:
             self._state["cycle_running"] = True
             self._state["cycle_seen_running"] = False
             self._state["cycle_stopped_since"] = 0.0
+            self._state["cycle_unknown_since"] = 0.0
             self._state["last_command"] = f"Run: Starting cycle {cycle_number}/{requested} for {part_name}"
             self._state["last_command_status"] = "ok"
             self._state["last_command_at"] = self._utc_now_str()
@@ -144,11 +152,27 @@ class RunStateManager:
         if program_state in {"running", "paused"}:
             self._state["cycle_seen_running"] = True
             self._state["cycle_stopped_since"] = 0.0
+            self._state["cycle_unknown_since"] = 0.0
             return
 
         if program_state != "stopped":
+            # Robot is unreachable or state is unknown — start / advance lost-connection timeout.
             self._state["cycle_stopped_since"] = 0.0
+            unknown_since = float(self._state.get("cycle_unknown_since", 0.0) or 0.0)
+            if unknown_since <= 0.0:
+                self._state["cycle_unknown_since"] = now
+            elif now - unknown_since > CYCLE_LOST_TIMEOUT_S:
+                self._state["cycle_running"] = False
+                self._state["cycle_seen_running"] = False
+                self._state["cycle_stopped_since"] = 0.0
+                self._state["cycle_unknown_since"] = 0.0
+                self._state["active"] = False
+                self._state["last_command"] = "Run: Aborted — robot connection lost during cycle"
+                self._state["last_command_status"] = "error"
+                self._state["last_command_at"] = self._utc_now_str()
             return
+
+        self._state["cycle_unknown_since"] = 0.0
 
         if not self._state.get("cycle_seen_running", False):
             return

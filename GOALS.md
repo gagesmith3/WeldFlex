@@ -15,7 +15,7 @@
 | Status | Goal | Notes |
 |--------|------|-------|
 | `[x]` | Add `studCycle.lua` to repo | Done 2026-06-03 — `robot/lua/studCycle.lua` |
-| `[ ]` | Validate generated `studs_data.lua` format before upload | Bounds check, non-empty guard, format assertion |
+| `[x]` | Validate generated `studs_data.lua` format before upload | Done 2026-06-03 — empty guard + finite check + ±2000 mm limit in `lua_builder.validate_studs` |
 | `[ ]` | Add error handling inside `studCycle.lua` | Handle missing data file, out-of-bounds stud, weld fault |
 | `[ ]` | Support per-stud weld parameters (dwell, force, etc.) | Currently all studs use identical robot program settings |
 | `[ ]` | Replace `weld.lua` stub with digital IO weld trigger | Current stub just moves Z down/up; real welder needs IO sequence |
@@ -25,12 +25,12 @@
 ## 2. Calibration Tools
 | Status | Goal | Notes |
 |--------|------|-------|
-| `[ ]` | New `/calibration` page | Dedicated operator calibration workspace |
-| `[ ]` | Jog controls (X/Y/Z, step size selector) | Manual robot movement from UI |
-| `[ ]` | Set work origin (capture current robot position as 0,0) | Touch-off workflow |
+| `[x]` | New `/calibration` page | Done 2026-06-03 — live position, jog, origin capture, dry run |
+| `[x]` | Jog controls (X/Y/Z, step size selector) | Done 2026-06-03 — StartJOG via SDK, 0.1/1/5/10/50 mm steps |
+| `[x]` | Set work origin (capture current robot position as 0,0) | Done 2026-06-03 — GetActualTCPPose → data/calibration.json |
 | `[ ]` | Tool offset calibration | TCP calibration relative to robot flange |
-| `[ ]` | Dry-run / test-move | Move to all stud positions in sequence without welding |
-| `[ ]` | Save/restore calibration data | Persist offsets across restarts |
+| `[x]` | Dry-run / test-move | Done 2026-06-03 — studCycleDryRun.lua, 30% speed, no weld |
+| `[x]` | Save/restore calibration data | Done 2026-06-03 — persisted to data/calibration.json |
 
 ---
 
@@ -48,7 +48,7 @@
 | Status | Goal | Notes |
 |--------|------|-------|
 | `[ ]` | Merge Part Library into Part Designer | One screen to pick, edit, preview, and run — eliminate separate library page |
-| `[ ]` | Toast/notification system | Replace global command-result banner with transient, non-blocking toasts |
+| `[x]` | Toast/notification system | Done 2026-06-03 — fixed-bottom overlay toasts, auto-dismiss, standard via `#toast-rack` |
 | `[ ]` | Operator-friendly error recovery | Clear next-action guidance when robot faults or connection drops |
 | `[ ]` | Keyboard/touch shortcut for E-STOP | Hardware-level accessible stop, not buried in header |
 
@@ -67,8 +67,8 @@
 ## 6. Backend & Reliability
 | Status | Goal | Notes |
 |--------|------|-------|
-| `[ ]` | Robust cycle-completion detection | Timeout if robot goes silent; don't hang on lost connection |
-| `[ ]` | Lost-connection recovery | Auto-reconnect with status feedback; surface actionable error |
+| `[x]` | Robust cycle-completion detection | Done 2026-06-03 — 30s lost-connection timeout in `RunStateManager._refresh_cycle_completion` |
+| `[x]` | Lost-connection recovery | Done 2026-06-03 — 5s timeout on all SDK calls via `_run_with_timeout`; resets connection on timeout |
 | `[ ]` | Pre-run health check | Verify robot is online and ready before uploading program |
 | `[ ]` | FTP upload reliability | Retry logic, verify file was written before ProgramRun |
 
@@ -81,5 +81,5 @@
 | `[x]` | Auto git-pull on boot | Done — `weldflex-update.service` with retry + connectivity check |
 | `[x]` | Git SHA in BETA badge | Done 2026-06-03 — visible in header for update verification |
 | `[x]` | Chromium auto-detect binary | Done 2026-06-03 — tries `chromium` then `chromium-browser` |
-| `[ ]` | Onboard virtual keyboard auto-show on input focus | Installed, GSettings override applied — needs verification |
+| `[x]` | Custom in-browser virtual keyboard | Done 2026-06-03 — replaces onboard; `data-kbd="num\|alpha"` on any input |
 | `[ ]` | Screen timeout / idle lock | Blank screen after N minutes, tap to wake |

@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% from "components/ui.html" import action_button, panel_shell with context %}
+
+{% block body %}
+<div class="calibration-body">
+
+  <!-- Left: Live Position + Jog Controls -->
+  {% call panel_shell('Live Position & Jog', 'Current TCP pose in base coordinates. Use jog to position the robot.', class_name='calib-pos-panel') %}
+    <div id="pos-mount"
+         hx-get="/ui/calibration/position"
+         hx-trigger="load, every 500ms, refresh"
+         hx-swap="innerHTML">
+    </div>
+
+    <div class="jog-section">
+      <div class="jog-step-row">
+        <span class="jog-step-label">Step (mm)</span>
+        <div class="jog-step-btns">
+          <button class="btn jog-step-btn active" data-step="0.1" onclick="setJogStep(this)">0.1</button>
+          <button class="btn jog-step-btn" data-step="1" onclick="setJogStep(this)">1</button>
+          <button class="btn jog-step-btn" data-step="5" onclick="setJogStep(this)">5</button>
+          <button class="btn jog-step-btn" data-step="10" onclick="setJogStep(this)">10</button>
+          <button class="btn jog-step-btn" data-step="50" onclick="setJogStep(this)">50</button>
+        </div>
+      </div>
+      <input type="hidden" id="jog-step" name="step" value="0.1">
+
+      <div class="jog-grid">
+        {% for axis in ['X', 'Y', 'Z'] %}
+        <div class="jog-axis-col">
+          <button class="btn jog-btn jog-pos"
+            hx-post="/ui/calibration/jog"
+            hx-target="#toast-rack"
+            hx-swap="innerHTML"
+            hx-vals='{"axis": "{{ axis|lower }}", "dir": "1"}'
+            hx-include="#jog-step"
+            hx-on::after-request="refreshPos()">+{{ axis }}</button>
+          <span class="jog-axis-label">{{ axis }}</span>
+          <button class="btn jog-btn jog-neg"
+            hx-post="/ui/calibration/jog"
+            hx-target="#toast-rack"
+            hx-swap="innerHTML"
+            hx-vals='{"axis": "{{ axis|lower }}", "dir": "0"}'
+            hx-include="#jog-step"
+            hx-on::after-request="refreshPos()">−{{ axis }}</button>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  {% endcall %}
+
+  <!-- Right: Origin Capture + Dry Run -->
+  <div class="calib-right-col">
+
+    {% call panel_shell('Work Origin', 'Capture the current TCP pose as the zerozero reference point.', class_name='calib-origin-panel') %}
+      {% if calibration.work_origin %}
+      <div class="origin-readout">
+        {% for key, val in calibration.work_origin.items() %}
+        <div class="origin-row">
+          <span>{{ key.upper() }}</span>
+          <strong>{{ val }}&thinsp;{{ '°' if key.startswith('r') else 'mm' }}</strong>
+        </div>
+        {% endfor %}
+        {% if calibration.captured_at %}
+        <p class="origin-meta">Captured {{ calibration.captured_at[:19].replace('T', ' ') }} UTC</p>
+        {% endif %}
+      </div>
+      {% else %}
+      <p class="panel-note">No origin captured yet.</p>
+      {% endif %}
+      {{ action_button('Capture as Origin', variant='run', icon='crosshair',
+           hx_post='/ui/calibration/capture-origin',
+           hx_target='#toast-rack') }}
+    {% endcall %}
+
+    {% call panel_shell('Dry Run', 'Trace all stud positions at slow speed without welding.', class_name='calib-dryrun-panel') %}
+      {% if recipes %}
+      <form hx-post="/ui/calibration/dry-run" hx-target="#toast-rack" hx-swap="innerHTML">
+        <label for="dry-run-recipe">Recipe</label>
+        <select id="dry-run-recipe" name="recipe_name">
+          {% for r in recipes %}
+          <option value="{{ r.name }}">{{ r.name }}</option>
+          {% endfor %}
+        </select>
+        <div class="actions">
+          {{ action_button('Start Dry Run', variant='run', icon='play', button_type='submit') }}
+        </div>
+      </form>
+      {% else %}
+      <p class="panel-note">No recipes saved. Create one in Part Designer first.</p>
+      {% endif %}
+    {% endcall %}
+
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function setJogStep(btn) {
+  document.querySelectorAll('.jog-step-btn').forEach(function(b) { b.classList.remove('active'); });
+  btn.classList.add('active');
+  document.getElementById('jog-step').value = btn.dataset.step;
+}
+function refreshPos() {
+  var el = htmx.find('#pos-mount');
+  if (el) htmx.trigger(el, 'refresh');
+}
+</script>
+{% endblock %}

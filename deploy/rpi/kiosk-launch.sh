@@ -15,6 +15,9 @@ else
   exit 1
 fi
 
+# Paint root window dark immediately so the LXDE desktop never flashes through.
+xsetroot -solid "#1c1c1e"
+
 # Prevent display power-down/blanking.
 xset s off
 xset -dpms

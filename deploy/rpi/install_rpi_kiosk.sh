@@ -168,6 +168,13 @@ if [[ -f "$SPLASH_SRC" ]]; then
       echo "Added splash to $CMDLINE"
     fi
   done
+  # Suppress Pi GPU firmware rainbow square (appears before kernel boots).
+  for CONFIG in /boot/firmware/config.txt /boot/config.txt; do
+    if [[ -f "$CONFIG" ]] && ! grep -q 'disable_splash' "$CONFIG"; then
+      echo 'disable_splash=1' | sudo tee -a "$CONFIG" > /dev/null
+      echo "Added disable_splash=1 to $CONFIG"
+    fi
+  done
   echo "Plymouth splash configured."
 else
   echo "Warning: deploy/rpi/splash.jpg not found — skipping Plymouth setup."

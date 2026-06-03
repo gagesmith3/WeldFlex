@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=WeldFlex Kiosk
+Comment=WeldFlex industrial welding controller — minimal kiosk session (no desktop environment)
+Exec=WELDFLEX_SESSION_EXEC
+Type=Application
+DesktopNames=weldflex-kiosk

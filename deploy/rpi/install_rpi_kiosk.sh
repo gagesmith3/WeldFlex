@@ -44,7 +44,7 @@ else
   exit 1
 fi
 
-sudo apt install -y python3-venv "$CHROMIUM_PACKAGE" unclutter git onboard at-spi2-core plymouth imagemagick
+sudo apt install -y python3-venv "$CHROMIUM_PACKAGE" unclutter git onboard at-spi2-core plymouth imagemagick xorg
 
 echo
 echo "[1b/8] Configuring kiosk desktop appearance (dark background, no icons)..."
@@ -111,7 +111,7 @@ if ! python "$REPO_ROOT/scripts/rpi_preflight.py"; then
 fi
 
 echo
-echo "[6/8] Installing and enabling boot update service..."
+echo "[6/9] Installing and enabling boot update service..."
 chmod +x "$REPO_ROOT/deploy/rpi/update_on_boot.sh"
 TMP_UPDATE="$(mktemp)"
 sed \
@@ -123,7 +123,7 @@ sudo cp "$TMP_UPDATE" /etc/systemd/system/weldflex-update.service
 rm -f "$TMP_UPDATE"
 
 echo
-echo "[7/8] Installing and enabling backend service..."
+echo "[7/9] Installing and enabling backend service..."
 TMP_BACKEND="$(mktemp)"
 sed \
   -e "s|^User=.*$|User=$TARGET_USER|" \
@@ -134,8 +134,9 @@ sudo cp "$TMP_BACKEND" /etc/systemd/system/weldflex-backend.service
 rm -f "$TMP_BACKEND"
 
 echo
-echo "[8/8] Installing and enabling kiosk service..."
+echo "[8/9] Installing kiosk service (not auto-started — LightDM session handles launch)..."
 chmod +x "$REPO_ROOT/deploy/rpi/kiosk-launch.sh"
+chmod +x "$REPO_ROOT/deploy/rpi/kiosk-session.sh"
 
 KIOSK_BROWSER_CMD=""
 if command -v chromium >/dev/null 2>&1; then
@@ -162,10 +163,38 @@ rm -f "$TMP_KIOSK"
 sudo systemctl daemon-reload
 sudo systemctl enable --now weldflex-update.service
 sudo systemctl enable --now weldflex-backend.service
-sudo systemctl enable --now weldflex-kiosk.service
+# weldflex-kiosk.service is installed but NOT enabled here; the LightDM
+# session (weldflex-kiosk.desktop) launches the kiosk directly via
+# kiosk-session.sh, eliminating the ~45 s LXDE desktop flash.
+sudo systemctl disable weldflex-kiosk.service 2>/dev/null || true
 
 echo
-echo "[9/8] Configuring Plymouth boot splash..."
+echo "[9/9] Installing WeldFlex X session and configuring LightDM autologin..."
+
+# Install xsession desktop file so LightDM can offer the WeldFlex session.
+sudo mkdir -p /usr/share/xsessions
+TMP_DESKTOP="$(mktemp)"
+sed \
+  -e "s|WELDFLEX_SESSION_EXEC|$REPO_ROOT/deploy/rpi/kiosk-session.sh|" \
+  "$REPO_ROOT/deploy/rpi/weldflex-kiosk.desktop" > "$TMP_DESKTOP"
+sudo cp "$TMP_DESKTOP" /usr/share/xsessions/weldflex-kiosk.desktop
+rm -f "$TMP_DESKTOP"
+
+# Write a LightDM drop-in that autologins straight to the WeldFlex session.
+# Using conf.d/99-... ensures this overrides any existing autologin config
+# without touching the main lightdm.conf (safe to re-run).
+sudo mkdir -p /etc/lightdm/lightdm.conf.d
+sudo tee /etc/lightdm/lightdm.conf.d/99-weldflex-kiosk.conf > /dev/null <<LIGHTDM_CONF
+[Seat:*]
+autologin-user=$TARGET_USER
+autologin-user-timeout=0
+autologin-session=weldflex-kiosk
+user-session=weldflex-kiosk
+LIGHTDM_CONF
+echo "LightDM configured: autologin as $TARGET_USER into weldflex-kiosk session."
+
+echo
+echo "[10/9] Configuring Plymouth boot splash..."
 SPLASH_SRC="$REPO_ROOT/deploy/rpi/splash.jpg"
 PLYMOUTH_DEST=/usr/share/plymouth/themes/pix/splash.png
 if [[ -f "$SPLASH_SRC" ]]; then
@@ -200,6 +229,6 @@ echo "Install complete."
 echo "Check service status:"
 echo "  sudo systemctl status weldflex-update.service"
 echo "  sudo systemctl status weldflex-backend.service"
-echo "  sudo systemctl status weldflex-kiosk.service"
+echo "LightDM will autologin as '$TARGET_USER' into the WeldFlex kiosk session on next boot."
 echo "Reboot when ready:"
 echo "  sudo reboot"

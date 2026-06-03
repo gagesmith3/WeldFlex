@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% from "components/ui.html" import panel_shell with context %}
+
+{% block head_extra %}
+  <script defer src="{{ url_for('static', filename='js/coordinate_table.js') }}"></script>
+{% endblock %}
+
+{% block body %}
+<div class="parts-body">
+
+  <div class="parts-sidebar">
+    {% call panel_shell('Parts', class_name='parts-list-panel') %}
+      <div id="parts-recipe-list">
+        {% include "partials/parts_recipe_list.html" %}
+      </div>
+      <button class="btn recipe-save parts-new-btn"
+              hx-get="/ui/parts/new"
+              hx-target="#parts-editor"
+              hx-swap="innerHTML"
+              hx-on::after-request="document.querySelectorAll('.recipe-list-item').forEach(function(b){b.classList.remove('active')})">
+        + New Part
+      </button>
+    {% endcall %}
+  </div>
+
+  <div class="parts-workspace">
+    <div id="parts-editor">
+      {% include "partials/parts_editor.html" %}
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function setActiveRecipe(el) {
+  document.querySelectorAll('.recipe-list-item').forEach(function(b) { b.classList.remove('active'); });
+  el.classList.add('active');
+}
+</script>
+{% endblock %}

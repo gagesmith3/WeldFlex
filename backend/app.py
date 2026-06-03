@@ -319,26 +319,23 @@ def create_app() -> Flask:
     def index() -> Any:
         return render_template("home.html", page_title="Home", status_interval_ms=runtime_settings["status_interval_ms"])
 
+    @app.get("/parts")
+    def parts() -> Any:
+        return render_template(
+            "parts.html",
+            page_title="Parts",
+            recipes=recipe_catalog(),
+            recipe_name=None,
+            studs_text="",
+        )
+
     @app.get("/part-library")
     def part_library() -> Any:
-        return render_template(
-            "part_library.html",
-            page_title="Part Library",
-            recipes=recipe_catalog(),
-            status_interval_ms=runtime_settings["status_interval_ms"],
-        )
+        return redirect("/parts", code=301)
 
     @app.get("/part-designer")
     def part_designer() -> Any:
-        return render_template(
-            "operator.html",
-            page_title="Part Designer",
-            default_program_path=runtime_settings["program_path"],
-            robot_ip=runtime_settings["robot_ip"],
-            controller_host=runtime_settings["controller_host"],
-            status_interval_ms=runtime_settings["status_interval_ms"],
-            recipes=recipe_list(),
-        )
+        return redirect("/parts", code=301)
 
     @app.get("/robot-diagnostics")
     def robot_diagnostics() -> Any:
@@ -355,6 +352,43 @@ def create_app() -> Flask:
     @app.get("/calibration")
     def calibration() -> Any:
         return render_template("calibration.html", page_title="Calibration")
+
+    @app.get("/ui/parts/list")
+    def ui_parts_list() -> Any:
+        return render_template("partials/parts_recipe_list.html", recipes=recipe_catalog())
+
+    @app.get("/ui/parts/new")
+    def ui_parts_new() -> Any:
+        return render_template("partials/parts_editor.html", recipe_name="", studs_text="")
+
+    @app.post("/ui/parts/load")
+    def ui_parts_load() -> Any:
+        try:
+            name = sanitize_recipe_name(request.form.get("recipe_name", ""))
+            studs_text = get_recipe_text(name)
+            return render_template("partials/parts_editor.html", recipe_name=name, studs_text=studs_text)
+        except Exception as exc:
+            return render_template(
+                "partials/command_result.html", ok=False, title="Load Part", payload={"error": str(exc)}
+            )
+
+    @app.post("/ui/parts/delete")
+    def ui_parts_delete() -> Any:
+        try:
+            name = sanitize_recipe_name(request.form.get("recipe_name", ""))
+            store = read_recipe_store()
+            recipes = store.get("recipes", {})
+            if name not in recipes:
+                raise ValueError(f"Part '{name}' not found.")
+            del recipes[name]
+            write_recipe_store(store)
+            return render_template(
+                "partials/command_result.html", ok=True, title="Delete Part", payload={"message": f"Deleted '{name}'"}
+            )
+        except Exception as exc:
+            return render_template(
+                "partials/command_result.html", ok=False, title="Delete Part", payload={"error": str(exc)}
+            )
 
     @app.get("/ui")
     def operator_ui() -> Any:

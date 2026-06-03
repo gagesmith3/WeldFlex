@@ -1072,7 +1072,7 @@ pre {
 
   /* Nav panel stretches to match run card, cards fill it evenly */
   .home-nav-panel { display: flex; flex-direction: column; }
-  .home-nav-grid { flex: 1; grid-template-columns: 1fr; grid-template-rows: repeat(5, 1fr); gap: 6px; }
+  .home-nav-grid { flex: 1; grid-template-columns: 1fr; grid-template-rows: repeat(4, 1fr); gap: 6px; }
   .home-nav-card { padding: 8px 10px; display: flex; flex-direction: row; align-items: center; gap: 8px; }
   .home-nav-card p { display: none; }
   .home-nav-card h3 { font-size: 0.82rem; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -1143,6 +1143,125 @@ pre {
   .hero-metrics {
     grid-template-columns: 1fr;
   }
+}
+
+/* ── Parts page (combined Part Designer + Library) ── */
+.parts-body {
+  display: grid;
+  grid-template-columns: 210px 1fr;
+  gap: 12px;
+  padding: 12px;
+  flex: 1;
+  min-height: 0;
+  align-items: stretch;
+}
+
+.parts-sidebar {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.parts-list-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+#parts-recipe-list {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 10px;
+  min-height: 0;
+}
+
+.recipe-list-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  font-size: 0.85rem;
+  transition: background 80ms ease, border-color 80ms ease;
+  flex-shrink: 0;
+}
+
+.recipe-list-item:hover { background: #eef5fb; }
+.recipe-list-item.active { background: #ddebf8; border-color: #1d5f9a; }
+
+.recipe-item-name {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.recipe-item-meta {
+  font-size: 0.75rem;
+  color: var(--muted);
+  flex-shrink: 0;
+  margin-left: 8px;
+}
+
+.parts-new-btn { width: 100%; }
+
+.parts-workspace {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.parts-edit-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.parts-name-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.parts-name-row input { flex: 1; min-width: 0; }
+
+.parts-run-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+.parts-run-count {
+  width: 56px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.parts-run-label {
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin-right: auto;
+}
+
+.parts-empty {
+  padding: 24px;
+  color: var(--muted);
 }
 
 /* ── Calibration page ── */

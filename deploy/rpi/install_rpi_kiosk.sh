@@ -47,7 +47,22 @@ fi
 sudo apt install -y python3-venv "$CHROMIUM_PACKAGE" unclutter git onboard at-spi2-core plymouth imagemagick
 
 echo
-echo "[1b/8] Configuring onboard virtual keyboard (auto-show on input focus)..."
+echo "[1b/8] Configuring kiosk desktop appearance (dark background, no icons)..."
+PCMANFM_CONF="$TARGET_HOME/.config/pcmanfm/LXDE/desktop-items-0.conf"
+sudo -u "$TARGET_USER" mkdir -p "$(dirname "$PCMANFM_CONF")"
+sudo -u "$TARGET_USER" tee "$PCMANFM_CONF" > /dev/null <<'PCMANFM'
+[*]
+wallpaper_mode=color
+desktop_bg=#1c1c1e
+desktop_fg=#1c1c1e
+desktop_shadow=#1c1c1e
+show_documents=0
+show_trash=0
+show_mounts=0
+PCMANFM
+
+echo
+echo "[1c/8] Configuring onboard virtual keyboard (auto-show on input focus)..."
 ONBOARD_OVERRIDE=/usr/share/glib-2.0/schemas/99_onboard-weldflex.gschema.override
 sudo tee "$ONBOARD_OVERRIDE" > /dev/null <<'OVERRIDE'
 [org.onboard]

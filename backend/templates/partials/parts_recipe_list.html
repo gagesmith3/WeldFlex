@@ -1,15 +1,30 @@
 {% if recipes %}
-  {% for recipe in recipes %}
-  <button class="recipe-list-item"
-          hx-post="/ui/parts/load"
-          hx-vals='{"recipe_name": "{{ recipe.name }}"}'
-          hx-target="#parts-editor"
-          hx-swap="innerHTML"
-          hx-on::after-request="if(event.detail.successful){setActiveRecipe(this)}">
-    <span class="recipe-item-name">{{ recipe.name }}</span>
-    <span class="recipe-item-meta">{{ recipe.studs_count }}&thinsp;studs</span>
-  </button>
-  {% endfor %}
+<div class="table-shell parts-library-shell">
+  <table class="library-table parts-library-table">
+    <thead>
+      <tr>
+        <th>Part</th>
+        <th>Studs</th>
+        <th>Updated</th>
+        <th>Action</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for recipe in recipes %}
+      <tr>
+        <td class="parts-library-name-cell">{{ recipe.name }}</td>
+        <td>{{ recipe.studs_count }}</td>
+        <td>{{ recipe.updated_label }}</td>
+        <td class="parts-library-action-cell">
+          <a class="btn recipe-load" href="/parts?recipe_name={{ recipe.name | urlencode }}">View Part</a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
 {% else %}
-  <p class="panel-note">No parts yet.</p>
+<div class="parts-library-empty">
+  <p class="panel-note">No parts yet. Create your first one to start building.</p>
+</div>
 {% endif %}

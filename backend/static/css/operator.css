@@ -1147,104 +1147,137 @@ pre {
 
 /* ── Parts page (combined Part Designer + Library) ── */
 .parts-body {
-  display: grid;
-  grid-template-columns: 210px 1fr;
-  gap: 12px;
   padding: 12px;
   flex: 1;
+  display: flex;
+  flex-direction: column;
   min-height: 0;
+}
+
+.parts-library-view,
+.parts-editor-view,
+#parts-editor {
+  flex: 1;
+  min-height: 0;
+}
+
+.parts-library-view {
+  display: flex;
+  flex-direction: column;
+}
+
+.parts-library-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.parts-library-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
+
+.parts-library-toolbar .btn {
+  margin-top: 0;
+}
+
+.parts-library-table-wrap {
+  flex: 1;
+  min-height: 0;
+}
+
+.parts-library-shell {
+  height: 100%;
+  overflow: auto;
+}
+
+.parts-library-name-cell {
+  font-weight: 600;
+}
+
+.parts-library-action-cell {
+  width: 1%;
+  white-space: nowrap;
+}
+
+.parts-library-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-height: 240px;
+  text-align: center;
+}
+
+.parts-editor-view {
+  display: grid;
+  grid-template-columns: minmax(0, 45fr) minmax(0, 55fr);
+  gap: 12px;
   align-items: stretch;
 }
 
-.parts-sidebar {
+.parts-editor-column,
+.parts-preview-column {
   display: flex;
   flex-direction: column;
   min-height: 0;
 }
 
-.parts-list-panel {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
-}
-
-#parts-recipe-list {
-  flex: 1;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
+.parts-back-row {
   margin-bottom: 10px;
-  min-height: 0;
 }
 
-.recipe-list-item {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 8px 10px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #fff;
-  cursor: pointer;
-  text-align: left;
-  width: 100%;
-  font-size: 0.85rem;
-  transition: background 80ms ease, border-color 80ms ease;
-  flex-shrink: 0;
+.parts-back-row .btn {
+  margin-top: 0;
 }
 
-.recipe-list-item:hover { background: #eef5fb; }
-.recipe-list-item.active { background: #ddebf8; border-color: #1d5f9a; }
-
-.recipe-item-name {
-  font-weight: 600;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  min-width: 0;
-}
-
-.recipe-item-meta {
-  font-size: 0.75rem;
-  color: var(--muted);
-  flex-shrink: 0;
-  margin-left: 8px;
-}
-
-.parts-new-btn { width: 100%; }
-
-.parts-workspace {
+.parts-edit-panel,
+.parts-preview-panel {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  flex: 1;
   min-height: 0;
-  overflow-y: auto;
-}
-
-.parts-edit-inner {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
 }
 
 .parts-name-row {
   display: flex;
   gap: 8px;
   align-items: center;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 .parts-name-row input { flex: 1; min-width: 0; }
+
+.parts-table-block {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.parts-edit-panel .table-head {
+  flex-shrink: 0;
+}
+
+.parts-edit-panel .coord-table-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
 
 .parts-run-row {
   display: flex;
   gap: 8px;
   align-items: center;
   margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
   flex-wrap: wrap;
+  flex-shrink: 0;
 }
 
 .parts-run-count {
@@ -1259,9 +1292,180 @@ pre {
   margin-right: auto;
 }
 
+.parts-preview-panel #studs-preview {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.parts-preview-panel .preview-card,
+.parts-preview-panel .plot-card {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.parts-preview-panel .preview-card {
+  margin-bottom: 0;
+}
+
+.parts-preview-panel .plot-svg {
+  width: min(100%, 720px);
+  max-height: 100%;
+}
+
 .parts-empty {
   padding: 24px;
   color: var(--muted);
+}
+
+@media (max-width: 700px) {
+  .parts-editor-view {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 820px) {
+  .parts-body {
+    padding: 10px;
+  }
+
+  .parts-editor-view {
+    gap: 10px;
+  }
+
+  .parts-library-toolbar {
+    margin-bottom: 10px;
+  }
+}
+
+.calibration-launch-body {
+  display: flex;
+  flex: 1;
+  padding: 16px;
+  min-height: 0;
+}
+
+.calibration-launch-panel {
+  width: min(720px, 100%);
+}
+
+.calibration-launch-copy {
+  margin-bottom: 18px;
+}
+
+.calibration-launch-actions {
+  display: flex;
+}
+
+.calibration-jog-btn {
+  min-width: 180px;
+  justify-content: center;
+}
+
+.jog-page {
+  display: grid;
+  grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
+  gap: 16px;
+  padding: 16px;
+  flex: 1;
+  min-height: 0;
+}
+
+.jog-sidebar,
+.jog-main {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+}
+
+.jog-nav-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.jog-stop-btn {
+  margin-left: auto;
+}
+
+.jog-settings-form,
+.jog-status-block {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.jog-settings-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.jog-settings-note {
+  margin-top: 12px;
+}
+
+.jog-readout-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.jog-readout-card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px;
+  background: #f7fbff;
+}
+
+.jog-readout-card h3 {
+  margin: 0 0 10px;
+  font-size: 0.96rem;
+}
+
+.jog-axis-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.jog-axis-card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px;
+  background: #f7fbff;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.jog-axis-name {
+  font-size: 0.98rem;
+  font-weight: 700;
+  color: #24455f;
+}
+
+.jog-axis-buttons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.btn.jog-axis-btn {
+  justify-content: center;
+  min-height: 54px;
+  font-size: 0.96rem;
+}
+
+.btn.jog-axis-negative {
+  background: #7d2c34;
+}
+
+.btn.jog-axis-positive {
+  background: #1d5f9a;
 }
 
 /* ── Calibration page ── */
@@ -1419,6 +1623,27 @@ pre {
 }
 
 @media (max-width: 820px) {
+  .calibration-launch-body,
+  .jog-page {
+    padding: 10px;
+  }
+
+  .jog-page {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .jog-sidebar,
+  .jog-main {
+    gap: 10px;
+  }
+
+  .jog-settings-grid,
+  .jog-readout-grid,
+  .jog-axis-grid {
+    grid-template-columns: 1fr;
+  }
+
   .calibration-body {
     grid-template-columns: 1fr 1fr;
     padding: 10px;
@@ -1429,6 +1654,14 @@ pre {
 }
 
 @media (max-width: 600px) {
+  .jog-nav-row {
+    flex-direction: column;
+  }
+
+  .jog-stop-btn {
+    margin-left: 0;
+  }
+
   .calibration-body { grid-template-columns: 1fr; }
 }
 

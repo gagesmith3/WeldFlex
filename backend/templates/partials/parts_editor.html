@@ -1,50 +1,59 @@
 {% from "components/ui.html" import action_button, panel_shell with context %}
 
 {% if recipe_name is not none %}
-<div class="parts-edit-inner">
+<div class="parts-editor-view">
+  <div class="parts-editor-column">
+    <div class="parts-back-row">
+      {{ action_button('Back to Parts', variant='recipe-load', icon='arrow_left', href='/parts') }}
+    </div>
 
-  {% call panel_shell('Edit Part', class_name='parts-edit-panel') %}
-    <div class="parts-name-row">
-      <input type="text" id="recipe_name" name="recipe_name"
-             value="{{ recipe_name or '' }}"
-             placeholder="Part name…"
-             inputmode="none" data-kbd="alpha">
-      {{ action_button('Save', variant='recipe-save', icon='save',
-           hx_post='/ui/recipes/save',
-           hx_include='#recipe_name, #studs_text, #coord-table-body input',
-           hx_target='#toast-rack',
-           hx_on_after_request="if(event.detail.successful){htmx.ajax('GET','/ui/parts/list','#parts-recipe-list')}") }}
-    </div>
-    <div id="studs-input-block">
-      {% include "partials/studs_input.html" %}
-    </div>
-  {% endcall %}
+    {% call panel_shell('Edit Part', class_name='parts-edit-panel') %}
+      <div class="parts-name-row">
+        <input type="text" id="recipe_name" name="recipe_name"
+               value="{{ recipe_name or '' }}"
+               placeholder="Part name…"
+               inputmode="none" data-kbd="alpha">
+        {{ action_button('Save', variant='recipe-save', icon='save',
+             hx_post='/ui/recipes/save',
+             hx_include='#recipe_name, #studs_text, #coord-table-body input',
+             hx_target='#toast-rack',
+             hx_on_after_request="if(event.detail.successful){syncPartsEditorUrl()}") }}
+      </div>
 
-  {% call panel_shell('Preview', class_name='parts-preview-panel') %}
-    <div id="studs-preview"
-         hx-get="/ui/studs-preview"
-         hx-trigger="load, studs-changed from:body"
-         hx-swap="innerHTML"
-         hx-include="#studs_text, #coord-table-body input">
-    </div>
-    <div class="parts-run-row">
-      <input id="parts-run-count" name="run_count" type="text"
-             value="1" inputmode="none" data-kbd="num"
-             class="parts-run-count">
-      <span class="parts-run-label">parts</span>
-      {{ action_button('Delete', variant='recipe-delete', icon='trash_2',
-           hx_post='/ui/parts/delete',
-           hx_include='#recipe_name',
-           hx_target='#toast-rack',
-           confirm='Delete this part?',
-           hx_on_after_request="if(event.detail.successful){htmx.ajax('GET','/ui/parts/new','#parts-editor');htmx.ajax('GET','/ui/parts/list','#parts-recipe-list')}") }}
-      {{ action_button('Run', variant='run', icon='play',
-           hx_post='/ui/library/run',
-           hx_include='#recipe_name, #parts-run-count',
-           hx_target='#toast-rack') }}
-    </div>
-  {% endcall %}
+      <div id="studs-input-block" class="parts-table-block">
+        {% include "partials/studs_input.html" %}
+      </div>
 
+      <div class="parts-run-row">
+        <input id="parts-run-count" name="run_count" type="text"
+               value="1" inputmode="none" data-kbd="num"
+               class="parts-run-count">
+        <span class="parts-run-label">parts</span>
+        {{ action_button('Delete', variant='recipe-delete', icon='trash_2',
+             hx_post='/ui/parts/delete',
+             hx_include='#recipe_name',
+             hx_target='#toast-rack',
+             confirm='Delete this part?',
+             disabled=not recipe_name) }}
+        {{ action_button('Run', variant='run', icon='play',
+             hx_post='/ui/library/run',
+             hx_include='#recipe_name, #parts-run-count',
+             hx_target='#toast-rack',
+             disabled=not recipe_name) }}
+      </div>
+    {% endcall %}
+  </div>
+
+  <div class="parts-preview-column">
+    {% call panel_shell('Preview', class_name='parts-preview-panel') %}
+      <div id="studs-preview"
+           hx-get="/ui/studs-preview"
+           hx-trigger="load, studs-changed from:body"
+           hx-swap="innerHTML"
+           hx-include="#studs_text, #coord-table-body input">
+      </div>
+    {% endcall %}
+  </div>
 </div>
 {% else %}
 <div class="parts-empty">

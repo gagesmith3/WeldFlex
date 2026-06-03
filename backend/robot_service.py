@@ -222,6 +222,96 @@ class WeldFlexRobotService:
         stop_result = self._run_with_timeout(lambda: robot.ProgramStop())
         return {"stop_result": stop_result}
 
+    def get_tcp_pose(self) -> list[float]:
+        with self._lock:
+            robot = self._client()
+
+        response = self._run_with_timeout(lambda: robot.GetActualTCPPose())
+        error_code, pose = self._split_error_value(response)
+        if error_code != 0 or not isinstance(pose, list) or len(pose) != 6:
+            raise RuntimeError(f"Read TCP pose failed with error code {error_code}.")
+        return [float(value) for value in pose]
+
+    def get_joint_positions(self) -> list[float]:
+        with self._lock:
+            robot = self._client()
+
+        response = self._run_with_timeout(lambda: robot.GetActualJointPosDegree())
+        error_code, joints = self._split_error_value(response)
+        if error_code != 0 or not isinstance(joints, list) or len(joints) != 6:
+            raise RuntimeError(f"Read joint positions failed with error code {error_code}.")
+        return [float(value) for value in joints]
+
+    def jog(self, ref: int, axis: int, direction: int, distance: float, velocity: float) -> dict[str, Any]:
+        with self._lock:
+            robot = self._client()
+
+        result = self._run_with_timeout(
+            lambda: robot.StartJOG(ref=ref, nb=axis, dir=direction, max_dis=distance, vel=velocity, acc=100.0)
+        )
+        error_code, _ = self._split_error_value(result)
+        if error_code != 0:
+            raise RuntimeError(f"Jog command failed with error code {error_code}.")
+
+        return {
+            "ref": ref,
+            "axis": axis,
+            "direction": direction,
+            "distance": distance,
+            "velocity": velocity,
+            "result": result,
+        }
+
+    def stop_jog(self) -> dict[str, Any]:
+        with self._lock:
+            robot = self._client()
+
+        result = self._run_with_timeout(lambda: robot.ImmStopJOG())
+        error_code, _ = self._split_error_value(result)
+        if error_code != 0:
+            raise RuntimeError(f"Jog stop failed with error code {error_code}.")
+        return {"result": result}
+
+    def jog_snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            robot = self._client()
+
+        program_state_resp, current_line_resp, tcp_pose_resp, joint_pos_resp = self._run_with_timeout(
+            lambda: (
+                robot.GetProgramState(),
+                robot.GetCurrentLine(),
+                robot.GetActualTCPPose(),
+                robot.GetActualJointPosDegree(),
+            )
+        )
+
+        state_error, program_state = self._split_error_value(program_state_resp)
+        line_error, current_line = self._split_error_value(current_line_resp)
+        tcp_error, tcp_pose = self._split_error_value(tcp_pose_resp)
+        joint_error, joint_positions = self._split_error_value(joint_pos_resp)
+
+        connected = all(code == 0 for code in (state_error, line_error, tcp_error, joint_error))
+        snapshot: dict[str, Any] = {
+            "connected": connected,
+            "program_state": STATE_MAP.get(program_state, "unknown"),
+            "program_state_raw": program_state,
+            "program_state_error": state_error,
+            "current_line": current_line,
+            "current_line_error": line_error,
+            "tcp_pose": tcp_pose if isinstance(tcp_pose, list) and len(tcp_pose) == 6 else None,
+            "tcp_pose_error": tcp_error,
+            "joint_positions": joint_positions if isinstance(joint_positions, list) and len(joint_positions) == 6 else None,
+            "joint_positions_error": joint_error,
+        }
+
+        if not connected:
+            snapshot["error"] = (
+                "Live jog data unavailable "
+                f"(state={state_error}, line={line_error}, tcp={tcp_error}, joints={joint_error})."
+            )
+
+        return snapshot
+
     def status(self) -> dict[str, Any]:
         with self._lock:
             robot = self._client()

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "components/ui.html" import panel_shell with context %}
+{% from "components/ui.html" import action_button, panel_shell with context %}
 
 {% block head_extra %}
   <script defer src="{{ url_for('static', filename='js/coordinate_table.js') }}"></script>
@@ -7,36 +7,54 @@
 
 {% block body %}
 <div class="parts-body">
-
-  <div class="parts-sidebar">
-    {% call panel_shell('Parts', class_name='parts-list-panel') %}
-      <div id="parts-recipe-list">
+  {% if recipe_name is none %}
+  <div class="parts-library-view">
+    {% call panel_shell('Parts', 'Select a saved part or start a new one.', class_name='parts-library-panel') %}
+      <div class="parts-library-toolbar">
+        {{ action_button('New Part', variant='recipe-save', icon='plus', href='/parts?new=1') }}
+      </div>
+      {% if parts_error %}
+      <p class="input-error">{{ parts_error }}</p>
+      {% endif %}
+      <div id="parts-recipe-list" class="parts-library-table-wrap">
         {% include "partials/parts_recipe_list.html" %}
       </div>
-      <button class="btn recipe-save parts-new-btn"
-              hx-get="/ui/parts/new"
-              hx-target="#parts-editor"
-              hx-swap="innerHTML"
-              hx-on::after-request="document.querySelectorAll('.recipe-list-item').forEach(function(b){b.classList.remove('active')})">
-        + New Part
-      </button>
     {% endcall %}
   </div>
-
-  <div class="parts-workspace">
-    <div id="parts-editor">
-      {% include "partials/parts_editor.html" %}
-    </div>
+  {% else %}
+  <div id="parts-editor">
+    {% include "partials/parts_editor.html" %}
   </div>
-
+  {% endif %}
 </div>
 {% endblock %}
 
 {% block scripts %}
 <script>
-function setActiveRecipe(el) {
-  document.querySelectorAll('.recipe-list-item').forEach(function(b) { b.classList.remove('active'); });
-  el.classList.add('active');
+function syncPartsEditorUrl() {
+  var nameInput = document.getElementById('recipe_name');
+  if (!(nameInput instanceof HTMLInputElement)) {
+    return;
+  }
+
+  var name = nameInput.value.trim();
+  if (!name) {
+    return;
+  }
+
+  var nextUrl = new URL(window.location.href);
+  nextUrl.searchParams.delete('new');
+  nextUrl.searchParams.set('recipe_name', name);
+
+  document.querySelectorAll('.parts-run-row .btn').forEach(function (button) {
+    if (!(button instanceof HTMLButtonElement)) {
+      return;
+    }
+    button.disabled = false;
+    button.classList.remove('is-disabled');
+  });
+
+  window.history.replaceState({}, '', nextUrl.toString());
 }
 </script>
 {% endblock %}

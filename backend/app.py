@@ -176,10 +176,18 @@ def create_app() -> Flask:
                     studs_count = len(parse_studs_text(studs_text))
                 except ValueError:
                     studs_count = 0
+            updated_label = "-"
+            if isinstance(updated_at, str) and updated_at:
+                try:
+                    updated_dt = datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
+                    updated_label = updated_dt.astimezone().strftime("%Y-%m-%d %I:%M %p")
+                except ValueError:
+                    updated_label = updated_at
             items.append(
                 {
                     "name": name,
                     "updated_at": updated_at,
+                    "updated_label": updated_label,
                     "studs_count": studs_count,
                 }
             )
@@ -203,6 +211,37 @@ def create_app() -> Flask:
         if value < 1 or value > 100:
             raise ValueError("Run count must be between 1 and 100.")
         return value
+
+    def parse_bounded_float(raw: str, label: str, minimum: float, maximum: float) -> float:
+        try:
+            value = float(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{label} must be numeric.") from exc
+        if value < minimum or value > maximum:
+            raise ValueError(f"{label} must be between {minimum:g} and {maximum:g}.")
+        return value
+
+    def parse_jog_axis(raw: str, allowed: dict[str, int]) -> tuple[str, int]:
+        axis_key = raw.strip().lower()
+        if axis_key not in allowed:
+            raise ValueError("Invalid jog axis.")
+        return axis_key, allowed[axis_key]
+
+    def parse_jog_direction(raw: str) -> tuple[str, int]:
+        direction_key = raw.strip().lower()
+        direction_map = {
+            "negative": ("-", 0),
+            "positive": ("+", 1),
+        }
+        if direction_key not in direction_map:
+            raise ValueError("Invalid jog direction.")
+        symbol, value = direction_map[direction_key]
+        return symbol, value
+
+    def format_axis_values(values: list[float] | None, decimals: int) -> list[str]:
+        if not values or len(values) != 6:
+            return ["-"] * 6
+        return [f"{value:.{decimals}f}" for value in values]
 
     def studs_preview_data(studs_text: str) -> dict[str, Any]:
         graph_size = 508.0
@@ -321,12 +360,29 @@ def create_app() -> Flask:
 
     @app.get("/parts")
     def parts() -> Any:
+        selected_recipe_name: str | None = None
+        studs_text = ""
+        parts_error = ""
+
+        recipe_query = request.args.get("recipe_name", "").strip()
+        new_part = request.args.get("new") == "1"
+
+        if recipe_query:
+            try:
+                selected_recipe_name = sanitize_recipe_name(recipe_query)
+                studs_text = get_recipe_text(selected_recipe_name)
+            except ValueError as exc:
+                parts_error = str(exc)
+        elif new_part:
+            selected_recipe_name = ""
+
         return render_template(
             "parts.html",
             page_title="Parts",
             recipes=recipe_catalog(),
-            recipe_name=None,
-            studs_text="",
+            recipe_name=selected_recipe_name,
+            studs_text=studs_text,
+            parts_error=parts_error,
         )
 
     @app.get("/part-library")
@@ -352,6 +408,100 @@ def create_app() -> Flask:
     @app.get("/calibration")
     def calibration() -> Any:
         return render_template("calibration.html", page_title="Calibration")
+
+    @app.get("/jog")
+    def jog() -> Any:
+        return render_template("jog.html", page_title="Jog", status_interval_ms=runtime_settings["status_interval_ms"])
+
+    @app.get("/ui/jog/status")
+    def ui_jog_status() -> Any:
+        try:
+            snapshot = robot_service.jog_snapshot()
+        except Exception as exc:
+            snapshot = {
+                "connected": False,
+                "program_state": "unknown",
+                "current_line": "-",
+                "tcp_pose": None,
+                "joint_positions": None,
+                "error": str(exc),
+            }
+
+        snapshot["tcp_pose_labels"] = format_axis_values(snapshot.get("tcp_pose"), 3)
+        snapshot["joint_labels"] = format_axis_values(snapshot.get("joint_positions"), 2)
+        return render_template("partials/jog_status.html", snapshot=snapshot)
+
+    @app.post("/ui/jog/move")
+    def ui_jog_move() -> Any:
+        try:
+            mode = request.form.get("mode", "").strip().lower()
+            direction_symbol, direction_value = parse_jog_direction(request.form.get("direction", ""))
+            velocity = parse_bounded_float(request.form.get("jog_velocity", "20"), "Jog velocity", 1, 100)
+
+            if mode == "joint":
+                axis_name, axis_number = parse_jog_axis(
+                    request.form.get("axis", ""),
+                    {"j1": 1, "j2": 2, "j3": 3, "j4": 4, "j5": 5, "j6": 6},
+                )
+                distance = parse_bounded_float(request.form.get("joint_step", "2"), "Joint step", 0.1, 180)
+                ref = 0
+                move_label = f"{axis_name.upper()} {direction_symbol} {distance:g} deg"
+            elif mode == "cartesian":
+                frame_key = request.form.get("cartesian_frame", "").strip().lower()
+                frame_map = {
+                    "base": (2, "Base"),
+                    "tool": (4, "Tool"),
+                    "workpiece": (8, "Workpiece"),
+                }
+                if frame_key not in frame_map:
+                    raise ValueError("Invalid cartesian jog frame.")
+                axis_name, axis_number = parse_jog_axis(
+                    request.form.get("axis", ""),
+                    {"x": 1, "y": 2, "z": 3, "rx": 4, "ry": 5, "rz": 6},
+                )
+                distance = parse_bounded_float(request.form.get("cartesian_step", "5"), "Cartesian step", 0.1, 200)
+                ref, frame_label = frame_map[frame_key]
+                unit_label = "deg" if axis_name.startswith("r") else "mm"
+                move_label = f"{frame_label} {axis_name.upper()} {direction_symbol} {distance:g} {unit_label}"
+            else:
+                raise ValueError("Invalid jog mode.")
+
+            robot_service.jog(ref=ref, axis=axis_number, direction=direction_value, distance=distance, velocity=velocity)
+            stamp_command_state("Jog", "ok", move_label)
+            return render_template(
+                "partials/command_result.html",
+                ok=True,
+                title="Jog Move",
+                payload={"message": move_label},
+            )
+        except Exception as exc:
+            stamp_command_state("Jog", "error", str(exc))
+            return render_template(
+                "partials/command_result.html",
+                ok=False,
+                title="Jog Move",
+                payload={"error": str(exc)},
+            )
+
+    @app.post("/ui/jog/stop")
+    def ui_jog_stop() -> Any:
+        try:
+            robot_service.stop_jog()
+            stamp_command_state("Jog Stop", "ok", "Immediate jog stop sent")
+            return render_template(
+                "partials/command_result.html",
+                ok=True,
+                title="Jog Stop",
+                payload={"message": "Immediate jog stop sent"},
+            )
+        except Exception as exc:
+            stamp_command_state("Jog Stop", "error", str(exc))
+            return render_template(
+                "partials/command_result.html",
+                ok=False,
+                title="Jog Stop",
+                payload={"error": str(exc)},
+            )
 
     @app.get("/ui/parts/list")
     def ui_parts_list() -> Any:
@@ -382,6 +532,8 @@ def create_app() -> Flask:
                 raise ValueError(f"Part '{name}' not found.")
             del recipes[name]
             write_recipe_store(store)
+            if request.headers.get("HX-Request") == "true":
+                return "", 204, {"HX-Redirect": "/parts"}
             return render_template(
                 "partials/command_result.html", ok=True, title="Delete Part", payload={"message": f"Deleted '{name}'"}
             )

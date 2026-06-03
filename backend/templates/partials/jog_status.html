@@ -1,0 +1,58 @@
+{% from "components/ui.html" import status_chip with context %}
+{% set state_icon = 'square' %}
+{% if snapshot.program_state == 'running' %}
+  {% set state_icon = 'play' %}
+{% elif snapshot.program_state == 'paused' %}
+  {% set state_icon = 'pause' %}
+{% endif %}
+
+<div class="jog-status-block">
+  <div class="chip-grid">
+    {{ status_chip(
+        'Connection',
+        'ONLINE' if snapshot.connected else 'OFFLINE',
+        icon='link_2' if snapshot.connected else 'link_2_off',
+        state='ok' if snapshot.connected else 'error',
+        tooltip=snapshot.error or ''
+      )
+    }}
+    {{ status_chip(
+        'Program',
+        snapshot.program_state,
+        icon=state_icon,
+        tooltip=snapshot.error or ''
+      )
+    }}
+    {{ status_chip('Line', snapshot.current_line, icon='list_tree') }}
+  </div>
+
+  {% if snapshot.error %}
+  <p class="input-error">{{ snapshot.error }}</p>
+  {% endif %}
+
+  <div class="jog-readout-grid">
+    <section class="jog-readout-card">
+      <h3>TCP Pose</h3>
+      <div class="jog-readout-table">
+        {% for label, value in [('X', snapshot.tcp_pose_labels[0]), ('Y', snapshot.tcp_pose_labels[1]), ('Z', snapshot.tcp_pose_labels[2]), ('Rx', snapshot.tcp_pose_labels[3]), ('Ry', snapshot.tcp_pose_labels[4]), ('Rz', snapshot.tcp_pose_labels[5])] %}
+        <div class="row">
+          <span>{{ label }}</span>
+          <strong>{{ value }}</strong>
+        </div>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section class="jog-readout-card">
+      <h3>Joint Position</h3>
+      <div class="jog-readout-table">
+        {% for label, value in [('J1', snapshot.joint_labels[0]), ('J2', snapshot.joint_labels[1]), ('J3', snapshot.joint_labels[2]), ('J4', snapshot.joint_labels[3]), ('J5', snapshot.joint_labels[4]), ('J6', snapshot.joint_labels[5])] %}
+        <div class="row">
+          <span>{{ label }}</span>
+          <strong>{{ value }}</strong>
+        </div>
+        {% endfor %}
+      </div>
+    </section>
+  </div>
+</div>

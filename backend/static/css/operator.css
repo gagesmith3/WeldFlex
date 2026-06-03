@@ -164,7 +164,7 @@ input, textarea, select, [contenteditable] {
 
 .home-body {
   display: grid;
-  grid-template-columns: 1.2fr 1fr;
+  grid-template-columns: 3fr 1fr;
   gap: 16px;
   padding: 16px;
 }
@@ -294,7 +294,7 @@ input, textarea, select, [contenteditable] {
 
 .home-nav-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 12px;
 }
 
@@ -965,20 +965,21 @@ pre {
   .panel h2 { font-size: 1rem; margin-top: 0; margin-bottom: 8px; }
   .page-body { padding: 10px; }
 
-  /* ── Home page: stacked — run card full width, nav strip below ── */
+  /* ── Home page: 75%/25% — production run left, nav column right ── */
   .home-body {
-    grid-template-columns: 1fr;
+    grid-template-columns: 3fr 1fr;
     padding: 10px;
     gap: 10px;
   }
   .home-hero { min-height: 0; }
 
-  /* Nav grid: 1 row × 4 columns */
-  .home-nav-grid { grid-template-columns: repeat(4, 1fr); gap: 8px; }
-  .home-nav-card { padding: 10px; display: flex; flex-direction: column; align-items: center; text-align: center; }
+  /* Nav panel stretches to match run card, cards fill it evenly */
+  .home-nav-panel { display: flex; flex-direction: column; }
+  .home-nav-grid { flex: 1; grid-template-columns: 1fr; grid-template-rows: repeat(4, 1fr); gap: 6px; }
+  .home-nav-card { padding: 8px 10px; display: flex; flex-direction: row; align-items: center; gap: 8px; }
   .home-nav-card p { display: none; }
-  .home-nav-card h3 { font-size: 0.82rem; margin: 4px 0 0; }
-  .home-nav-icon { width: 26px; height: 26px; margin-bottom: 4px; border-radius: 8px; }
+  .home-nav-card h3 { font-size: 0.82rem; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .home-nav-icon { width: 26px; height: 26px; margin-bottom: 0; border-radius: 8px; flex-shrink: 0; }
 
   /* Metric cards: side-by-side instead of stacked */
   .hero-metrics-stacked { grid-template-columns: 1fr 1fr; }

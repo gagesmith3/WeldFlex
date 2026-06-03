@@ -153,7 +153,7 @@ class WeldFlexRobotService:
 
     def _upload_static_lua_scripts(self) -> None:
         lua_dir = Path(__file__).resolve().parents[1] / "robot" / "lua"
-        for script_name in ("studCycle.lua", "weld.lua", "studCycleDryRun.lua"):
+        for script_name in ("studCycle.lua", "weld.lua"):
             script_path = lua_dir / script_name
             if script_path.exists():
                 self.upload_lua(script_path.read_text(encoding="utf-8"), f"/fruser/{script_name}")
@@ -198,35 +198,6 @@ class WeldFlexRobotService:
                 "current_line_response": current_line_resp,
             },
         }
-
-    def get_tcp_pose(self) -> dict[str, Any]:
-        with self._lock:
-            robot = self._client()
-        result = self._run_with_timeout(lambda: robot.GetActualTCPPose())
-        err, pose = self._split_error_value(result)
-        if err != 0:
-            raise RuntimeError(f"GetActualTCPPose failed (error {err})")
-        if not isinstance(pose, (list, tuple)) or len(pose) < 6:
-            raise RuntimeError(f"Unexpected TCP pose format: {pose!r}")
-        return {
-            "x": round(float(pose[0]), 3),
-            "y": round(float(pose[1]), 3),
-            "z": round(float(pose[2]), 3),
-            "rx": round(float(pose[3]), 3),
-            "ry": round(float(pose[4]), 3),
-            "rz": round(float(pose[5]), 3),
-        }
-
-    def jog(self, axis: str, direction: int, step_mm: float) -> None:
-        _AXIS_NB = {"x": 1, "y": 2, "z": 3}
-        nb = _AXIS_NB[axis]
-        with self._lock:
-            robot = self._client()
-        # ref=2: base coordinate system; vel=15%: safe speed for manual calibration jog
-        self._run_with_timeout(
-            lambda: robot.StartJOG(2, nb, direction, step_mm, 15.0, 100.0),
-            timeout=max(SDK_CALL_TIMEOUT_S, step_mm / 3.0 + 2.0),
-        )
 
     def _run_with_timeout(self, fn: Callable[[], Any], timeout: float = SDK_CALL_TIMEOUT_S) -> Any:
         future = self._sdk_executor.submit(fn)

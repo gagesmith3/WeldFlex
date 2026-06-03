@@ -69,6 +69,8 @@ input, textarea, select, [contenteditable] {
 .app-content-scroll {
   min-height: 0;
   overflow: auto;
+  display: flex;
+  flex-direction: column;
 }
 
 .app-header h1 {
@@ -246,6 +248,8 @@ input, textarea, select, [contenteditable] {
   grid-template-columns: 3fr 1fr;
   gap: 16px;
   padding: 16px;
+  flex: 1;
+  min-height: 0;
 }
 
 .home-hero {
@@ -400,6 +404,18 @@ input, textarea, select, [contenteditable] {
 .home-nav-card p {
   margin: 8px 0 0;
   color: var(--muted);
+}
+
+.nav-card-cta {
+  display: inline-block;
+  margin-top: 12px;
+  padding: 6px 16px;
+  background: var(--brand, #1d5f9a);
+  color: #fff;
+  border-radius: 6px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
 .home-nav-icon {
@@ -1061,6 +1077,7 @@ pre {
   .home-nav-card p { display: none; }
   .home-nav-card h3 { font-size: 0.82rem; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .home-nav-icon { width: 26px; height: 26px; margin-bottom: 0; border-radius: 8px; flex-shrink: 0; }
+  .nav-card-cta { margin-top: 0; margin-left: auto; padding: 4px 10px; font-size: 0.72rem; flex-shrink: 0; }
 
   /* Metric cards: side-by-side instead of stacked */
   .hero-metrics-stacked { grid-template-columns: 1fr 1fr; }

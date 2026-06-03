@@ -95,8 +95,6 @@ def create_app() -> Flask:
     recipes_dir = workspace_root / "data"
     recipes_file = recipes_dir / "recipes.json"
     recipes_lock = threading.Lock()
-    calibration_file = recipes_dir / "calibration.json"
-    calibration_lock = threading.Lock()
 
     def parse_studs_text(studs_text: str) -> list[dict[str, float]]:
         studs: list[dict[str, float]] = []
@@ -205,23 +203,6 @@ def create_app() -> Flask:
         if value < 1 or value > 100:
             raise ValueError("Run count must be between 1 and 100.")
         return value
-
-    def read_calibration() -> dict[str, Any]:
-        with calibration_lock:
-            if not calibration_file.exists():
-                return {"work_origin": None, "captured_at": None}
-            try:
-                data = json.loads(calibration_file.read_text(encoding="utf-8"))
-            except json.JSONDecodeError:
-                return {"work_origin": None, "captured_at": None}
-        if not isinstance(data, dict):
-            return {"work_origin": None, "captured_at": None}
-        return data
-
-    def save_calibration(data: dict[str, Any]) -> None:
-        recipes_dir.mkdir(parents=True, exist_ok=True)
-        with calibration_lock:
-            calibration_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
     def studs_preview_data(studs_text: str) -> dict[str, Any]:
         graph_size = 508.0
@@ -373,64 +354,7 @@ def create_app() -> Flask:
 
     @app.get("/calibration")
     def calibration() -> Any:
-        return render_template(
-            "calibration.html",
-            page_title="Calibration",
-            calibration=read_calibration(),
-            recipes=recipe_list(),
-        )
-
-    @app.get("/ui/calibration/position")
-    def ui_calibration_position() -> Any:
-        try:
-            pose = robot_service.get_tcp_pose()
-            return render_template("partials/calibration_position.html", ok=True, pose=pose)
-        except Exception as exc:
-            return render_template("partials/calibration_position.html", ok=False, error=str(exc))
-
-    @app.post("/ui/calibration/jog")
-    def ui_calibration_jog() -> Any:
-        try:
-            axis = request.form.get("axis", "").lower()
-            direction = int(request.form.get("dir", "1"))
-            step = float(request.form.get("step", "1"))
-            if axis not in ("x", "y", "z"):
-                raise ValueError(f"Invalid axis '{axis}' — must be x, y, or z.")
-            if direction not in (0, 1):
-                raise ValueError("dir must be 0 or 1.")
-            if step <= 0 or step > 200:
-                raise ValueError("Step must be between 0 and 200 mm.")
-            robot_service.jog(axis, direction, step)
-            return "", 204
-        except Exception as exc:
-            return render_template(
-                "partials/command_result.html", ok=False, title="Jog", payload={"error": str(exc)}
-            )
-
-    @app.post("/ui/calibration/capture-origin")
-    def ui_calibration_capture_origin() -> Any:
-        try:
-            pose = robot_service.get_tcp_pose()
-            save_calibration({"work_origin": pose, "captured_at": datetime.now(timezone.utc).isoformat()})
-            return render_template("partials/command_result.html", ok=True, title="Capture Origin", payload=pose)
-        except Exception as exc:
-            return render_template(
-                "partials/command_result.html", ok=False, title="Capture Origin", payload={"error": str(exc)}
-            )
-
-    @app.post("/ui/calibration/dry-run")
-    def ui_calibration_dry_run() -> Any:
-        try:
-            recipe_name = sanitize_recipe_name(request.form.get("recipe_name", ""))
-            studs = parse_studs_text(get_recipe_text(recipe_name))
-            result = robot_service.upload_load_run(studs, "/fruser/studCycleDryRun.lua")
-            stamp_command_state("Dry Run", "ok", f"Tracing {recipe_name} without welding")
-            return render_template("partials/command_result.html", ok=True, title="Dry Run", payload=result)
-        except Exception as exc:
-            stamp_command_state("Dry Run", "error", str(exc))
-            return render_template(
-                "partials/command_result.html", ok=False, title="Dry Run", payload={"error": str(exc)}
-            )
+        return render_template("calibration.html", page_title="Calibration")
 
     @app.get("/ui")
     def operator_ui() -> Any:

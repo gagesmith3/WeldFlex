@@ -930,45 +930,71 @@ pre {
   }
 }
 
-/* 800x480 kiosk display — compact header, larger touch targets */
+/* 800x480 kiosk display — compact header, touch targets, no-scroll layouts */
 @media (max-width: 820px) {
+  /* ── Header ── */
   .app-header {
     padding: 8px 12px;
     grid-template-columns: 1.2fr 1fr;
     gap: 10px;
   }
+  .app-header h1 { font-size: 1.1rem; }
+  .title-block p { display: none; }
+  .app-header-right { padding: 8px; }
+  .nav-status-wrap { gap: 8px; }
 
-  .app-header h1 {
-    font-size: 1.1rem;
-  }
+  /* ── Touch targets ── */
+  .btn { min-height: 44px; padding: 10px 14px; }
+  .estop-btn { min-height: 44px; }
+  input, select, textarea { padding: 10px; font-size: 1rem; }
 
-  .title-block p {
-    display: none;
-  }
+  /* ── Panel chrome ── */
+  .panel { padding: 12px; }
+  .panel h2 { font-size: 1rem; margin-top: 0; margin-bottom: 8px; }
+  .page-body { padding: 10px; }
 
-  .app-header-right {
-    padding: 8px;
+  /* ── Home page: 2-column, fits ~425px content area ── */
+  .home-body {
+    grid-template-columns: 1.2fr 0.9fr;
+    padding: 10px;
+    gap: 10px;
   }
+  .home-hero { min-height: 0; }
 
-  .nav-status-wrap {
-    gap: 8px;
-  }
+  /* Nav grid: keep 2×2 */
+  .home-nav-grid { grid-template-columns: 1fr 1fr; gap: 8px; }
+  .home-nav-card { padding: 10px; }
+  .home-nav-card p { display: none; }
+  .home-nav-card h3 { font-size: 0.88rem; margin: 4px 0 0; }
+  .home-nav-icon { width: 26px; height: 26px; margin-bottom: 4px; border-radius: 8px; }
 
-  .btn {
-    min-height: 44px;
-    padding: 10px 14px;
-  }
+  /* Metric cards: side-by-side instead of stacked */
+  .hero-metrics-stacked { grid-template-columns: 1fr 1fr; }
+  .metric-card { padding: 8px; }
+  .metric-icon { width: 22px; height: 22px; margin-bottom: 3px; border-radius: 6px; }
+  .metric-label { font-size: 0.7rem; }
+  .metric-value { font-size: 0.88rem; margin-top: 2px; }
+  .progress-track { margin-top: 6px; height: 7px; }
 
-  .estop-btn {
-    min-height: 44px;
-  }
+  /* Run summary rows */
+  .hero-controls-top { margin-bottom: 8px; }
+  .run-summary-card { margin-top: 6px; padding: 8px; }
+  .run-summary-row { padding: 3px 0; font-size: 0.85rem; }
 
-  input,
-  select,
-  textarea {
-    padding: 12px 10px;
-    font-size: 1rem;
+  /* ── Operator/designer page: restore 2-column at 800px ── */
+  .app-body {
+    grid-template-columns: 195px minmax(0, 1fr);
+    padding: 10px;
+    gap: 10px;
+    align-items: start;
   }
+  .left-drawer {
+    position: sticky;
+    top: 10px;
+    max-height: calc(100vh - 80px);
+    overflow-y: auto;
+  }
+  .workspace { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 600px) {

@@ -607,7 +607,7 @@ select {
 .coord-table {
   width: 100%;
   border-collapse: collapse;
-  table-layout: auto;
+  table-layout: fixed;
 }
 
 .coord-table th,
@@ -637,9 +637,7 @@ select {
 
 .coord-table input[type="text"],
 .coord-table input[type="number"] {
-  width: 75px;
-  display: block;
-  margin: 0;
+  width: 100%;
   height: 44px;
   padding: 0 4px;
   font-size: 1rem;
@@ -861,6 +859,7 @@ select {
   padding: 0;
   font-size: 1rem;
   justify-content: center;
+  margin-right: 8px;
 }
 
 .btn.row-action-btn {
@@ -874,8 +873,9 @@ select {
 
 .drag-col       { width: 20px; }
 .num-col        { width: 24px; text-align: center; }
-.drag-btn-col   { width: 58px; }
-.row-spacer-col { width: auto; }  /* absorbs all leftover space */
+.coord-col      { width: 80px; }
+.drag-btn-col   { width: 44px; }
+/* row-spacer-col: no width — with table-layout:fixed this absorbs all leftover space */
 .action-col     { width: 44px; text-align: right; }
 
 .drag-handle-cell {

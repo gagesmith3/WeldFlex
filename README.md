@@ -334,3 +334,6 @@ curl http://127.0.0.1:5000/api/health
 
 - If FAIRINO Linux SDK is not ARM-compatible, imports can fail on Pi even if app code is correct.
 - Keep a physical independent E-stop and machine safety chain; do not rely on software UI stop for personnel safety.
+
+
+python backend\app.py

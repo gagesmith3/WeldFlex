@@ -37,13 +37,9 @@
       <span class="jog-axis-tag">{{ label }}</span>
       <div class="jog-axis-btns">
         <button class="btn jog-btn jog-neg" type="button"
-                hx-post="/ui/jog/move" hx-target="#toast-rack"
-                hx-include="#jog-settings"
-                hx-vals='{"mode":"cartesian","axis":"{{ axis }}","direction":"negative"}'>−</button>
+                data-axis="{{ axis }}" data-direction="negative">−</button>
         <button class="btn jog-btn jog-pos" type="button"
-                hx-post="/ui/jog/move" hx-target="#toast-rack"
-                hx-include="#jog-settings"
-                hx-vals='{"mode":"cartesian","axis":"{{ axis }}","direction":"positive"}'>+</button>
+                data-axis="{{ axis }}" data-direction="positive">+</button>
       </div>
     </div>
     {% endfor %}
@@ -60,5 +56,68 @@ function jogSetFrame(btn, value) {
     b.classList.toggle('active', b === btn);
   });
 }
+
+(function () {
+  var _jogging = false;
+  var _jogBtn  = null;
+
+  function buildBody(btn) {
+    var p = new URLSearchParams();
+    p.append('mode',            'cartesian');
+    p.append('cartesian_frame', document.getElementById('cartesian_frame').value);
+    p.append('cartesian_step',  document.getElementById('cartesian_step').value);
+    p.append('jog_velocity',    document.getElementById('jog_velocity').value);
+    p.append('axis',            btn.dataset.axis);
+    p.append('direction',       btn.dataset.direction);
+    return p;
+  }
+
+  function sendStop() {
+    fetch('/ui/jog/stop', { method: 'POST' }).catch(function () {});
+  }
+
+  // Ping-pong loop: send one step, wait for robot ack, then repeat if still held.
+  // This prevents request queue buildup and lets stop arrive cleanly.
+  function jogLoop() {
+    if (!_jogging || !_jogBtn) return;
+    fetch('/ui/jog/move', { method: 'POST', body: buildBody(_jogBtn) })
+      .then(function (res) {
+        if (res.ok) { jogLoop(); }
+        else        { stopJog(); }
+      })
+      .catch(function () { stopJog(); });
+  }
+
+  function startJog(btn) {
+    if (_jogging) return;
+    _jogging = true;
+    _jogBtn  = btn;
+    btn.classList.add('is-jogging');
+    jogLoop();
+  }
+
+  function stopJog() {
+    if (!_jogging) return;
+    _jogging = false;
+    if (_jogBtn) { _jogBtn.classList.remove('is-jogging'); _jogBtn = null; }
+    sendStop();
+  }
+
+  // Jog buttons — pointerdown starts, release anywhere stops
+  document.querySelectorAll('.jog-btn').forEach(function (btn) {
+    btn.addEventListener('pointerdown', function (e) {
+      e.preventDefault(); // suppress context-menu / text-select on long-press
+      startJog(btn);
+    });
+  });
+
+  document.addEventListener('pointerup',     function () { if (_jogging) stopJog(); });
+  document.addEventListener('pointercancel', function () { if (_jogging) stopJog(); });
+
+  // E-STOP in the header also halts jog
+  document.addEventListener('click', function (e) {
+    if (e.target.closest('.estop-btn')) stopJog();
+  });
+})();
 </script>
 {% endblock %}

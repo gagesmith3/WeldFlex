@@ -1,15 +1,16 @@
 {% extends "base.html" %}
-{% from "components/ui.html" import action_button, panel_shell with context %}
 
 {% block body %}
-<div class="calibration-launch-body">
-  {% call panel_shell('Calibration', 'Calibration setup is being rebuilt. Jogging is ready to use now.', class_name='calibration-launch-panel') %}
-    <div class="calibration-launch-copy">
-      <p class="panel-note">Use the dedicated jog screen to position the robot, verify live TCP readings, and make controlled cartesian or joint moves.</p>
-    </div>
-    <div class="calibration-launch-actions">
-      {{ action_button('JOG', variant='run', icon='move_3d', href='/jog', class_name='calibration-jog-btn') }}
-    </div>
-  {% endcall %}
+<div class="calib-menu-body">
+  <a class="calib-menu-card" href="/jog">
+    <div class="calib-menu-icon">{{ icon_safe('move_3d', fallback='move', width=48, height=48) }}</div>
+    <h2>Jog</h2>
+    <p>Jog the robot in set increments</p>
+  </a>
+  <a class="calib-menu-card" href="/calibrate">
+    <div class="calib-menu-icon">{{ icon_safe('crosshair', fallback='target', width=48, height=48) }}</div>
+    <h2>Calibrate</h2>
+    <p>Recalibrate robot to align zerozero point</p>
+  </a>
 </div>
 {% endblock %}

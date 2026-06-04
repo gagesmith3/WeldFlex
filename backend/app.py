@@ -475,6 +475,10 @@ def create_app() -> Flask:
     def calibration() -> Any:
         return render_template("calibration.html", page_title="Calibration")
 
+    @app.get("/calibrate")
+    def calibrate() -> Any:
+        return render_template("calibrate.html", page_title="Calibrate")
+
     @app.get("/jog")
     def jog() -> Any:
         return render_template(

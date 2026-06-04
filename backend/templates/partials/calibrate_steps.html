@@ -1,0 +1,98 @@
+{% if applied %}
+
+<div class="calib-done-banner">
+  <div class="calib-done-check">✓</div>
+  <div class="calib-done-body">
+    <strong>Work Frame 1 Applied</strong>
+    <p>Origin &nbsp; X={{ "%.2f"|format(coord[0]) }} &nbsp; Y={{ "%.2f"|format(coord[1]) }} &nbsp; Z={{ "%.2f"|format(coord[2]) }}</p>
+    <p class="calib-center-note">Center at (254, 254, 0) in work frame</p>
+  </div>
+</div>
+<div class="calib-apply-row">
+  <button class="btn calib-reset-btn" type="button"
+          hx-post="/ui/calibrate/reset"
+          hx-target="#calib-steps"
+          hx-swap="innerHTML">
+    Calibrate Again
+  </button>
+</div>
+
+{% else %}
+
+<div class="calib-pin-grid">
+  {% for pin_num, pin_name, pin_desc in [
+      (1, 'Origin', 'Zero-zero corner'),
+      (2, 'X-Axis', 'X-edge reference'),
+      (3, 'Y-Axis', 'Y-edge reference')
+  ] %}
+  {% set is_recorded = pin_num in pins_recorded %}
+  {% set is_drag = drag_pin == pin_num %}
+  {% set other_drag = drag_pin is not none and not is_drag %}
+
+  <div class="calib-pin-card{% if is_recorded %} calib-pin-done{% elif is_drag %} calib-pin-drag{% endif %}">
+
+    <div class="calib-pin-num{% if is_recorded %} calib-pin-num-done{% elif is_drag %} calib-pin-num-drag{% endif %}">
+      {% if is_recorded %}✓{% elif is_drag %}◉{% else %}{{ pin_num }}{% endif %}
+    </div>
+
+    <div class="calib-pin-name">{{ pin_name }}</div>
+    <div class="calib-pin-desc">
+      {%- if is_drag -%}
+        Guide TCP flush against pin
+      {%- else -%}
+        {{ pin_desc }}
+      {%- endif -%}
+    </div>
+
+    {% if is_drag %}
+    <button class="btn calib-record-btn calib-btn-record" type="button"
+            hx-post="/ui/calibrate/record-pin"
+            hx-vals='{"pin": "{{ pin_num }}"}'
+            hx-target="#calib-steps"
+            hx-swap="innerHTML">
+      Record
+    </button>
+    {% else %}
+    <button class="btn calib-record-btn{% if is_recorded %} calib-btn-done{% else %} calib-btn-pending{% endif %}{% if other_drag %} is-disabled{% endif %}"
+            type="button"
+            hx-post="/ui/calibrate/enable-drag"
+            hx-vals='{"pin": "{{ pin_num }}"}'
+            hx-target="#calib-steps"
+            hx-swap="innerHTML"
+            {% if other_drag %}disabled{% endif %}>
+      {% if is_recorded %}Re-record{% else %}Enable Drag{% endif %}
+    </button>
+    {% endif %}
+
+  </div>
+  {% endfor %}
+</div>
+
+{% if drag_error %}
+<p class="calib-error-note">Drag error: {{ drag_error }}</p>
+{% endif %}
+{% if record_error %}
+<p class="calib-error-note">Record error: {{ record_error }}</p>
+{% endif %}
+{% if apply_error %}
+<p class="calib-error-note">Apply error: {{ apply_error }}</p>
+{% endif %}
+
+<div class="calib-apply-row">
+  <button class="btn calib-apply-btn{% if not all_recorded %} is-disabled{% endif %}"
+          type="button"
+          hx-post="/ui/calibrate/apply"
+          hx-target="#calib-steps"
+          hx-swap="innerHTML"
+          {% if not all_recorded %}disabled{% endif %}>
+    Apply Frame
+  </button>
+  <button class="btn calib-reset-btn" type="button"
+          hx-post="/ui/calibrate/reset"
+          hx-target="#calib-steps"
+          hx-swap="innerHTML">
+    Reset
+  </button>
+</div>
+
+{% endif %}

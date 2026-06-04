@@ -475,9 +475,98 @@ def create_app() -> Flask:
     def calibration() -> Any:
         return render_template("calibration.html", page_title="Calibration")
 
+    _calib_state: dict[str, Any] = {"pins": set(), "drag_pin": None}
+
+    def _calib_render(
+        *,
+        applied: bool = False,
+        coord: list[float] | None = None,
+        record_error: str | None = None,
+        apply_error: str | None = None,
+        drag_error: str | None = None,
+    ) -> Any:
+        pins = _calib_state["pins"]
+        return render_template(
+            "partials/calibrate_steps.html",
+            pins_recorded=pins,
+            all_recorded=len(pins) == 3,
+            drag_pin=_calib_state["drag_pin"],
+            applied=applied,
+            coord=coord,
+            record_error=record_error,
+            apply_error=apply_error,
+            drag_error=drag_error,
+        )
+
     @app.get("/calibrate")
     def calibrate() -> Any:
-        return render_template("calibrate.html", page_title="Calibrate")
+        return render_template(
+            "calibrate.html",
+            page_title="Calibrate",
+            content_class="app-content-scroll-locked",
+        )
+
+    @app.get("/ui/calibrate/status")
+    def ui_calibrate_status() -> Any:
+        return _calib_render()
+
+    @app.post("/ui/calibrate/enable-drag")
+    def ui_calibrate_enable_drag() -> Any:
+        try:
+            pin = int(request.form.get("pin", "0"))
+            if pin not in (1, 2, 3):
+                raise ValueError("Pin number must be 1, 2, or 3.")
+            if _calib_state["drag_pin"] is not None:
+                try:
+                    robot_service.disable_drag()
+                except Exception:
+                    pass
+            robot_service.enable_drag()
+            _calib_state["drag_pin"] = pin
+            return _calib_render()
+        except Exception as exc:
+            _calib_state["drag_pin"] = None
+            return _calib_render(drag_error=str(exc))
+
+    @app.post("/ui/calibrate/record-pin")
+    def ui_calibrate_record_pin() -> Any:
+        try:
+            pin = int(request.form.get("pin", "0"))
+            if pin not in (1, 2, 3):
+                raise ValueError("Pin number must be 1, 2, or 3.")
+            robot_service.record_wobj_point(pin)
+            try:
+                robot_service.disable_drag()
+            except Exception:
+                pass
+            _calib_state["pins"].add(pin)
+            _calib_state["drag_pin"] = None
+            return _calib_render()
+        except Exception as exc:
+            return _calib_render(record_error=str(exc))
+
+    @app.post("/ui/calibrate/apply")
+    def ui_calibrate_apply() -> Any:
+        try:
+            if len(_calib_state["pins"]) < 3:
+                raise ValueError("All 3 pins must be recorded before applying.")
+            coord = robot_service.compute_and_apply_wobj(wobj_id=1)
+            _calib_state["pins"].clear()
+            _calib_state["drag_pin"] = None
+            return _calib_render(applied=True, coord=coord)
+        except Exception as exc:
+            return _calib_render(apply_error=str(exc))
+
+    @app.post("/ui/calibrate/reset")
+    def ui_calibrate_reset() -> Any:
+        if _calib_state["drag_pin"] is not None:
+            try:
+                robot_service.disable_drag()
+            except Exception:
+                pass
+        _calib_state["pins"].clear()
+        _calib_state["drag_pin"] = None
+        return _calib_render()
 
     @app.get("/jog")
     def jog() -> Any:

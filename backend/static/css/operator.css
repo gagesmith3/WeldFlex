@@ -1382,6 +1382,175 @@ pre {
   }
 }
 
+/* ── Calibrate workflow page ── */
+.calib-workflow {
+  padding: 12px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+}
+
+.calib-instructions-bar {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 14px;
+  font-size: 0.88rem;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.calib-pin-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.calib-pin-card {
+  background: var(--panel);
+  border: 2px solid var(--line);
+  border-radius: 14px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  text-align: center;
+}
+
+.calib-pin-done {
+  border-color: var(--ok-line);
+  background: var(--ok-bg);
+}
+
+.calib-pin-drag {
+  border-color: var(--pause);
+  background: #fff8ee;
+  animation: calib-drag-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes calib-drag-pulse {
+  0%, 100% { border-color: var(--pause); }
+  50% { border-color: #e08800; }
+}
+
+.calib-pin-num {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: #dce8f3;
+  border: 2px solid #aac5de;
+  color: #24455f;
+  font-size: 1.25rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.calib-pin-num-done {
+  background: var(--run);
+  border-color: #0d5235;
+  color: #fff;
+}
+
+.calib-pin-num-drag {
+  background: var(--pause);
+  border-color: #9a5e00;
+  color: #fff;
+}
+
+.calib-pin-name {
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+
+.calib-pin-desc {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.btn.calib-record-btn {
+  width: 100%;
+  justify-content: center;
+  margin-top: auto;
+}
+
+.btn.calib-btn-pending { background: #1d5f9a; }
+.btn.calib-btn-done    { background: #4f6478; }
+.btn.calib-btn-record  { background: var(--run); }
+
+.calib-error-note {
+  margin: 0;
+  color: #b4232f;
+  font-size: 0.88rem;
+}
+
+.calib-apply-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.btn.calib-apply-btn {
+  background: var(--run);
+  flex: 1;
+  justify-content: center;
+  font-size: 1rem;
+  padding: 14px;
+}
+
+.btn.calib-reset-btn { background: #4f6478; }
+
+.calib-done-banner {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: var(--ok-bg);
+  border: 2px solid var(--ok-line);
+  border-radius: 14px;
+  padding: 18px 20px;
+  flex-shrink: 0;
+}
+
+.calib-done-check {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: var(--run);
+  color: #fff;
+  font-size: 1.6rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.calib-done-body strong {
+  display: block;
+  font-size: 1rem;
+  margin-bottom: 6px;
+}
+
+.calib-done-body p {
+  margin: 4px 0 0;
+  font-size: 0.88rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.calib-center-note {
+  font-size: 0.82rem !important;
+  opacity: 0.8;
+}
+
+/* ── Calibration landing menu ── */
 .calib-menu-body {
   display: grid;
   grid-template-columns: 1fr 1fr;

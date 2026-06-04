@@ -1,7 +1,17 @@
 {% extends "base.html" %}
 
 {% block body %}
-<div class="page-body">
-  <p class="panel-note">Calibration workflow coming soon.</p>
+<div class="calib-workflow">
+
+  <div class="calib-instructions-bar">
+    <strong>Drag calibration:</strong> Enable drag on each pin, guide the TCP by hand until flush with the pin, then tap Record.
+  </div>
+
+  <div id="calib-steps"
+       hx-get="/ui/calibrate/status"
+       hx-trigger="load"
+       hx-swap="innerHTML">
+  </div>
+
 </div>
 {% endblock %}

@@ -312,6 +312,45 @@ class WeldFlexRobotService:
 
         return snapshot
 
+    def enable_drag(self) -> None:
+        with self._lock:
+            robot = self._client()
+        result = self._run_with_timeout(lambda: robot.DragTeachSwitch(1))
+        error_code, _ = self._split_error_value(result)
+        if error_code != 0:
+            raise RuntimeError(f"DragTeachSwitch(1) failed with error code {error_code}.")
+
+    def disable_drag(self) -> None:
+        with self._lock:
+            robot = self._client()
+        result = self._run_with_timeout(lambda: robot.DragTeachSwitch(0))
+        error_code, _ = self._split_error_value(result)
+        if error_code != 0:
+            raise RuntimeError(f"DragTeachSwitch(0) failed with error code {error_code}.")
+
+    def record_wobj_point(self, point_num: int) -> None:
+        with self._lock:
+            robot = self._client()
+        result = self._run_with_timeout(lambda: robot.SetWObjCoordPoint(point_num))
+        error_code, _ = self._split_error_value(result)
+        if error_code != 0:
+            raise RuntimeError(f"SetWObjCoordPoint({point_num}) failed with error code {error_code}.")
+
+    def compute_and_apply_wobj(self, wobj_id: int = 1) -> list[float]:
+        with self._lock:
+            robot = self._client()
+        compute_resp = self._run_with_timeout(lambda: robot.ComputeWObjCoord(wobj_id, 0))
+        error_code, coord = self._split_error_value(compute_resp)
+        if error_code != 0 or not isinstance(coord, list) or len(coord) < 6:
+            raise RuntimeError(f"ComputeWObjCoord failed with error code {error_code}.")
+        coord_floats = [float(v) for v in coord[:6]]
+        set_resp = self._run_with_timeout(lambda: robot.SetWObjCoord(wobj_id, coord_floats, 0))
+        error_code2, _ = self._split_error_value(set_resp)
+        if error_code2 != 0:
+            raise RuntimeError(f"SetWObjCoord failed with error code {error_code2}.")
+        self._run_with_timeout(lambda: robot.SetWObjList(wobj_id, coord_floats, 0))
+        return coord_floats
+
     def status(self) -> dict[str, Any]:
         with self._lock:
             robot = self._client()

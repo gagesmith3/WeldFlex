@@ -6,39 +6,35 @@
   <div class="settings-sections">
 
     {# ── Date & Time ── #}
-    {% call panel_shell('Date & Time', 'Set the system date and time.', class_name='settings-shell') %}
+    {% call panel_shell('Date & Time', 'Automatic sync via NTP keeps time accurate over WiFi.', class_name='settings-shell') %}
       <div class="sys-info-row">
         {{ status_chip('Current', sys_info.datetime, compact=true) }}
         {{ status_chip('Timezone', sys_info.timezone, compact=true) }}
+        {{ status_chip('Auto-Sync', 'Enabled' if sys_info.ntp_enabled else 'Disabled',
+             state='ok' if sys_info.ntp_enabled else 'error', compact=true) }}
+        {{ status_chip('Synced', 'Yes' if sys_info.ntp_synced else 'No',
+             state='ok' if sys_info.ntp_synced else 'error', compact=true) }}
       </div>
+      <div class="settings-ntp-row">
+        {{ action_button('Enable Auto-Sync', variant='run', icon='wifi',
+             hx_post='/ui/settings/ntp',
+             hx_target='#toast-rack') }}
+      </div>
+      <div class="settings-divider">
+        <span>Manual Override</span>
+      </div>
+      <p class="panel-note">Only use when no internet is available. Disables NTP auto-sync.</p>
       <form class="settings-grid" hx-post="/ui/settings/datetime" hx-target="#toast-rack" hx-swap="innerHTML">
         <div>
-          <label for="s_month">Month (1–12)</label>
-          <input id="s_month" name="month" type="text" inputmode="none" data-kbd="num"
-                 value="{{ sys_info.month }}" required>
+          <label for="s_date">Date</label>
+          <input id="s_date" name="date" type="date" value="{{ sys_info.date }}" required>
         </div>
         <div>
-          <label for="s_day">Day (1–31)</label>
-          <input id="s_day" name="day" type="text" inputmode="none" data-kbd="num"
-                 value="{{ sys_info.day }}" required>
-        </div>
-        <div>
-          <label for="s_year">Year</label>
-          <input id="s_year" name="year" type="text" inputmode="none" data-kbd="num"
-                 value="{{ sys_info.year }}" required>
-        </div>
-        <div>
-          <label for="s_hour">Hour (0–23)</label>
-          <input id="s_hour" name="hour" type="text" inputmode="none" data-kbd="num"
-                 value="{{ sys_info.hour }}" required>
-        </div>
-        <div>
-          <label for="s_minute">Minute (0–59)</label>
-          <input id="s_minute" name="minute" type="text" inputmode="none" data-kbd="num"
-                 value="{{ sys_info.minute }}" required>
+          <label for="s_time">Time</label>
+          <input id="s_time" name="time" type="time" value="{{ sys_info.time }}" required>
         </div>
         <div class="settings-actions">
-          {{ action_button('Set Date & Time', variant='run', icon='clock', button_type='submit') }}
+          {{ action_button('Set Manually', variant='recipe-delete', icon='clock', button_type='submit') }}
         </div>
       </form>
     {% endcall %}

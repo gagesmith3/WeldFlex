@@ -46,16 +46,25 @@ def _get_system_info() -> dict:
     now = datetime.now()
     info = {
         "datetime": now.strftime("%Y-%m-%d %H:%M"),
-        "month": str(now.month),
-        "day": str(now.day),
-        "year": str(now.year),
-        "hour": str(now.hour),
-        "minute": str(now.minute),
+        "date": now.strftime("%Y-%m-%d"),
+        "time": now.strftime("%H:%M"),
         "timezone": "Unknown",
+        "ntp_enabled": False,
+        "ntp_synced": False,
         "ssid": "Unknown",
         "ip_address": "Unknown",
         "sys_user": "Unknown",
     }
+    try:
+        ntp_out = subprocess.check_output(
+            ["timedatectl", "show", "--property=NTP,NTPSynchronized"],
+            text=True, timeout=3,
+        )
+        props = dict(line.split("=", 1) for line in ntp_out.splitlines() if "=" in line)
+        info["ntp_enabled"] = props.get("NTP", "no").strip().lower() == "yes"
+        info["ntp_synced"] = props.get("NTPSynchronized", "no").strip().lower() == "yes"
+    except Exception:
+        pass
     try:
         tz = subprocess.check_output(
             ["timedatectl", "show", "--property=Timezone", "--value"],
@@ -954,18 +963,13 @@ def create_app() -> Flask:
     @app.post("/ui/settings/datetime")
     def ui_settings_datetime() -> Any:
         try:
-            month = request.form.get("month", "").strip()
-            day = request.form.get("day", "").strip()
-            year = request.form.get("year", "").strip()
-            hour = request.form.get("hour", "").strip()
-            minute = request.form.get("minute", "").strip()
-            if not all([month, day, year, hour, minute]):
-                raise ValueError("All date and time fields are required.")
-            dt_str = f"{int(year):04d}-{int(month):02d}-{int(day):02d} {int(hour):02d}:{int(minute):02d}:00"
-            subprocess.check_call(
-                ["sudo", "timedatectl", "set-time", dt_str],
-                timeout=10,
-            )
+            date_str = request.form.get("date", "").strip()
+            time_str = request.form.get("time", "").strip()
+            if not date_str or not time_str:
+                raise ValueError("Date and time are required.")
+            dt_str = f"{date_str} {time_str}:00"
+            subprocess.check_call(["sudo", "timedatectl", "set-ntp", "false"], timeout=10)
+            subprocess.check_call(["sudo", "timedatectl", "set-time", dt_str], timeout=10)
             return render_template(
                 "partials/command_result.html",
                 ok=True,
@@ -977,6 +981,24 @@ def create_app() -> Flask:
                 "partials/command_result.html",
                 ok=False,
                 title="Date & Time",
+                payload={"error": str(exc)},
+            )
+
+    @app.post("/ui/settings/ntp")
+    def ui_settings_ntp() -> Any:
+        try:
+            subprocess.check_call(["sudo", "timedatectl", "set-ntp", "true"], timeout=10)
+            return render_template(
+                "partials/command_result.html",
+                ok=True,
+                title="Auto-Sync",
+                payload={"message": "NTP auto-sync enabled. Time will update when network is available."},
+            )
+        except Exception as exc:
+            return render_template(
+                "partials/command_result.html",
+                ok=False,
+                title="Auto-Sync",
                 payload={"error": str(exc)},
             )
 

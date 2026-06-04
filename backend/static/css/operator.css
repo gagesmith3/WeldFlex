@@ -864,6 +864,7 @@ select {
 
 .btn.row-action-btn {
   margin-top: 0;
+  background: #1d5f9a;
   width: 100%;
   height: 44px;
   padding: 0;
@@ -874,9 +875,9 @@ select {
 .drag-col       { width: 20px; }
 .num-col        { width: 24px; text-align: center; }
 .coord-col      { width: 80px; }
-.drag-btn-col   { width: 44px; }
+.drag-btn-col   { width: 54px; }
 /* row-spacer-col: no width — with table-layout:fixed this absorbs all leftover space */
-.action-col     { width: 44px; text-align: right; }
+.action-col     { width: 54px; text-align: right; }
 
 .drag-handle-cell {
   text-align: center;

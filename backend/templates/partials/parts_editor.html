@@ -27,16 +27,18 @@
              hx_target='#toast-rack',
              confirm='Delete this part?',
              disabled=not recipe_name) }}
-        {{ action_button('Save', variant='recipe-save', icon='save',
-             hx_post='/ui/recipes/save',
-             hx_include='#recipe_name, #studs_text, #coord-table-body input',
-             hx_target='#toast-rack',
-             hx_on_after_request="if(event.detail.successful){syncPartsEditorUrl()}") }}
-        {{ action_button('Run', variant='run', icon='play',
-             hx_post='/ui/library/run',
-             hx_include='#recipe_name',
-             hx_target='#toast-rack',
-             disabled=not recipe_name) }}
+        <div class="parts-run-right">
+          {{ action_button('Save', variant='recipe-save', icon='save',
+               hx_post='/ui/recipes/save',
+               hx_include='#recipe_name, #studs_text, #coord-table-body input',
+               hx_target='#toast-rack',
+               hx_on_after_request="if(event.detail.successful){syncPartsEditorUrl()}") }}
+          {{ action_button('Run', variant='run', icon='play',
+               hx_post='/ui/library/run',
+               hx_include='#recipe_name',
+               hx_target='#toast-rack',
+               disabled=not recipe_name) }}
+        </div>
       </div>
 
     </section>

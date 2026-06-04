@@ -165,7 +165,7 @@ input, textarea, select, [contenteditable] {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
-  align-items: center;
+  align-items: stretch;
 }
 
 .estop-btn {
@@ -173,6 +173,7 @@ input, textarea, select, [contenteditable] {
   min-width: 92px;
   font-size: 0.84rem;
   letter-spacing: 0.04em;
+  height: 100%;
 }
 
 /* ── Toast notification rack ── */
@@ -1396,6 +1397,16 @@ pre {
   border-top: 1px solid var(--line);
   flex-wrap: wrap;
   flex-shrink: 0;
+}
+
+.parts-run-row .btn {
+  margin-top: 0;
+}
+
+.parts-run-right {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
 }
 
 .parts-preview-panel #studs-preview {

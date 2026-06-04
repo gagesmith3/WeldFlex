@@ -9,8 +9,12 @@
 <div class="parts-body">
   {% if recipe_name is none %}
   <div class="parts-library-view">
-    {% call panel_shell('Parts', 'Select a saved part or start a new one.', class_name='parts-library-panel') %}
-      <div class="parts-library-toolbar">
+    <section class="panel parts-library-panel">
+      <div class="parts-panel-header">
+        <div>
+          <h2>Parts</h2>
+          <p class="panel-note">Select a saved part or start a new one.</p>
+        </div>
         {{ action_button('New Part', variant='recipe-save', icon='plus', href='/parts?new=1') }}
       </div>
       {% if parts_error %}
@@ -19,7 +23,7 @@
       <div id="parts-recipe-list" class="parts-library-table-wrap">
         {% include "partials/parts_recipe_list.html" %}
       </div>
-    {% endcall %}
+    </section>
   </div>
   {% else %}
   <div id="parts-editor">

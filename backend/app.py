@@ -444,6 +444,7 @@ def create_app() -> Flask:
         return render_template(
             "parts.html",
             page_title="Parts",
+            content_class="app-content-scroll-locked",
             recipes=recipe_catalog(),
             recipe_name=selected_recipe_name,
             studs_text=studs_text,

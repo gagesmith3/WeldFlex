@@ -27,6 +27,39 @@
     </div>
   </div>
 
+  {# ── Alpha + numeric keyboard ── #}
+  <div class="wf-kbd-panel" data-panel="alphanum" hidden>
+    <div class="wf-kbd-row">
+      {% for ch in ['1','2','3','4','5','6','7','8','9','0'] %}
+      <button type="button" class="wf-key" data-key="{{ ch }}">{{ ch }}</button>
+      {% endfor %}
+    </div>
+    <div class="wf-kbd-row">
+      {% for ch in ['q','w','e','r','t','y','u','i','o','p'] %}
+      <button type="button" class="wf-key" data-key="{{ ch }}" data-alpha="{{ ch }}">{{ ch }}</button>
+      {% endfor %}
+    </div>
+    <div class="wf-kbd-row wf-kbd-centered">
+      {% for ch in ['a','s','d','f','g','h','j','k','l'] %}
+      <button type="button" class="wf-key" data-key="{{ ch }}" data-alpha="{{ ch }}">{{ ch }}</button>
+      {% endfor %}
+    </div>
+    <div class="wf-kbd-row">
+      <button type="button" class="wf-key wf-key-fn wf-key-shift" data-key="shift">⇧</button>
+      {% for ch in ['z','x','c','v','b','n','m'] %}
+      <button type="button" class="wf-key" data-key="{{ ch }}" data-alpha="{{ ch }}">{{ ch }}</button>
+      {% endfor %}
+      <button type="button" class="wf-key wf-key-fn" data-key="backspace">⌫</button>
+    </div>
+    <div class="wf-kbd-row">
+      <button type="button" class="wf-key wf-key-fn" data-key="-">−</button>
+      <button type="button" class="wf-key wf-key-fn" data-key="_">_</button>
+      <button type="button" class="wf-key wf-key-space" data-key=" ">space</button>
+      <button type="button" class="wf-key wf-key-fn" data-key="clear">C</button>
+      <button type="button" class="wf-key wf-key-enter" data-key="enter">↵</button>
+    </div>
+  </div>
+
   {# ── Alpha keyboard (QWERTY) ── #}
   <div class="wf-kbd-panel" data-panel="alpha" hidden>
     <div class="wf-kbd-row">

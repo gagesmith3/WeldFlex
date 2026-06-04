@@ -611,7 +611,7 @@ select {
 
 .coord-table th,
 .coord-table td {
-  padding: 8px;
+  padding: 6px 8px;
   border-bottom: 1px solid #dbe4ee;
 }
 
@@ -843,6 +843,59 @@ select {
   background: #7d2c34;
   padding: 6px 10px;
   font-size: 0.82rem;
+}
+
+/* Drag handle column */
+.drag-col  { width: 28px; }
+.num-col   { width: 32px; }
+.action-col { width: 52px; }
+
+.drag-handle-cell {
+  text-align: center;
+  cursor: grab;
+  color: var(--muted);
+  -webkit-user-select: none;
+  user-select: none;
+  padding: 0 4px !important;
+}
+
+.drag-handle {
+  font-size: 1.1rem;
+  line-height: 1;
+  display: block;
+}
+
+/* Tfoot add-row */
+.table-add-row td {
+  padding: 6px 8px;
+  border-top: 1px solid var(--line);
+}
+
+.table-add-row .btn.table-add {
+  width: 100%;
+  text-align: center;
+  background: transparent;
+  color: var(--muted);
+  border: 1px dashed var(--line);
+  padding: 6px 10px;
+}
+
+.table-add-row .btn.table-add:hover,
+.table-add-row .btn.table-add:active {
+  background: #eef4fa;
+  color: var(--text);
+  border-color: #9db6cb;
+}
+
+/* Drag state */
+.dragging {
+  opacity: 0.35;
+}
+
+.drag-placeholder-cell {
+  background: #dbeeff;
+  height: 4px;
+  padding: 0 !important;
 }
 
 .recipe-block {
@@ -1189,7 +1242,7 @@ pre {
 
 /* ── Parts page (combined Part Designer + Library) ── */
 .parts-body {
-  padding: 12px;
+  padding: 8px;
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -1201,6 +1254,11 @@ pre {
 #parts-editor {
   flex: 1;
   min-height: 0;
+}
+
+#parts-editor {
+  display: flex;
+  flex-direction: column;
 }
 
 .parts-library-view {
@@ -1216,13 +1274,23 @@ pre {
   overflow: hidden;
 }
 
-.parts-library-toolbar {
+.parts-panel-header {
   display: flex;
-  justify-content: flex-end;
-  margin-bottom: 12px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
 }
 
-.parts-library-toolbar .btn {
+.parts-panel-header h2 {
+  margin-bottom: 2px;
+}
+
+.parts-panel-header .panel-note {
+  margin-bottom: 0;
+}
+
+.parts-panel-header .btn {
+  flex-shrink: 0;
   margin-top: 0;
 }
 
@@ -1269,13 +1337,7 @@ pre {
   min-height: 0;
 }
 
-.parts-back-row {
-  margin-bottom: 10px;
-}
 
-.parts-back-row .btn {
-  margin-top: 0;
-}
 
 .parts-edit-panel,
 .parts-preview-panel {
@@ -1283,26 +1345,40 @@ pre {
   flex-direction: column;
   flex: 1;
   min-height: 0;
+  padding: 12px;
 }
 
-.parts-name-row {
+.parts-edit-header {
   display: flex;
-  gap: 8px;
   align-items: center;
-  margin-bottom: 10px;
+  gap: 8px;
+  margin-bottom: 8px;
+  flex-shrink: 0;
 }
 
-.parts-name-row input { flex: 1; min-width: 0; }
+.parts-edit-label {
+  font-size: 1rem;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.parts-edit-dash {
+  color: var(--muted);
+  font-weight: 400;
+  flex-shrink: 0;
+}
+
+.parts-name-input {
+  flex: 1;
+  min-width: 0;
+}
 
 .parts-table-block {
   display: flex;
   flex-direction: column;
   flex: 1;
   min-height: 0;
-}
-
-.parts-edit-panel .table-head {
-  flex-shrink: 0;
 }
 
 .parts-edit-panel .coord-table-wrap {
@@ -1315,23 +1391,11 @@ pre {
   display: flex;
   gap: 8px;
   align-items: center;
-  margin-top: 12px;
-  padding-top: 12px;
+  margin-top: 8px;
+  padding-top: 8px;
   border-top: 1px solid var(--line);
   flex-wrap: wrap;
   flex-shrink: 0;
-}
-
-.parts-run-count {
-  width: 56px;
-  text-align: center;
-  flex-shrink: 0;
-}
-
-.parts-run-label {
-  color: var(--muted);
-  font-size: 0.85rem;
-  margin-right: auto;
 }
 
 .parts-preview-panel #studs-preview {
@@ -1377,8 +1441,8 @@ pre {
     gap: 10px;
   }
 
-  .parts-library-toolbar {
-    margin-bottom: 10px;
+  .parts-panel-header {
+    margin-bottom: 6px;
   }
 }
 

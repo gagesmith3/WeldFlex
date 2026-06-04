@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import getpass
 import json
 import os
 import re
+import socket
 import subprocess
 import threading
 from datetime import datetime, timezone
@@ -37,6 +39,60 @@ try:
 except ImportError:
     from robot_service import WeldFlexRobotService
     from run_state_manager import RunStateManager
+
+
+def _get_system_info() -> dict:
+    """Gather live system info for the General Settings page."""
+    now = datetime.now()
+    info = {
+        "datetime": now.strftime("%Y-%m-%d %H:%M"),
+        "month": str(now.month),
+        "day": str(now.day),
+        "year": str(now.year),
+        "hour": str(now.hour),
+        "minute": str(now.minute),
+        "timezone": "Unknown",
+        "ssid": "Unknown",
+        "ip_address": "Unknown",
+        "sys_user": "Unknown",
+    }
+    try:
+        tz = subprocess.check_output(
+            ["timedatectl", "show", "--property=Timezone", "--value"],
+            text=True, timeout=3,
+        ).strip()
+        if tz:
+            info["timezone"] = tz
+    except Exception:
+        pass
+    try:
+        wifi_out = subprocess.check_output(
+            ["nmcli", "-t", "-f", "active,ssid", "dev", "wifi"],
+            text=True, timeout=3,
+        )
+        for line in wifi_out.splitlines():
+            if line.startswith("yes:"):
+                info["ssid"] = line[4:].strip() or "Unknown"
+                break
+    except Exception:
+        pass
+    try:
+        hostname_out = subprocess.check_output(
+            ["hostname", "-I"], text=True, timeout=3
+        ).strip()
+        ip = hostname_out.split()[0] if hostname_out.split() else None
+        if ip:
+            info["ip_address"] = ip
+    except Exception:
+        try:
+            info["ip_address"] = socket.gethostbyname(socket.gethostname())
+        except Exception:
+            pass
+    try:
+        info["sys_user"] = getpass.getuser()
+    except Exception:
+        pass
+    return info
 
 
 def create_app() -> Flask:
@@ -399,11 +455,12 @@ def create_app() -> Flask:
             "robot_diagnostics.html",
             page_title="Robot Diagnostics",
             status_interval_ms=runtime_settings["status_interval_ms"],
+            settings=runtime_settings,
         )
 
     @app.get("/settings")
     def settings() -> Any:
-        return render_template("settings.html", page_title="Settings", settings=runtime_settings)
+        return render_template("settings.html", page_title="Settings", sys_info=_get_system_info())
 
     @app.get("/calibration")
     def calibration() -> Any:
@@ -894,7 +951,96 @@ def create_app() -> Flask:
                 payload={"error": str(exc)},
             )
 
-    @app.get("/api/health")
+    @app.post("/ui/settings/datetime")
+    def ui_settings_datetime() -> Any:
+        try:
+            month = request.form.get("month", "").strip()
+            day = request.form.get("day", "").strip()
+            year = request.form.get("year", "").strip()
+            hour = request.form.get("hour", "").strip()
+            minute = request.form.get("minute", "").strip()
+            if not all([month, day, year, hour, minute]):
+                raise ValueError("All date and time fields are required.")
+            dt_str = f"{int(year):04d}-{int(month):02d}-{int(day):02d} {int(hour):02d}:{int(minute):02d}:00"
+            subprocess.check_call(
+                ["sudo", "timedatectl", "set-time", dt_str],
+                timeout=10,
+            )
+            return render_template(
+                "partials/command_result.html",
+                ok=True,
+                title="Date & Time",
+                payload={"message": f"System time set to {dt_str}."},
+            )
+        except Exception as exc:
+            return render_template(
+                "partials/command_result.html",
+                ok=False,
+                title="Date & Time",
+                payload={"error": str(exc)},
+            )
+
+    @app.post("/ui/settings/wifi")
+    def ui_settings_wifi() -> Any:
+        try:
+            ssid = request.form.get("ssid", "").strip()
+            password = request.form.get("wifi_password", "").strip()
+            if not ssid:
+                raise ValueError("SSID is required.")
+            cmd = ["sudo", "nmcli", "device", "wifi", "connect", ssid]
+            if password:
+                cmd += ["password", password]
+            subprocess.check_call(cmd, timeout=30)
+            return render_template(
+                "partials/command_result.html",
+                ok=True,
+                title="Network / WiFi",
+                payload={"message": f"Connected to '{ssid}'."},
+            )
+        except Exception as exc:
+            return render_template(
+                "partials/command_result.html",
+                ok=False,
+                title="Network / WiFi",
+                payload={"error": str(exc)},
+            )
+
+    @app.post("/ui/settings/password")
+    def ui_settings_password() -> Any:
+        try:
+            new_password = request.form.get("new_password", "")
+            confirm_password = request.form.get("confirm_password", "")
+            if not new_password:
+                raise ValueError("New password is required.")
+            if new_password != confirm_password:
+                raise ValueError("Passwords do not match.")
+            if len(new_password) < 6:
+                raise ValueError("Password must be at least 6 characters.")
+            sys_user = getpass.getuser()
+            proc = subprocess.run(
+                ["sudo", "chpasswd"],
+                input=f"{sys_user}:{new_password}\n",
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if proc.returncode != 0:
+                raise RuntimeError(proc.stderr.strip() or "chpasswd failed.")
+            return render_template(
+                "partials/command_result.html",
+                ok=True,
+                title="Admin Password",
+                payload={"message": "Password changed successfully."},
+            )
+        except Exception as exc:
+            return render_template(
+                "partials/command_result.html",
+                ok=False,
+                title="Admin Password",
+                payload={"error": str(exc)},
+            )
+
+
     def health() -> Any:
         return jsonify({"ok": True})
 

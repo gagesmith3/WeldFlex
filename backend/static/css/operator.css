@@ -403,11 +403,13 @@ input, textarea, select, [contenteditable] {
 
 .home-nav-card h3 {
   margin: 0;
+  font-size: 1.15rem;
 }
 
 .home-nav-card p {
   margin: 8px 0 0;
   color: var(--muted);
+  font-size: 0.9rem;
 }
 
 .nav-card-cta {
@@ -423,8 +425,8 @@ input, textarea, select, [contenteditable] {
 }
 
 .home-nav-icon {
-  width: 34px;
-  height: 34px;
+  width: 44px;
+  height: 44px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -790,6 +792,19 @@ select {
   grid-column: 1 / -1;
 }
 
+.settings-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.sys-info-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
 .row-num {
   width: 40px;
   color: #4d6378;
@@ -1079,8 +1094,8 @@ pre {
   .home-nav-grid { flex: 1; grid-template-columns: 1fr; grid-template-rows: repeat(4, 1fr); gap: 6px; }
   .home-nav-card { padding: 8px 10px; display: flex; flex-direction: row; align-items: center; gap: 8px; }
   .home-nav-card p { display: none; }
-  .home-nav-card h3 { font-size: 0.82rem; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .home-nav-icon { width: 26px; height: 26px; margin-bottom: 0; border-radius: 8px; flex-shrink: 0; }
+  .home-nav-card h3 { font-size: 0.95rem; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .home-nav-icon { width: 34px; height: 34px; margin-bottom: 0; border-radius: 8px; flex-shrink: 0; }
   .nav-card-cta { margin-top: 0; margin-left: auto; padding: 4px 10px; font-size: 0.72rem; flex-shrink: 0; }
 
   /* Metric cards: side-by-side instead of stacked */

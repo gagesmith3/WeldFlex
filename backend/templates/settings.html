@@ -1,35 +1,91 @@
 {% extends "base.html" %}
-{% from "components/ui.html" import action_button, panel_shell, result_mount with context %}
+{% from "components/ui.html" import action_button, panel_shell, status_chip with context %}
 
 {% block body %}
 <div class="page-body">
-  {% call panel_shell('Settings', 'Set runtime robot and polling settings for this app session.', class_name='settings-shell') %}
-    <form class="settings-grid" hx-post="/ui/settings/save" hx-target="#toast-rack" hx-swap="innerHTML">
-      <div>
-        <label for="robot_ip">Robot IP</label>
-        <input id="robot_ip" name="robot_ip" type="text" inputmode="none" data-kbd="alpha" value="{{ settings.robot_ip }}" required>
-      </div>
-      <div>
-        <label for="controller_host">Controller Host</label>
-        <input id="controller_host" name="controller_host" type="text" inputmode="none" data-kbd="alpha" value="{{ settings.controller_host }}" required>
-      </div>
-      <div>
-        <label for="program_path">Program Path</label>
-        <input id="program_path" name="program_path" type="text" inputmode="none" data-kbd="alpha" value="{{ settings.program_path }}" required>
-      </div>
-      <div>
-        <label for="studs_data_path">Studs Data Path</label>
-        <input id="studs_data_path" name="studs_data_path" type="text" inputmode="none" data-kbd="alpha" value="{{ settings.studs_data_path }}" required>
-      </div>
-      <div>
-        <label for="status_interval_ms">Status Poll Interval (ms)</label>
-        <input id="status_interval_ms" name="status_interval_ms" type="text" inputmode="none" data-kbd="num" value="{{ settings.status_interval_ms }}" required>
-      </div>
+  <div class="settings-sections">
 
-      <div class="settings-actions">
-        {{ action_button('Save Runtime Settings', variant='run', icon='save', button_type='submit') }}
+    {# ── Date & Time ── #}
+    {% call panel_shell('Date & Time', 'Set the system date and time.', class_name='settings-shell') %}
+      <div class="sys-info-row">
+        {{ status_chip('Current', sys_info.datetime, compact=true) }}
+        {{ status_chip('Timezone', sys_info.timezone, compact=true) }}
       </div>
-    </form>
-  {% endcall %}
+      <form class="settings-grid" hx-post="/ui/settings/datetime" hx-target="#toast-rack" hx-swap="innerHTML">
+        <div>
+          <label for="s_month">Month (1–12)</label>
+          <input id="s_month" name="month" type="text" inputmode="none" data-kbd="num"
+                 value="{{ sys_info.month }}" required>
+        </div>
+        <div>
+          <label for="s_day">Day (1–31)</label>
+          <input id="s_day" name="day" type="text" inputmode="none" data-kbd="num"
+                 value="{{ sys_info.day }}" required>
+        </div>
+        <div>
+          <label for="s_year">Year</label>
+          <input id="s_year" name="year" type="text" inputmode="none" data-kbd="num"
+                 value="{{ sys_info.year }}" required>
+        </div>
+        <div>
+          <label for="s_hour">Hour (0–23)</label>
+          <input id="s_hour" name="hour" type="text" inputmode="none" data-kbd="num"
+                 value="{{ sys_info.hour }}" required>
+        </div>
+        <div>
+          <label for="s_minute">Minute (0–59)</label>
+          <input id="s_minute" name="minute" type="text" inputmode="none" data-kbd="num"
+                 value="{{ sys_info.minute }}" required>
+        </div>
+        <div class="settings-actions">
+          {{ action_button('Set Date & Time', variant='run', icon='clock', button_type='submit') }}
+        </div>
+      </form>
+    {% endcall %}
+
+    {# ── Network / WiFi ── #}
+    {% call panel_shell('Network / WiFi', 'Connect to a wireless network.', class_name='settings-shell') %}
+      <div class="sys-info-row">
+        {{ status_chip('SSID', sys_info.ssid, compact=true) }}
+        {{ status_chip('IP Address', sys_info.ip_address, compact=true) }}
+      </div>
+      <form class="settings-grid" hx-post="/ui/settings/wifi" hx-target="#toast-rack" hx-swap="innerHTML">
+        <div>
+          <label for="s_ssid">Network SSID</label>
+          <input id="s_ssid" name="ssid" type="text" inputmode="none" data-kbd="alpha"
+                 placeholder="Network name" required>
+        </div>
+        <div>
+          <label for="s_wifi_pw">Password</label>
+          <input id="s_wifi_pw" name="wifi_password" type="text" inputmode="none" data-kbd="alpha"
+                 placeholder="Leave blank for open networks">
+        </div>
+        <div class="settings-actions">
+          {{ action_button('Connect', variant='run', icon='wifi', button_type='submit') }}
+        </div>
+      </form>
+    {% endcall %}
+
+    {# ── Admin Password ── #}
+    {% call panel_shell('Admin Password', 'Change the system administrator password.', class_name='settings-shell') %}
+      <div class="sys-info-row">
+        {{ status_chip('User', sys_info.sys_user, compact=true) }}
+      </div>
+      <form class="settings-grid" hx-post="/ui/settings/password" hx-target="#toast-rack" hx-swap="innerHTML">
+        <div>
+          <label for="s_newpw">New Password</label>
+          <input id="s_newpw" name="new_password" type="text" inputmode="none" data-kbd="alpha" required>
+        </div>
+        <div>
+          <label for="s_confirmpw">Confirm Password</label>
+          <input id="s_confirmpw" name="confirm_password" type="text" inputmode="none" data-kbd="alpha" required>
+        </div>
+        <div class="settings-actions">
+          {{ action_button('Change Password', variant='run', icon='key-round', button_type='submit') }}
+        </div>
+      </form>
+    {% endcall %}
+
+  </div>
 </div>
 {% endblock %}

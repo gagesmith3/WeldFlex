@@ -50,11 +50,16 @@
     });
     shifted = false;
     syncShift();
+    requestAnimationFrame(function () {
+      document.documentElement.style.scrollPaddingBottom = kbd.offsetHeight + 'px';
+      if (active) active.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    });
   }
 
   function hideKbd() {
     kbd.classList.add('wf-kbd-hidden');
     kbd.setAttribute('aria-hidden', 'true');
+    document.documentElement.style.scrollPaddingBottom = '';
   }
 
   function handleKey(key) {

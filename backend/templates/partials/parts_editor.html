@@ -22,10 +22,10 @@
 
       <div class="parts-run-row">
         {{ action_button('Delete', variant='recipe-delete', icon='trash_2',
+             class_name='js-delete-btn',
              hx_post='/ui/parts/delete',
              hx_include='#recipe_name',
              hx_target='#toast-rack',
-             confirm='Delete this part?',
              disabled=not recipe_name) }}
         <div class="parts-run-right">
           {{ action_button('Save', variant='recipe-save', icon='save',
@@ -34,9 +34,7 @@
                hx_target='#toast-rack',
                hx_on_after_request="if(event.detail.successful){syncPartsEditorUrl()}") }}
           {{ action_button('Run', variant='run', icon='play',
-               hx_post='/ui/library/run',
-               hx_include='#recipe_name',
-               hx_target='#toast-rack',
+               class_name='js-parts-run',
                disabled=not recipe_name) }}
         </div>
       </div>

@@ -22,7 +22,7 @@
       </div>
       <div class="app-header-right nav-status-wrap">
         {{ htmx_mount('connection-chips', '/ui/connection', 'load, every 1000ms', 'innerHTML', 'nav-chips') }}
-        {{ action_button('STOP', variant='estop-btn', icon='alert_octagon', hx_post='/ui/stop', hx_target='#toast-rack') }}
+        {{ action_button('STOP', variant='estop-btn', hx_post='/ui/stop', hx_target='#toast-rack') }}
       </div>
     </header>
 
@@ -33,7 +33,9 @@
   <div id="toast-rack" class="toast-rack" aria-live="polite"></div>
   {% include "partials/keyboard.html" %}
   <script defer src="{{ url_for('static', filename='js/keyboard.js') }}"></script>
+  <script defer src="{{ url_for('static', filename='js/admin.js') }}"></script>
   {% block scripts %}{% endblock %}
+
 
 </body>
 </html>

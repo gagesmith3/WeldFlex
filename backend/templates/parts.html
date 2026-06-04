@@ -34,31 +34,171 @@
 {% endblock %}
 
 {% block scripts %}
+<div id="wf-modal" class="wf-modal-overlay" hidden>
+  <div class="wf-modal">
+    <p class="wf-modal-msg" id="wf-modal-msg"></p>
+    <div id="wf-modal-stepper-wrap" class="wf-modal-stepper" hidden>
+      <button type="button" class="btn wf-step" id="wf-modal-step-dn">−</button>
+      <span class="wf-modal-count-val" id="wf-modal-count-val">1</span>
+      <button type="button" class="btn wf-step" id="wf-modal-step-up">+</button>
+    </div>
+    <div class="wf-modal-actions" id="wf-modal-actions"></div>
+  </div>
+</div>
 <script>
+var partsEditorDirty = false;
+
 function syncPartsEditorUrl() {
   var nameInput = document.getElementById('recipe_name');
-  if (!(nameInput instanceof HTMLInputElement)) {
-    return;
-  }
-
+  if (!(nameInput instanceof HTMLInputElement)) return;
   var name = nameInput.value.trim();
-  if (!name) {
-    return;
-  }
-
+  if (!name) return;
   var nextUrl = new URL(window.location.href);
   nextUrl.searchParams.delete('new');
   nextUrl.searchParams.set('recipe_name', name);
-
   document.querySelectorAll('.parts-run-row .btn').forEach(function (button) {
-    if (!(button instanceof HTMLButtonElement)) {
-      return;
-    }
+    if (!(button instanceof HTMLButtonElement)) return;
     button.disabled = false;
     button.classList.remove('is-disabled');
   });
-
   window.history.replaceState({}, '', nextUrl.toString());
+  partsEditorDirty = false;
 }
+
+// ── Dirty tracking ────────────────────────────────────────────────────────────
+document.addEventListener('input', function (e) {
+  if (e.target.closest && e.target.closest('#parts-editor')) partsEditorDirty = true;
+});
+
+window.addEventListener('beforeunload', function (e) {
+  if (partsEditorDirty) { e.preventDefault(); e.returnValue = ''; }
+});
+
+// ── Modal system ──────────────────────────────────────────────────────────────
+var WfModal = (function () {
+  var overlay   = document.getElementById('wf-modal');
+  var msgEl     = document.getElementById('wf-modal-msg');
+  var stepWrap  = document.getElementById('wf-modal-stepper-wrap');
+  var countVal  = document.getElementById('wf-modal-count-val');
+  var actionsEl = document.getElementById('wf-modal-actions');
+  var _resolve  = null;
+  var _count    = 1;
+
+  function close(val) {
+    overlay.hidden = true;
+    if (_resolve) { var r = _resolve; _resolve = null; r(val); }
+  }
+
+  overlay.addEventListener('pointerdown', function (e) {
+    if (e.target === overlay) close(false);
+  });
+
+  document.addEventListener('keydown', function (e) {
+    if (!overlay.hidden && e.key === 'Escape') close(false);
+  });
+
+  document.getElementById('wf-modal-step-dn').addEventListener('click', function () {
+    if (_count > 1) { _count--; countVal.textContent = String(_count); }
+  });
+
+  document.getElementById('wf-modal-step-up').addEventListener('click', function () {
+    if (_count < 99) { _count++; countVal.textContent = String(_count); }
+  });
+
+  function show(opts) {
+    return new Promise(function (resolve) {
+      _resolve = resolve;
+      msgEl.textContent = opts.message || '';
+      stepWrap.hidden = !opts.showStepper;
+      if (opts.showStepper) {
+        _count = opts.startCount || 1;
+        countVal.textContent = String(_count);
+      }
+      actionsEl.innerHTML = '';
+      (opts.buttons || []).forEach(function (cfg) {
+        var el = document.createElement('button');
+        el.type = 'button';
+        el.className = 'btn ' + (cfg.variant || '');
+        el.textContent = cfg.label;
+        el.addEventListener('click', function () { close(cfg.value); });
+        actionsEl.appendChild(el);
+      });
+      overlay.hidden = false;
+    });
+  }
+
+  return {
+    confirm: function (msg, opts) {
+      opts = opts || {};
+      return show({
+        message: msg,
+        buttons: [
+          { label: 'Cancel',                           variant: 'wf-cancel',                   value: false },
+          { label: opts.confirmLabel || 'Confirm', variant: opts.confirmVariant || 'run', value: true  }
+        ]
+      });
+    },
+    promptCount: function (msg, opts) {
+      opts = opts || {};
+      return show({
+        message: msg,
+        showStepper: true,
+        startCount: opts.startCount || 1,
+        buttons: [
+          { label: 'Cancel',                         variant: 'wf-cancel', value: false },
+          { label: opts.confirmLabel || 'Run', variant: 'run',       value: true  }
+        ]
+      });
+    },
+    getCount: function () { return _count; }
+  };
+})();
+
+// ── Delete confirmation (capture phase — intercepts before HTMX sees the click) ──
+var _deleteConfirmed = false;
+document.addEventListener('click', function (e) {
+  var btn = e.target.closest('.js-delete-btn');
+  if (!btn) return;
+  if (_deleteConfirmed) { _deleteConfirmed = false; return; } // second click — let HTMX handle it
+  e.stopPropagation();
+  WfModal.confirm('Delete this part? This cannot be undone.', { confirmLabel: 'Delete', confirmVariant: 'recipe-delete' })
+    .then(function (ok) {
+      if (!ok) return;
+      partsEditorDirty = false;
+      _deleteConfirmed = true;
+      btn.click(); // re-fire without interception; HTMX takes it from here
+    });
+}, true); // capture phase
+
+// ── Unsaved changes — home button ─────────────────────────────────────────────
+document.addEventListener('click', function (e) {
+  var homeBtn = e.target.closest('.home-btn');
+  if (!homeBtn || !partsEditorDirty) return;
+  e.preventDefault();
+  WfModal.confirm('You have unsaved changes. Leave without saving?', {
+    confirmLabel: 'Leave', confirmVariant: 'recipe-delete'
+  }).then(function (ok) {
+    if (!ok) return;
+    partsEditorDirty = false;
+    window.location.href = '/';
+  });
+});
+
+// ── Run count prompt ──────────────────────────────────────────────────────────
+document.addEventListener('click', function (e) {
+  if (!e.target.closest('.js-parts-run')) return;
+  WfModal.promptCount('How many parts to weld?', { confirmLabel: 'Start Run' })
+    .then(function (ok) {
+      if (!ok) return;
+      var nameInput = document.getElementById('recipe_name');
+      var name = nameInput ? nameInput.value.trim() : '';
+      partsEditorDirty = false;
+      htmx.ajax('POST', '/ui/library/run', {
+        target: '#toast-rack',
+        swap: 'innerHTML',
+        values: { recipe_name: name, run_count: String(WfModal.getCount()) }
+      });
+    });
+});
 </script>
 {% endblock %}

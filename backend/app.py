@@ -468,6 +468,10 @@ def create_app() -> Flask:
             settings=runtime_settings,
         )
 
+    @app.get("/admin")
+    def admin() -> Any:
+        return render_template("admin.html", page_title="Admin")
+
     @app.get("/settings")
     def settings() -> Any:
         return render_template("settings.html", page_title="Settings", sys_info=_get_system_info())

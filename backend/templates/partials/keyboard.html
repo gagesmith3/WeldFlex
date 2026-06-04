@@ -1,5 +1,12 @@
 <div id="wf-kbd" class="wf-kbd wf-kbd-hidden" aria-hidden="true" role="group" aria-label="On-screen keyboard">
 
+  <div id="wf-kbd-preview" class="wf-kbd-preview" hidden>
+    <span id="wf-kbd-preview-label" class="wf-kbd-preview-label"></span>
+    <span id="wf-kbd-preview-value" class="wf-kbd-preview-value"></span>
+  </div>
+
+  <div class="wf-kbd-panels">
+
   {# ── Numeric pad ── #}
   <div class="wf-kbd-panel" data-panel="num">
     <div class="wf-kbd-row">
@@ -87,5 +94,7 @@
       <button type="button" class="wf-key wf-key-enter" data-key="enter">↵</button>
     </div>
   </div>
+
+  </div>{# end .wf-kbd-panels #}
 
 </div>

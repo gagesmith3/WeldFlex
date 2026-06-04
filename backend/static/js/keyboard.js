@@ -5,10 +5,16 @@
   var active = null;
   var shifted = false;
   var blurTimer = null;
+  var previewEl = null;
+  var previewLabel = null;
+  var previewValue = null;
 
   function init() {
     kbd = document.getElementById('wf-kbd');
     if (!kbd) return;
+    previewEl    = document.getElementById('wf-kbd-preview');
+    previewLabel = document.getElementById('wf-kbd-preview-label');
+    previewValue = document.getElementById('wf-kbd-preview-value');
 
     // Prevent keyboard clicks from stealing focus away from the active input.
     kbd.addEventListener('mousedown', function (e) { e.preventDefault(); });
@@ -50,16 +56,61 @@
     });
     shifted = false;
     syncShift();
-    requestAnimationFrame(function () {
-      document.documentElement.style.scrollPaddingBottom = kbd.offsetHeight + 'px';
-      if (active) active.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-    });
+    updatePreview();
+    // For num mode the panel is on the right — inputs stay visible, no scroll needed.
+    // For other modes scroll the active input clear of the bottom panel.
+    if (mode !== 'num') {
+      requestAnimationFrame(function () {
+        if (active) active.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      });
+      setTimeout(ensureAboveKeyboard, 240);
+    }
+  }
+
+  function ensureAboveKeyboard() {
+    if (!active || kbd.classList.contains('wf-kbd-hidden')) return;
+    var kbdH = kbd.offsetHeight;
+    var clearance = window.innerHeight - kbdH - 12;
+    var rect = active.getBoundingClientRect();
+    if (rect.bottom <= clearance) return;
+    var overflow = rect.bottom - clearance;
+    // Walk up to find the scrollable ancestor and nudge it.
+    var el = active.parentElement;
+    while (el && el !== document.body) {
+      var ov = getComputedStyle(el).overflowY;
+      if (ov === 'auto' || ov === 'scroll') {
+        el.scrollBy({ top: overflow, behavior: 'smooth' });
+        return;
+      }
+      el = el.parentElement;
+    }
+    window.scrollBy({ top: overflow, behavior: 'smooth' });
+  }
+
+  function updatePreview() {
+    if (!previewEl || !previewLabel || !previewValue) return;
+    if (!active) { previewEl.hidden = true; return; }
+
+    // Build label: "Row N · X (mm)" for coord table inputs, otherwise input name.
+    var name = (active.getAttribute('name') || '').toUpperCase();
+    var label = name || 'INPUT';
+    var row = active.closest('tr');
+    if (row) {
+      var numCell = row.querySelector('.row-num');
+      if (numCell && numCell.textContent.trim()) {
+        label = 'Stud ' + numCell.textContent.trim() + ' · ' + label + ' (mm)';
+      }
+    }
+
+    previewLabel.textContent = label;
+    previewValue.textContent = active.value || '—';
+    previewEl.hidden = false;
   }
 
   function hideKbd() {
     kbd.classList.add('wf-kbd-hidden');
     kbd.setAttribute('aria-hidden', 'true');
-    document.documentElement.style.scrollPaddingBottom = '';
+    if (previewEl) previewEl.hidden = true;
   }
 
   function handleKey(key) {
@@ -75,6 +126,7 @@
     }
 
     fire();
+    updatePreview();
     if (key !== 'shift' && shifted && key.length === 1 && key !== key.toUpperCase()) {
       shifted = false;
       syncShift();

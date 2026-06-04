@@ -170,7 +170,7 @@ input, textarea, select, [contenteditable] {
 
 .estop-btn {
   background: #cf212f;
-  min-width: 92px;
+  min-width: 60px;
   font-size: 0.84rem;
   letter-spacing: 0.04em;
   height: 100%;
@@ -598,7 +598,7 @@ select {
 }
 
 .coord-table-wrap {
-  overflow-x: auto;
+  overflow-x: hidden;
   border: 1px solid var(--line);
   border-radius: 10px;
   background: #fbfdff;
@@ -607,7 +607,6 @@ select {
 .coord-table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 460px;
 }
 
 .coord-table th,
@@ -629,9 +628,10 @@ select {
   border-bottom: none;
 }
 
+.coord-table input[type="text"],
 .coord-table input[type="number"] {
-  width: 100%;
-  min-width: 95px;
+  width: 70px;
+  text-align: center;
 }
 
 .preview-card {
@@ -1385,7 +1385,28 @@ pre {
 .parts-edit-panel .coord-table-wrap {
   flex: 1;
   min-height: 0;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.parts-edit-panel .coord-table-wrap::-webkit-scrollbar {
+  width: 16px;
+}
+
+.parts-edit-panel .coord-table-wrap::-webkit-scrollbar-track {
+  background: #dde8f2;
+  border-radius: 0 10px 10px 0;
+}
+
+.parts-edit-panel .coord-table-wrap::-webkit-scrollbar-thumb {
+  background: #6e9fc2;
+  border-radius: 8px;
+  border: 3px solid #dde8f2;
+  min-height: 48px;
+}
+
+.parts-edit-panel .coord-table-wrap::-webkit-scrollbar-thumb:active {
+  background: #3d6f96;
 }
 
 .parts-run-row {
@@ -1455,6 +1476,75 @@ pre {
   .parts-panel-header {
     margin-bottom: 6px;
   }
+}
+
+/* ── Custom confirm / prompt modal ── */
+.wf-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 42, 63, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9000;
+}
+
+.wf-modal-overlay[hidden] {
+  display: none;
+}
+
+.wf-modal {
+  background: var(--panel);
+  border-radius: 14px;
+  padding: 24px 28px;
+  width: 300px;
+  max-width: 90vw;
+  box-shadow: 0 8px 40px rgba(15, 42, 63, 0.25);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.wf-modal-msg {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--ink);
+  text-align: center;
+  line-height: 1.4;
+}
+
+.wf-modal-stepper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+}
+
+.wf-modal-count-val {
+  font-size: 2.2rem;
+  font-weight: 700;
+  color: var(--ink);
+  min-width: 48px;
+  text-align: center;
+}
+
+.btn.wf-step {
+  background: var(--muted);
+  font-size: 1.4rem;
+  line-height: 1;
+  padding: 6px 18px;
+  border-radius: 8px;
+}
+
+.wf-modal-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+}
+
+.btn.wf-cancel {
+  background: var(--muted);
 }
 
 /* ── Calibrate workflow page ── */
@@ -1854,11 +1944,55 @@ pre {
   z-index: 850;
   background: #16191f;
   border-top: 1px solid #2a2f3d;
-  padding: 10px 12px 14px;
+  padding: 0;
   display: flex;
-  justify-content: center;
+  flex-direction: column;
   transform: translateY(0);
   transition: transform 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.wf-kbd-panels {
+  display: flex;
+  justify-content: center;
+  padding: 10px 12px 14px;
+}
+
+.wf-kbd-preview {
+  position: relative;
+  display: flex;
+  align-items: center;
+  padding: 6px 16px;
+  border-bottom: 1px solid #2a2f3d;
+  background: #0e1117;
+}
+
+.wf-kbd-preview-label {
+  position: relative;
+  z-index: 1;
+  color: #5e7a94;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* Absolutely centered over the full bar width regardless of label length */
+.wf-kbd-preview-value {
+  position: absolute;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: #e8f4ff;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 0 16px;
+  pointer-events: none;
 }
 
 .wf-kbd-hidden {
@@ -1866,8 +2000,54 @@ pre {
   pointer-events: none;
 }
 
+/* ── Numpad: right-side panel so table stays fully visible ── */
 .wf-kbd[data-mode="num"] {
+  top: 0;
+  bottom: 0;
+  right: 0;
+  left: auto;
+  width: 290px;
+  border-top: none;
+  border-left: 1px solid #2a2f3d;
+}
+
+.wf-kbd[data-mode="num"] .wf-key {
+  height: 60px;
+  font-size: 1.2rem;
+  border-radius: 10px;
+}
+
+.wf-kbd[data-mode="num"] .wf-key-fn {
+  font-size: 1rem;
+}
+
+.wf-kbd[data-mode="num"].wf-kbd-hidden {
+  transform: translateX(110%);
+}
+
+.wf-kbd[data-mode="num"] .wf-kbd-panels {
+  flex: 1;
+  display: flex;
+  align-items: center;
   justify-content: center;
+  padding: 12px;
+}
+
+/* Vertical calculator-display layout for the right panel */
+.wf-kbd[data-mode="num"] .wf-kbd-preview {
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 12px 16px 8px;
+  gap: 2px;
+}
+
+.wf-kbd[data-mode="num"] .wf-kbd-preview-value {
+  position: static;
+  text-align: center;
+  font-size: 2rem;
+  padding: 0;
+  width: 100%;
+  pointer-events: auto;
 }
 
 .wf-kbd-panel {
@@ -1941,4 +2121,82 @@ pre {
   color: #4ade80;
   border-color: #2e6b45;
   font-size: 1.1rem;
+}
+
+/* ── Admin bottom drawer ── */
+.admin-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 42, 63, 0.55);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  z-index: 9100;
+}
+
+.admin-overlay[hidden] {
+  display: none;
+}
+
+.admin-drawer {
+  background: var(--panel);
+  border-radius: 16px 16px 0 0;
+  padding: 0 20px 28px;
+  width: 100%;
+  max-width: 520px;
+  box-shadow: 0 -8px 32px rgba(15, 42, 63, 0.22);
+}
+
+.admin-handle {
+  width: 40px;
+  height: 4px;
+  background: var(--line);
+  border-radius: 2px;
+  margin: 12px auto 16px;
+}
+
+.admin-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.admin-title {
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.btn.admin-close-btn {
+  background: var(--line);
+  color: var(--ink);
+  padding: 6px 10px;
+  border-radius: 8px;
+}
+
+.admin-nav {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.admin-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: var(--drawer);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.admin-nav-item:active {
+  background: #d8eaf7;
 }

@@ -846,10 +846,20 @@ select {
   font-size: 0.82rem;
 }
 
+.btn.row-action-btn {
+  margin-top: 0;
+  padding: 6px 10px;
+  font-size: 0.82rem;
+}
+
 /* Drag handle column */
 .drag-col  { width: 28px; }
 .num-col   { width: 32px; }
-.action-col { width: 52px; }
+.action-col { width: 64px; text-align: center; }
+
+.coord-table td {
+  vertical-align: middle;
+}
 
 .drag-handle-cell {
   text-align: center;

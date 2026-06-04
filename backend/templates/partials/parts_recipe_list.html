@@ -16,7 +16,10 @@
         <td>{{ recipe.studs_count }}</td>
         <td>{{ recipe.updated_label }}</td>
         <td class="parts-library-action-cell">
-          <a class="btn recipe-load" href="/parts?recipe_name={{ recipe.name | urlencode }}">View Part</a>
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <a class="btn recipe-load" href="/parts?recipe_name={{ recipe.name | urlencode }}">Edit</a>
+            <button class="btn run js-table-run" data-recipe="{{ recipe.name }}" style="padding: 12px 24px; font-size: 1.1rem;">Run</button>
+          </div>
         </td>
       </tr>
       {% endfor %}

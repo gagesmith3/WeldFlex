@@ -39,7 +39,7 @@
     <p class="wf-modal-msg" id="wf-modal-msg"></p>
     <div id="wf-modal-stepper-wrap" class="wf-modal-stepper" hidden>
       <button type="button" class="btn wf-step" id="wf-modal-step-dn">−</button>
-      <span class="wf-modal-count-val" id="wf-modal-count-val">1</span>
+      <input type="number" class="wf-modal-count-val kb-num" id="wf-modal-count-val" value="1" min="1" max="99" style="width: 80px; text-align: center; font-size: 2.2rem; font-weight: 700; color: var(--ink); border: 1px solid var(--line); border-radius: 8px; background: transparent; padding: 4px;">
       <button type="button" class="btn wf-step" id="wf-modal-step-up">+</button>
     </div>
     <div class="wf-modal-actions" id="wf-modal-actions"></div>
@@ -82,7 +82,6 @@ var WfModal = (function () {
   var countVal  = document.getElementById('wf-modal-count-val');
   var actionsEl = document.getElementById('wf-modal-actions');
   var _resolve  = null;
-  var _count    = 1;
 
   function close(val) {
     overlay.hidden = true;
@@ -97,12 +96,23 @@ var WfModal = (function () {
     if (!overlay.hidden && e.key === 'Escape') close(false);
   });
 
+  function getCountValue() {
+    var val = parseInt(countVal.value, 10);
+    return isNaN(val) ? 1 : Math.max(1, Math.min(99, val));
+  }
+
+  countVal.addEventListener('change', function() {
+    countVal.value = getCountValue();
+  });
+
   document.getElementById('wf-modal-step-dn').addEventListener('click', function () {
-    if (_count > 1) { _count--; countVal.textContent = String(_count); }
+    var count = getCountValue();
+    if (count > 1) { countVal.value = count - 1; }
   });
 
   document.getElementById('wf-modal-step-up').addEventListener('click', function () {
-    if (_count < 99) { _count++; countVal.textContent = String(_count); }
+    var count = getCountValue();
+    if (count < 99) { countVal.value = count + 1; }
   });
 
   function show(opts) {
@@ -111,8 +121,7 @@ var WfModal = (function () {
       msgEl.textContent = opts.message || '';
       stepWrap.hidden = !opts.showStepper;
       if (opts.showStepper) {
-        _count = opts.startCount || 1;
-        countVal.textContent = String(_count);
+        countVal.value = opts.startCount || 1;
       }
       actionsEl.innerHTML = '';
       (opts.buttons || []).forEach(function (cfg) {
@@ -150,7 +159,7 @@ var WfModal = (function () {
         ]
       });
     },
-    getCount: function () { return _count; }
+    getCount: function () { return getCountValue(); }
   };
 })();
 
@@ -186,12 +195,16 @@ document.addEventListener('click', function (e) {
 
 // ── Run count prompt ──────────────────────────────────────────────────────────
 document.addEventListener('click', function (e) {
-  if (!e.target.closest('.js-parts-run')) return;
+  var runBtn = e.target.closest('.js-parts-run') || e.target.closest('.js-table-run');
+  if (!runBtn) return;
   WfModal.promptCount('How many parts to weld?', { confirmLabel: 'Start Run' })
     .then(function (ok) {
       if (!ok) return;
-      var nameInput = document.getElementById('recipe_name');
-      var name = nameInput ? nameInput.value.trim() : '';
+      var name = runBtn.dataset.recipe;
+      if (!name) {
+        var nameInput = document.getElementById('recipe_name');
+        name = nameInput ? nameInput.value.trim() : '';
+      }
       partsEditorDirty = false;
       htmx.ajax('POST', '/ui/library/run', {
         target: '#toast-rack',

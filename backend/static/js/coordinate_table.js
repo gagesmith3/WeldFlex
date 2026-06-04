@@ -99,6 +99,7 @@
       "<td class='row-num'></td>" +
       "<td><input type='text' inputmode='none' data-kbd='num' name='x' value='" + (xVal || '') + "' placeholder='X' required></td>" +
       "<td><input type='text' inputmode='none' data-kbd='num' name='y' value='" + (yVal || '') + "' placeholder='Y' required></td>" +
+      "<td><button class='btn recipe-save row-action-btn' type='button'>Drag</button></td>" +
       "<td><button class='btn row-remove' type='button'>✕</button></td>";
     return tr;
   }
@@ -152,7 +153,7 @@
 
       var placeholder = document.createElement('tr');
       placeholder.className = 'drag-placeholder';
-      placeholder.innerHTML = '<td colspan="5" class="drag-placeholder-cell"></td>';
+      placeholder.innerHTML = '<td colspan="6" class="drag-placeholder-cell"></td>';
       tbody.insertBefore(placeholder, row.nextSibling);
 
       row.classList.add('dragging');

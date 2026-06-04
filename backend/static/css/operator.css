@@ -1435,10 +1435,31 @@ pre {
   font-size: 0.82rem;
 }
 
-.jog-setting-field input,
+.jog-setting-field input[type="text"],
 .jog-setting-field select {
   width: 100%;
   padding: 9px 10px;
+}
+
+.jog-seg-group {
+  display: flex;
+  gap: 4px;
+}
+
+.btn.jog-seg-btn {
+  flex: 1;
+  justify-content: center;
+  background: #dce8f3;
+  color: #24455f;
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 9px 6px;
+  border-radius: 8px;
+}
+
+.btn.jog-seg-btn.active {
+  background: #1d5f9a;
+  color: #fff;
 }
 
 .jog-pos-bar {

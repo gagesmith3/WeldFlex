@@ -6,12 +6,13 @@
 
   <div class="jog-settings-bar" id="jog-settings">
     <div class="jog-setting-field">
-      <label for="cartesian_frame">Frame</label>
-      <select id="cartesian_frame" name="cartesian_frame">
-        <option value="base">Base</option>
-        <option value="tool">Tool</option>
-        <option value="workpiece">Workpiece</option>
-      </select>
+      <label>Frame</label>
+      <input type="hidden" id="cartesian_frame" name="cartesian_frame" value="base">
+      <div class="jog-seg-group" id="jog-frame-group">
+        <button type="button" class="btn jog-seg-btn active" onclick="jogSetFrame(this,'base')">Base</button>
+        <button type="button" class="btn jog-seg-btn" onclick="jogSetFrame(this,'tool')">Tool</button>
+        <button type="button" class="btn jog-seg-btn" onclick="jogSetFrame(this,'workpiece')">Workpiece</button>
+      </div>
     </div>
     <div class="jog-setting-field">
       <label for="cartesian_step">Step (mm / deg)</label>
@@ -49,4 +50,15 @@
   </div>
 
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function jogSetFrame(btn, value) {
+  document.getElementById('cartesian_frame').value = value;
+  document.querySelectorAll('#jog-frame-group .jog-seg-btn').forEach(function(b) {
+    b.classList.toggle('active', b === btn);
+  });
+}
+</script>
 {% endblock %}

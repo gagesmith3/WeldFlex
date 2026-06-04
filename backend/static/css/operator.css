@@ -1444,11 +1444,11 @@ pre {
 .jog-pos-bar {
   display: grid;
   grid-template-columns: repeat(6, 1fr);
-  gap: 8px;
+  gap: 6px;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 14px;
-  padding: 12px 16px;
+  padding: 10px 12px;
   flex-shrink: 0;
 }
 
@@ -1618,10 +1618,6 @@ pre {
 @media (max-width: 820px) {
   .jog-page {
     padding: 10px;
-  }
-
-  .jog-pos-bar {
-    grid-template-columns: repeat(3, 1fr);
   }
 
   .btn.jog-btn {

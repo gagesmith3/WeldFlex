@@ -3,6 +3,9 @@ __pycache__/
 *.pyc
 .env
 
+# Local recipes — copy data/recipes.example.json to data/recipes.json to get started
+data/recipes.json
+
 # FAIRINO SDK build artifacts
 fairino-python-sdk-main/**/build/**
 fairino-python-sdk-main/linux/fairino/build/

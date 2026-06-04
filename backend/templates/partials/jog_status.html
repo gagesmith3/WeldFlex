@@ -1,28 +1,12 @@
-{% from "components/ui.html" import status_chip with context %}
-{% set state_icon = 'play' if snapshot.program_state == 'running' else ('pause' if snapshot.program_state == 'paused' else 'square') %}
-
-<div class="jog-status-compact">
-  <div class="jog-status-chips">
-    {{ status_chip('Robot', 'ONLINE' if snapshot.connected else 'OFFLINE',
-         icon='link_2' if snapshot.connected else 'link_2_off',
-         state='ok' if snapshot.connected else 'error',
-         compact=true, tooltip=snapshot.error or '') }}
-    {{ status_chip('Program', snapshot.program_state,
-         icon=state_icon, compact=true) }}
-  </div>
-  {% if snapshot.error %}<p class="input-error">{{ snapshot.error }}</p>{% endif %}
-  <div class="jog-pos-grid">
-    {% for label, value in [
-        ('X',  snapshot.tcp_pose_labels[0]),
-        ('Y',  snapshot.tcp_pose_labels[1]),
-        ('Z',  snapshot.tcp_pose_labels[2]),
-        ('Rx', snapshot.tcp_pose_labels[3]),
-        ('Ry', snapshot.tcp_pose_labels[4]),
-        ('Rz', snapshot.tcp_pose_labels[5])] %}
-    <div class="jog-pos-cell">
-      <span>{{ label }}</span>
-      <strong>{{ value }}</strong>
-    </div>
-    {% endfor %}
-  </div>
+{% for label, value in [
+    ('X',  snapshot.tcp_pose_labels[0]),
+    ('Y',  snapshot.tcp_pose_labels[1]),
+    ('Z',  snapshot.tcp_pose_labels[2]),
+    ('Rx', snapshot.tcp_pose_labels[3]),
+    ('Ry', snapshot.tcp_pose_labels[4]),
+    ('Rz', snapshot.tcp_pose_labels[5])] %}
+<div class="jog-pos-cell">
+  <span>{{ label }}</span>
+  <strong>{{ value }}</strong>
 </div>
+{% endfor %}

@@ -1411,89 +1411,47 @@ pre {
   overflow: hidden;
 }
 
-.jog-nav-row {
+
+
+.jog-settings-bar {
   display: flex;
-  gap: 10px;
-  align-items: center;
-  flex-shrink: 0;
-}
-
-.jog-stop-btn {
-  margin-left: auto;
-}
-
-.jog-layout {
-  flex: 1;
-  min-height: 0;
-  display: grid;
-  grid-template-columns: 240px 1fr;
-  gap: 14px;
-}
-
-.jog-left-col {
-  display: flex;
-  flex-direction: column;
   gap: 12px;
-  min-height: 0;
-  overflow-y: auto;
-}
-
-.jog-right-col {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  min-height: 0;
-}
-
-.jog-col-heading {
-  margin: 0 0 10px;
-  font-size: 0.78rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--muted);
-}
-
-.jog-position-block {
+  align-items: flex-end;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 14px;
-  padding: 14px;
+  padding: 12px 16px;
   flex-shrink: 0;
 }
 
-.jog-settings-block {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  padding: 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  flex-shrink: 0;
+.jog-settings-bar .jog-setting-field {
+  flex: 1;
+  min-width: 0;
 }
 
 .jog-setting-field label {
+  display: block;
   margin: 0 0 6px;
   font-size: 0.82rem;
 }
 
 .jog-setting-field input,
 .jog-setting-field select {
+  width: 100%;
   padding: 9px 10px;
 }
 
-.jog-status-compact {
-  display: flex;
-  flex-direction: column;
+.jog-pos-bar {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
   gap: 8px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px 16px;
+  flex-shrink: 0;
 }
 
-.jog-status-chips {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
 
 .jog-pos-grid {
   display: grid;
@@ -1530,6 +1488,7 @@ pre {
   gap: 10px;
   flex: 1;
   min-height: 0;
+  min-width: 0;
 }
 
 .jog-axis-card {
@@ -1661,9 +1620,8 @@ pre {
     padding: 10px;
   }
 
-  .jog-layout {
-    grid-template-columns: 200px 1fr;
-    gap: 10px;
+  .jog-pos-bar {
+    grid-template-columns: repeat(3, 1fr);
   }
 
   .btn.jog-btn {
@@ -1684,15 +1642,6 @@ pre {
 }
 
 @media (max-width: 600px) {
-  .jog-nav-row {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .jog-stop-btn {
-    margin-left: 0;
-  }
-
   .calibration-body { grid-template-columns: 1fr; }
 }
 

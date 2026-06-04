@@ -3,67 +3,50 @@
 
 {% block body %}
 <div class="jog-page">
-  <div class="jog-nav-row">
-    {{ action_button('Back', variant='recipe-load', icon='arrow_left', href='/calibration') }}
-    {{ action_button('STOP', variant='stop', icon='square',
-         hx_post='/ui/jog/stop', hx_target='#toast-rack',
-         class_name='jog-stop-btn') }}
+
+  <div class="jog-settings-bar" id="jog-settings">
+    <div class="jog-setting-field">
+      <label for="cartesian_frame">Frame</label>
+      <select id="cartesian_frame" name="cartesian_frame">
+        <option value="base">Base</option>
+        <option value="tool">Tool</option>
+        <option value="workpiece">Workpiece</option>
+      </select>
+    </div>
+    <div class="jog-setting-field">
+      <label for="cartesian_step">Step (mm / deg)</label>
+      <input id="cartesian_step" name="cartesian_step" type="text"
+             value="5" inputmode="none" data-kbd="num">
+    </div>
+    <div class="jog-setting-field">
+      <label for="jog_velocity">Velocity (%)</label>
+      <input id="jog_velocity" name="jog_velocity" type="text"
+             value="20" inputmode="none" data-kbd="num">
+    </div>
   </div>
 
-  <div class="jog-layout">
+  <div class="jog-pos-bar"
+       hx-get="/ui/jog/status"
+       hx-trigger="load, every {{ status_interval_ms or 1000 }}ms"
+       hx-swap="innerHTML"></div>
 
-    <div class="jog-left-col">
-      <div class="jog-position-block">
-        <h3 class="jog-col-heading">TCP Position</h3>
-        <div hx-get="/ui/jog/status"
-             hx-trigger="load, every {{ status_interval_ms or 1000 }}ms"
-             hx-swap="innerHTML"></div>
-      </div>
-
-      <div class="jog-settings-block" id="jog-settings">
-        <h3 class="jog-col-heading">Settings</h3>
-        <div class="jog-setting-field">
-          <label for="cartesian_frame">Frame</label>
-          <select id="cartesian_frame" name="cartesian_frame">
-            <option value="base">Base</option>
-            <option value="tool">Tool</option>
-            <option value="workpiece">Workpiece</option>
-          </select>
-        </div>
-        <div class="jog-setting-field">
-          <label for="cartesian_step">Step (mm / deg)</label>
-          <input id="cartesian_step" name="cartesian_step" type="text"
-                 value="5" inputmode="none" data-kbd="num">
-        </div>
-        <div class="jog-setting-field">
-          <label for="jog_velocity">Velocity (%)</label>
-          <input id="jog_velocity" name="jog_velocity" type="text"
-                 value="20" inputmode="none" data-kbd="num">
-        </div>
+  <div class="jog-axis-grid">
+    {% for label, axis in [('X','x'),('Y','y'),('Z','z'),('Rx','rx'),('Ry','ry'),('Rz','rz')] %}
+    <div class="jog-axis-card">
+      <span class="jog-axis-tag">{{ label }}</span>
+      <div class="jog-axis-btns">
+        <button class="btn jog-btn jog-neg" type="button"
+                hx-post="/ui/jog/move" hx-target="#toast-rack"
+                hx-include="#jog-settings"
+                hx-vals='{"mode":"cartesian","axis":"{{ axis }}","direction":"negative"}'>−</button>
+        <button class="btn jog-btn jog-pos" type="button"
+                hx-post="/ui/jog/move" hx-target="#toast-rack"
+                hx-include="#jog-settings"
+                hx-vals='{"mode":"cartesian","axis":"{{ axis }}","direction":"positive"}'>+</button>
       </div>
     </div>
-
-    <div class="jog-right-col">
-      <h3 class="jog-col-heading">Cartesian Jog</h3>
-      <div class="jog-axis-grid">
-        {% for label, axis in [('X','x'),('Y','y'),('Z','z'),('Rx','rx'),('Ry','ry'),('Rz','rz')] %}
-        <div class="jog-axis-card">
-          <span class="jog-axis-tag">{{ label }}</span>
-          <div class="jog-axis-btns">
-            <button class="btn jog-btn jog-neg" type="button"
-                    hx-post="/ui/jog/move" hx-target="#toast-rack"
-                    hx-include="#jog-settings"
-                    hx-vals='{"mode":"cartesian","axis":"{{ axis }}","direction":"negative"}'>−</button>
-            <button class="btn jog-btn jog-pos" type="button"
-                    hx-post="/ui/jog/move" hx-target="#toast-rack"
-                    hx-include="#jog-settings"
-                    hx-vals='{"mode":"cartesian","axis":"{{ axis }}","direction":"positive"}'>+</button>
-          </div>
-        </div>
-        {% endfor %}
-      </div>
-    </div>
-
+    {% endfor %}
   </div>
+
 </div>
 {% endblock %}

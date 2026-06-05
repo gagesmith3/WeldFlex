@@ -1,0 +1,5 @@
+<option value="">Select a network...</option>
+{% for net in networks %}
+  <option value="{{ net.ssid }}">{{ net.ssid }} (Signal: {{ net.signal }}%, {{ net.security }})</option>
+{% endfor %}
+<option value="__custom__">-- Enter SSID Manually --</option>

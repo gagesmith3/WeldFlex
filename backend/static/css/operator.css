@@ -1724,6 +1724,15 @@ pre {
   overflow: hidden;
 }
 
+#calib-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
 .calib-instructions-bar {
   background: var(--panel);
   border: 1px solid var(--line);
@@ -1827,6 +1836,7 @@ pre {
   gap: 12px;
   align-items: center;
   flex-shrink: 0;
+  margin-top: auto;
 }
 
 .btn.calib-apply-btn {

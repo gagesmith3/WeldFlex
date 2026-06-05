@@ -6,8 +6,10 @@ import os
 import re
 import socket
 import subprocess
+import sys
 import threading
-from datetime import datetime, timezone
+import time
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -41,9 +43,46 @@ except ImportError:
     from run_state_manager import RunStateManager
 
 
+_mock_system_state: dict[str, Any] = {
+    "timezone": "America/New_York",
+    "ntp_enabled": True,
+    "ntp_synced": True,
+    "ssid": "WeldFlex_Local_WiFi",
+    "ip_address": "192.168.1.100",
+    "sys_user": "pi",
+}
+_mock_time_delta_seconds = 0.0
+_mock_time_set_at = 0.0
+
+COMMON_TIMEZONES = [
+    "UTC",
+    "America/New_York",
+    "America/Chicago",
+    "America/Denver",
+    "America/Phoenix",
+    "America/Los_Angeles",
+    "America/Anchorage",
+    "America/Honolulu",
+    "Europe/London",
+    "Europe/Paris",
+    "Europe/Berlin",
+    "Asia/Shanghai",
+    "Asia/Tokyo",
+]
+
+
+
 def _get_system_info() -> dict:
     """Gather live system info for the General Settings page."""
-    now = datetime.now()
+    is_linux = sys.platform == "linux"
+
+    # Calculate current time (handling mock time override if on dev platform)
+    if not is_linux and not _mock_system_state["ntp_enabled"] and _mock_time_set_at > 0:
+        elapsed = time.time() - _mock_time_set_at
+        now = datetime.now() + timedelta(seconds=_mock_time_delta_seconds + elapsed)
+    else:
+        now = datetime.now()
+
     info = {
         "datetime": now.strftime("%Y-%m-%d %H:%M"),
         "date": now.strftime("%Y-%m-%d"),
@@ -55,52 +94,62 @@ def _get_system_info() -> dict:
         "ip_address": "Unknown",
         "sys_user": "Unknown",
     }
-    try:
-        ntp_out = subprocess.check_output(
-            ["timedatectl", "show", "--property=NTP,NTPSynchronized"],
-            text=True, timeout=3,
-        )
-        props = dict(line.split("=", 1) for line in ntp_out.splitlines() if "=" in line)
-        info["ntp_enabled"] = props.get("NTP", "no").strip().lower() == "yes"
-        info["ntp_synced"] = props.get("NTPSynchronized", "no").strip().lower() == "yes"
-    except Exception:
-        pass
-    try:
-        tz = subprocess.check_output(
-            ["timedatectl", "show", "--property=Timezone", "--value"],
-            text=True, timeout=3,
-        ).strip()
-        if tz:
-            info["timezone"] = tz
-    except Exception:
-        pass
-    try:
-        wifi_out = subprocess.check_output(
-            ["nmcli", "-t", "-f", "active,ssid", "dev", "wifi"],
-            text=True, timeout=3,
-        )
-        for line in wifi_out.splitlines():
-            if line.startswith("yes:"):
-                info["ssid"] = line[4:].strip() or "Unknown"
-                break
-    except Exception:
-        pass
-    try:
-        hostname_out = subprocess.check_output(
-            ["hostname", "-I"], text=True, timeout=3
-        ).strip()
-        ip = hostname_out.split()[0] if hostname_out.split() else None
-        if ip:
-            info["ip_address"] = ip
-    except Exception:
+
+    if is_linux:
         try:
-            info["ip_address"] = socket.gethostbyname(socket.gethostname())
+            ntp_out = subprocess.check_output(
+                ["timedatectl", "show", "--property=NTP,NTPSynchronized"],
+                text=True, timeout=3,
+            )
+            props = dict(line.split("=", 1) for line in ntp_out.splitlines() if "=" in line)
+            info["ntp_enabled"] = props.get("NTP", "no").strip().lower() == "yes"
+            info["ntp_synced"] = props.get("NTPSynchronized", "no").strip().lower() == "yes"
         except Exception:
             pass
-    try:
-        info["sys_user"] = getpass.getuser()
-    except Exception:
-        pass
+        try:
+            tz = subprocess.check_output(
+                ["timedatectl", "show", "--property=Timezone", "--value"],
+                text=True, timeout=3,
+            ).strip()
+            if tz:
+                info["timezone"] = tz
+        except Exception:
+            pass
+        try:
+            wifi_out = subprocess.check_output(
+                ["nmcli", "-t", "-f", "active,ssid", "dev", "wifi"],
+                text=True, timeout=3,
+            )
+            for line in wifi_out.splitlines():
+                if line.startswith("yes:"):
+                    info["ssid"] = line[4:].strip() or "Unknown"
+                    break
+        except Exception:
+            pass
+        try:
+            hostname_out = subprocess.check_output(
+                ["hostname", "-I"], text=True, timeout=3
+            ).strip()
+            ip = hostname_out.split()[0] if hostname_out.split() else None
+            if ip:
+                info["ip_address"] = ip
+        except Exception:
+            try:
+                info["ip_address"] = socket.gethostbyname(socket.gethostname())
+            except Exception:
+                pass
+        try:
+            info["sys_user"] = getpass.getuser()
+        except Exception:
+            pass
+    else:
+        info["timezone"] = _mock_system_state["timezone"]
+        info["ntp_enabled"] = _mock_system_state["ntp_enabled"]
+        info["ntp_synced"] = _mock_system_state["ntp_synced"]
+        info["ssid"] = _mock_system_state["ssid"]
+        info["ip_address"] = _mock_system_state["ip_address"]
+        info["sys_user"] = _mock_system_state["sys_user"]
+
     return info
 
 
@@ -474,7 +523,12 @@ def create_app() -> Flask:
 
     @app.get("/settings")
     def settings() -> Any:
-        return render_template("settings.html", page_title="Settings", sys_info=_get_system_info())
+        return render_template(
+            "settings.html",
+            page_title="Settings",
+            sys_info=_get_system_info(),
+            common_timezones=COMMON_TIMEZONES,
+        )
 
     @app.get("/calibration")
     def calibration() -> Any:
@@ -1073,34 +1127,17 @@ def create_app() -> Flask:
                 payload={"error": str(exc)},
             )
 
-    @app.post("/ui/settings/datetime")
-    def ui_settings_datetime() -> Any:
-        try:
-            date_str = request.form.get("date", "").strip()
-            time_str = request.form.get("time", "").strip()
-            if not date_str or not time_str:
-                raise ValueError("Date and time are required.")
-            dt_str = f"{date_str} {time_str}:00"
-            subprocess.check_call(["sudo", "timedatectl", "set-ntp", "false"], timeout=10)
-            subprocess.check_call(["sudo", "timedatectl", "set-time", dt_str], timeout=10)
-            return render_template(
-                "partials/command_result.html",
-                ok=True,
-                title="Date & Time",
-                payload={"message": f"System time set to {dt_str}."},
-            )
-        except Exception as exc:
-            return render_template(
-                "partials/command_result.html",
-                ok=False,
-                title="Date & Time",
-                payload={"error": str(exc)},
-            )
+
 
     @app.post("/ui/settings/ntp")
     def ui_settings_ntp() -> Any:
         try:
-            subprocess.check_call(["sudo", "timedatectl", "set-ntp", "true"], timeout=10)
+            if sys.platform == "linux":
+                subprocess.check_call(["sudo", "timedatectl", "set-ntp", "true"], timeout=10)
+            else:
+                _mock_system_state["ntp_enabled"] = True
+                _mock_system_state["ntp_synced"] = True
+
             return render_template(
                 "partials/command_result.html",
                 ok=True,
@@ -1115,17 +1152,52 @@ def create_app() -> Flask:
                 payload={"error": str(exc)},
             )
 
+    @app.post("/ui/settings/timezone")
+    def ui_settings_timezone() -> Any:
+        try:
+            tz = request.form.get("timezone", "").strip()
+            if not tz:
+                raise ValueError("Timezone is required.")
+
+            if sys.platform == "linux":
+                subprocess.check_call(["sudo", "timedatectl", "set-timezone", tz], timeout=10)
+            else:
+                _mock_system_state["timezone"] = tz
+
+            return render_template(
+                "partials/command_result.html",
+                ok=True,
+                title="Timezone",
+                payload={"message": f"Timezone set to {tz}."},
+            )
+        except Exception as exc:
+            return render_template(
+                "partials/command_result.html",
+                ok=False,
+                title="Timezone",
+                payload={"error": str(exc)},
+            )
+
     @app.post("/ui/settings/wifi")
     def ui_settings_wifi() -> Any:
         try:
             ssid = request.form.get("ssid", "").strip()
+            if ssid == "__custom__":
+                ssid = request.form.get("ssid_manual", "").strip()
             password = request.form.get("wifi_password", "").strip()
+
             if not ssid:
                 raise ValueError("SSID is required.")
-            cmd = ["sudo", "nmcli", "device", "wifi", "connect", ssid]
-            if password:
-                cmd += ["password", password]
-            subprocess.check_call(cmd, timeout=30)
+
+            if sys.platform == "linux":
+                cmd = ["sudo", "nmcli", "device", "wifi", "connect", ssid]
+                if password:
+                    cmd += ["password", password]
+                subprocess.check_call(cmd, timeout=30)
+            else:
+                _mock_system_state["ssid"] = ssid
+                time.sleep(1.0)  # Simulate network connection latency
+
             return render_template(
                 "partials/command_result.html",
                 ok=True,
@@ -1140,40 +1212,107 @@ def create_app() -> Flask:
                 payload={"error": str(exc)},
             )
 
-    @app.post("/ui/settings/password")
-    def ui_settings_password() -> Any:
+    @app.get("/ui/settings/wifi/scan")
+    def ui_settings_wifi_scan() -> Any:
+        networks = []
         try:
-            new_password = request.form.get("new_password", "")
-            confirm_password = request.form.get("confirm_password", "")
-            if not new_password:
-                raise ValueError("New password is required.")
-            if new_password != confirm_password:
-                raise ValueError("Passwords do not match.")
-            if len(new_password) < 6:
-                raise ValueError("Password must be at least 6 characters.")
-            sys_user = getpass.getuser()
-            proc = subprocess.run(
-                ["sudo", "chpasswd"],
-                input=f"{sys_user}:{new_password}\n",
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            if proc.returncode != 0:
-                raise RuntimeError(proc.stderr.strip() or "chpasswd failed.")
+            if sys.platform == "linux":
+                try:
+                    subprocess.run(["sudo", "nmcli", "device", "wifi", "rescan"], timeout=5)
+                except Exception:
+                    pass
+
+                scan_out = subprocess.check_output(
+                    ["nmcli", "-t", "-f", "SSID,SIGNAL,SECURITY", "dev", "wifi"],
+                    text=True, timeout=8,
+                )
+                seen_ssids = set()
+                for line in scan_out.splitlines():
+                    parts = line.split(":")
+                    if len(parts) >= 3:
+                        ssid = parts[0].strip()
+                        if not ssid or ssid in seen_ssids:
+                            continue
+                        seen_ssids.add(ssid)
+
+                        try:
+                            signal = int(parts[1].strip())
+                        except ValueError:
+                            signal = 0
+
+                        security = parts[2].strip() or "Open"
+                        networks.append({
+                            "ssid": ssid,
+                            "signal": signal,
+                            "security": security
+                        })
+            else:
+                networks = [
+                    {"ssid": "WeldFlex_Local_WiFi", "signal": 95, "security": "WPA2"},
+                    {"ssid": "Guest_Net", "signal": 60, "security": "WPA2"},
+                    {"ssid": "Robot_Cell_3", "signal": 80, "security": "WPA2"},
+                    {"ssid": "Office_WiFi", "signal": 45, "security": "WPA2 Enterprise"},
+                ]
+
+            networks.sort(key=lambda n: n["signal"], reverse=True)
+        except Exception as exc:
+            return f"<option value=''>Error scanning: {exc}</option>", 500
+
+        return render_template("partials/wifi_scan.html", networks=networks)
+
+    @app.post("/ui/settings/system/reboot")
+    def ui_settings_system_reboot() -> Any:
+        try:
+            def run_reboot():
+                time.sleep(2.0)
+                if sys.platform == "linux":
+                    subprocess.run(["sudo", "reboot"])
+                else:
+                    print("Mock Reboot Triggered!")
+
+            threading.Thread(target=run_reboot, daemon=True).start()
+
             return render_template(
                 "partials/command_result.html",
                 ok=True,
-                title="Admin Password",
-                payload={"message": "Password changed successfully."},
+                title="System Reboot",
+                payload={"message": "System reboot sequence initiated. The application will disconnect shortly."},
             )
         except Exception as exc:
             return render_template(
                 "partials/command_result.html",
                 ok=False,
-                title="Admin Password",
+                title="System Reboot",
                 payload={"error": str(exc)},
             )
+
+    @app.post("/ui/settings/system/shutdown")
+    def ui_settings_system_shutdown() -> Any:
+        try:
+            def run_shutdown():
+                time.sleep(2.0)
+                if sys.platform == "linux":
+                    subprocess.run(["sudo", "poweroff"])
+                else:
+                    print("Mock Shutdown Triggered!")
+
+            threading.Thread(target=run_shutdown, daemon=True).start()
+
+            return render_template(
+                "partials/command_result.html",
+                ok=True,
+                title="System Shutdown",
+                payload={"message": "System shutdown sequence initiated. Please wait for the Pi status LEDs to stop flashing before turning off power."},
+            )
+        except Exception as exc:
+            return render_template(
+                "partials/command_result.html",
+                ok=False,
+                title="System Shutdown",
+                payload={"error": str(exc)},
+            )
+
+
 
 
     def health() -> Any:

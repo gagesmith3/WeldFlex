@@ -5,7 +5,7 @@
 </a>
 {%- endmacro %}
 
-{% macro action_button(label, variant='primary', icon='', loading_icon='', href='', hx_post='', hx_target='', hx_swap='innerHTML', button_type='button', class_name='', confirm='', hx_include='', hx_sync='', hx_on_click='', hx_on_after_request='', disabled=false) -%}
+{% macro action_button(label, variant='primary', icon='', loading_icon='', href='', hx_post='', hx_get='', hx_target='', hx_swap='innerHTML', button_type='button', class_name='', confirm='', hx_include='', hx_sync='', hx_on_click='', hx_on_after_request='', disabled=false) -%}
 {% set classes = 'btn ' ~ variant ~ (' ' ~ class_name if class_name else '') ~ (' is-disabled' if disabled else '') %}
 {% if href and not disabled %}
 <a class="{{ classes }}" href="{{ href }}">
@@ -25,6 +25,7 @@
   type="{{ button_type }}"
   {% if disabled %}disabled{% endif %}
   {% if hx_post %}hx-post="{{ hx_post }}"{% endif %}
+  {% if hx_get %}hx-get="{{ hx_get }}"{% endif %}
   {% if hx_target %}hx-target="{{ hx_target }}"{% endif %}
   {% if hx_swap %}hx-swap="{{ hx_swap }}"{% endif %}
   {% if confirm %}hx-confirm="{{ confirm }}"{% endif %}

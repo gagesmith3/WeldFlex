@@ -1,16 +1,65 @@
 <div class="diagnostics-grid">
-  <div class="status {% if ok %}ok{% else %}error{% endif %}">
-    <div class="row"><span>Connection</span><strong>{{ 'Online' if snapshot.online else 'Offline' }}</strong></div>
-    <div class="row"><span>Program State</span><strong>{{ snapshot.program_state }}</strong></div>
-    <div class="row"><span>Current Line</span><strong>{{ snapshot.current_line }}</strong></div>
-    <div class="row"><span>Robot IP</span><strong>{{ snapshot.robot_ip }}</strong></div>
-    {% if snapshot.error %}
-    <p>{{ snapshot.error }}</p>
-    {% endif %}
+
+  {# ── Connection health banner ── #}
+  <div class="diag-health {% if ok and snapshot.online %}diag-health-ok{% else %}diag-health-error{% endif %}">
+    <div class="diag-health-dot"></div>
+    <div class="diag-health-body">
+      <strong>{% if ok and snapshot.online %}Online{% elif ok %}Offline{% else %}Unreachable{% endif %}</strong>
+      <span>{{ snapshot.robot_ip }}</span>
+    </div>
   </div>
 
-  <div class="result {% if ok %}ok{% else %}error{% endif %}">
-    <div class="result-header">Raw Diagnostics</div>
-    <pre>{{ status | tojson(indent=2) }}</pre>
+  {% if not ok %}
+  {# Exception: robot_service.status() threw before returning anything #}
+  <div class="diag-error-detail">{{ status.error }}</div>
+
+  {% else %}
+
+  {# ── SDK call results ── #}
+  <div class="diag-calls">
+    {% set ps_ok = status.program_state_error == 0 %}
+    <div class="diag-call {% if ps_ok %}diag-call-ok{% else %}diag-call-error{% endif %}">
+      <div class="diag-call-name">GetProgramState</div>
+      <div class="diag-call-code">
+        <span class="diag-code-num {% if ps_ok %}diag-code-num-ok{% else %}diag-code-num-error{% endif %}">{{ status.program_state_error }}</span>
+        <span class="diag-code-label">{{ status.program_state_error_label }}</span>
+      </div>
+      <div class="diag-call-value">
+        {{ status.program_state }}{% if status.program_state_raw is not none %} &middot; raw {{ status.program_state_raw }}{% endif %}
+      </div>
+    </div>
+
+    {% set cl_ok = status.current_line_error == 0 %}
+    <div class="diag-call {% if cl_ok %}diag-call-ok{% else %}diag-call-error{% endif %}">
+      <div class="diag-call-name">GetCurrentLine</div>
+      <div class="diag-call-code">
+        <span class="diag-code-num {% if cl_ok %}diag-code-num-ok{% else %}diag-code-num-error{% endif %}">{{ status.current_line_error }}</span>
+        <span class="diag-code-label">{{ status.current_line_error_label }}</span>
+      </div>
+      <div class="diag-call-value">
+        line {% if status.current_line is not none %}{{ status.current_line }}{% else %}&mdash;{% endif %}
+      </div>
+    </div>
   </div>
+
+  {# ── Program state + connection config ── #}
+  <div class="diag-meta">
+    <div class="diag-meta-section">
+      <div class="diag-meta-title">Program</div>
+      <div class="row"><span>State</span><strong>{{ snapshot.program_state }}</strong></div>
+      <div class="row"><span>Current Line</span><strong>{{ snapshot.current_line }}</strong></div>
+    </div>
+    <div class="diag-meta-section">
+      <div class="diag-meta-title">Connection</div>
+      <div class="row"><span>Robot IP</span><strong>{{ snapshot.robot_ip }}</strong></div>
+      <div class="row"><span>Controller</span><strong>{{ snapshot.controller_host }}</strong></div>
+    </div>
+  </div>
+
+  {% if snapshot.error %}
+  <div class="diag-error-detail">{{ snapshot.error }}</div>
+  {% endif %}
+
+  {% endif %}
+
 </div>

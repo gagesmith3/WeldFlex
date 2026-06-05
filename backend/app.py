@@ -994,12 +994,27 @@ def create_app() -> Flask:
 
     @app.get("/ui/diagnostics")
     def ui_diagnostics() -> Any:
+        _error_labels = {
+            0:  "ok",
+            -1: "sdk / client error",
+            -2: "rpc communication error",
+            -3: "rpc timeout",
+            -4: "controller unreachable",
+        }
+
         snapshot = get_connection_snapshot()
         try:
             status = robot_service.status()
         except Exception as exc:
             status = {"error": str(exc)}
             return render_template("partials/diagnostics_readout.html", snapshot=snapshot, ok=False, status=status)
+
+        status["program_state_error_label"] = _error_labels.get(
+            status.get("program_state_error", -1), f"code {status.get('program_state_error')}"
+        )
+        status["current_line_error_label"] = _error_labels.get(
+            status.get("current_line_error", -1), f"code {status.get('current_line_error')}"
+        )
 
         return render_template("partials/diagnostics_readout.html", snapshot=snapshot, ok=True, status=status)
 

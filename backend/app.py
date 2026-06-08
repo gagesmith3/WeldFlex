@@ -1638,4 +1638,10 @@ def create_app() -> Flask:
 
 if __name__ == "__main__":
     app = create_app()
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", "5000")), debug=True)
+    debug_enabled = os.getenv("WELDFLEX_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"}
+    app.run(
+        host="0.0.0.0",
+        port=int(os.getenv("PORT", "5000")),
+        debug=debug_enabled,
+        use_reloader=debug_enabled,
+    )

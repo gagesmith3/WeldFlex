@@ -235,6 +235,7 @@ class WeldFlexRobotService:
         with self._lock:
             self._last_upload_events = []
             robot = self._client()
+            robot.Mode(1)  # manual mode required for Lua uploads
             robot.SetAnticollision(mode=0, level=[float(collision_sensitivity)] * 6, config=0)
             robot.SetCollisionStrategy(strategy=0, safeTime=1000, safeDistance=100, safetyMargin=[10, 10, 10, 10, 10, 10])
             robot.SetStaticCollisionOnOff(status=1)
@@ -261,7 +262,7 @@ class WeldFlexRobotService:
                 )
 
             mode_result = robot.Mode(0)
-            if not self._is_success_result(mode_result):
+            if isinstance(mode_result, int) and mode_result < 0:
                 raise RuntimeError(
                     f"Failed to set robot mode to auto before run. mode_result={mode_result!r}"
                 )
@@ -324,6 +325,7 @@ studs = {{
         studs_data_lua = self._build_empty_studs_data_lua(clearance_z_mm)
         with self._lock:
             robot = self._client()
+            robot.Mode(1)
             self._upload_static_lua_scripts()
             self.upload_lua(studs_data_lua, self.studs_data_path)
             try:
@@ -341,6 +343,7 @@ studs = {{
 
         with self._lock:
             robot = self._client()
+            robot.Mode(1)
             self.upload_lua(lua_path.read_text(encoding="utf-8"), "/fruser/goto_zerozero.lua")
             try:
                 load_result = robot.ProgramLoad(program_name="/fruser/goto_zerozero.lua")

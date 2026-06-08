@@ -15,7 +15,8 @@ else
   exit 1
 fi
 
-# Paint root window dark immediately so the LXDE desktop never flashes through.
+# Paint root window dark immediately so the display stays #1c1c1e while
+# the backend and browser start up.
 xsetroot -solid "#1c1c1e"
 
 # Prevent display power-down/blanking.
@@ -23,15 +24,12 @@ xset s off
 xset -dpms
 xset s noblank
 
-# Set an invisible 1×1 cursor at the X level so it never appears on touch.
-_blank=$(mktemp --suffix=.xbm)
-cat > "$_blank" <<'XBM'
-#define blank_width 1
-#define blank_height 1
-static unsigned char blank_bits[] = { 0x00 };
-XBM
-xsetroot -cursor "$_blank" "$_blank" || true
-rm -f "$_blank"
+# Minimal window manager — no decorations, handles Chromium's fullscreen
+# request so the window fills the screen exactly.
+matchbox-window-manager -use_titlebar no &
+
+# Hide the cursor via the XFixes protocol so touch taps never show a pointer.
+unclutter --timeout 0 &
 
 # Wait for the Flask backend before launching Chromium so the browser never
 # shows an "unable to connect" error page on startup.
@@ -44,7 +42,6 @@ echo "Backend ready."
 while true; do
   "$BROWSER_CMD" \
     --kiosk \
-    --start-fullscreen \
     --incognito \
     --noerrdialogs \
     --disable-infobars \

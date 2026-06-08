@@ -19,4 +19,8 @@
   </div>
 </div>
 
+<div class="hero-controls">
+  {{ action_button('Go ZeroZero', variant='run', icon='crosshair', hx_post='/ui/home/goto-zerozero', hx_target='#toast-rack', disabled=summary.cycle_running) }}
+</div>
+
 

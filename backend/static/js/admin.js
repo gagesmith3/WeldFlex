@@ -23,7 +23,7 @@
       clearTimeout(_timer);
       _timer = setTimeout(function () {
         _holdFired = true;
-        window.location.href = '/admin';
+        window.location.href = '/operator/admin';
       }, HOLD_MS);
     });
 

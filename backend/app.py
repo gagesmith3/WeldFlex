@@ -1035,6 +1035,27 @@ def create_app() -> Flask:
     def ui_home_current_run() -> Any:
         return render_template("partials/home_current_run.html", summary=current_run_summary())
 
+    @app.post("/ui/home/goto-zerozero")
+    def ui_home_goto_zerozero() -> Any:
+        try:
+            # Temporary helper: run the standard cycle program with zero clearance to P2P at calibrated zerozero.
+            robot_service.goto_clearance_z(0.0, runtime_settings["program_path"])
+            stamp_command_state("ZeroZero", "ok", "P2P to calibrated zerozero sent")
+            return render_template(
+                "partials/command_result.html",
+                ok=True,
+                title="ZeroZero",
+                payload={"message": "P2P move to calibrated zerozero sent."},
+            )
+        except Exception as exc:
+            stamp_command_state("ZeroZero", "error", str(exc))
+            return render_template(
+                "partials/command_result.html",
+                ok=False,
+                title="ZeroZero",
+                payload={"error": str(exc)},
+            )
+
     @app.post("/ui/recipes/save")
     def ui_recipe_save() -> Any:
         try:

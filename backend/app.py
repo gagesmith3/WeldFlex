@@ -156,6 +156,7 @@ def _get_system_info() -> dict:
 def create_app() -> Flask:
     app = Flask(__name__)
     Lucide(app)
+    _app_start = time.monotonic()
 
     def icon_safe(icon_name: str, fallback: str = "circle", **kwargs: Any) -> Any:
         lucide_ext = current_app.extensions.get("lucide")
@@ -550,11 +551,12 @@ def create_app() -> Flask:
             page_title="Robot Diagnostics",
             status_interval_ms=runtime_settings["status_interval_ms"],
             settings=runtime_settings,
+            collision_sensitivity=get_collision_sensitivity(),
         )
 
     @app.get("/admin")
     def admin() -> Any:
-        return render_template("admin.html", page_title="Admin")
+        return render_template("admin.html", page_title="Admin", settings=runtime_settings)
 
     @app.get("/settings")
     def settings() -> Any:
@@ -1123,29 +1125,19 @@ def create_app() -> Flask:
 
     @app.get("/ui/diagnostics")
     def ui_diagnostics() -> Any:
-        _error_labels = {
-            0:  "ok",
-            -1: "sdk / client error",
-            -2: "rpc communication error",
-            -3: "rpc timeout",
-            -4: "controller unreachable",
-        }
+        elapsed = int(time.monotonic() - _app_start)
+        h, rem = divmod(elapsed, 3600)
+        m, s = divmod(rem, 60)
+        uptime = f"{h}h {m:02d}m {s:02d}s" if h else f"{m}m {s:02d}s"
 
         snapshot = get_connection_snapshot()
         try:
             status = robot_service.status()
         except Exception as exc:
             status = {"error": str(exc)}
-            return render_template("partials/diagnostics_readout.html", snapshot=snapshot, ok=False, status=status)
+            return render_template("partials/diagnostics_readout.html", snapshot=snapshot, ok=False, status=status, uptime=uptime)
 
-        status["program_state_error_label"] = _error_labels.get(
-            status.get("program_state_error", -1), f"code {status.get('program_state_error')}"
-        )
-        status["current_line_error_label"] = _error_labels.get(
-            status.get("current_line_error", -1), f"code {status.get('current_line_error')}"
-        )
-
-        return render_template("partials/diagnostics_readout.html", snapshot=snapshot, ok=True, status=status)
+        return render_template("partials/diagnostics_readout.html", snapshot=snapshot, ok=True, status=status, uptime=uptime)
 
     @app.post("/ui/settings/save")
     def ui_settings_save() -> Any:
@@ -1203,6 +1195,30 @@ def create_app() -> Flask:
             )
 
 
+
+    @app.post("/ui/diagnostics/save-collision-sensitivity")
+    def ui_diagnostics_save_collision_sensitivity() -> Any:
+        try:
+            try:
+                collision_sensitivity = max(1, min(5, int(request.form.get("collision_sensitivity", str(get_collision_sensitivity())))))
+            except (TypeError, ValueError):
+                collision_sensitivity = 3
+            config = read_machine_config()
+            config["collision_sensitivity"] = collision_sensitivity
+            write_machine_config(config)
+            return render_template(
+                "partials/command_result.html",
+                ok=True,
+                title="Safety Settings",
+                payload={"message": f"Collision sensitivity set to {collision_sensitivity}."},
+            )
+        except Exception as exc:
+            return render_template(
+                "partials/command_result.html",
+                ok=False,
+                title="Safety Settings",
+                payload={"error": str(exc)},
+            )
 
     @app.post("/ui/settings/ntp")
     def ui_settings_ntp() -> Any:

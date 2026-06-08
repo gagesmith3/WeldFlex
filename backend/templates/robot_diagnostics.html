@@ -8,38 +8,31 @@
       {{ htmx_mount('diagnostics-readout', '/ui/diagnostics', 'load, every ' ~ (status_interval_ms or 1000) ~ 'ms', 'innerHTML') }}
     {% endcall %}
 
-    {% call panel_shell('Connection Settings', 'Runtime robot connection and polling configuration.', class_name='settings-shell') %}
-      <form class="settings-grid" hx-post="/ui/settings/save" hx-target="#toast-rack" hx-swap="innerHTML">
-        <div>
-          <label for="robot_ip">Robot IP</label>
-          <input id="robot_ip" name="robot_ip" type="text" inputmode="none" data-kbd="alpha"
-                 value="{{ settings.robot_ip }}" required>
-        </div>
-        <div>
-          <label for="controller_host">Controller Host</label>
-          <input id="controller_host" name="controller_host" type="text" inputmode="none" data-kbd="alpha"
-                 value="{{ settings.controller_host }}" required>
-        </div>
-        <div>
-          <label for="program_path">Program Path</label>
-          <input id="program_path" name="program_path" type="text" inputmode="none" data-kbd="alpha"
-                 value="{{ settings.program_path }}" required>
-        </div>
-        <div>
-          <label for="studs_data_path">Studs Data Path</label>
-          <input id="studs_data_path" name="studs_data_path" type="text" inputmode="none" data-kbd="alpha"
-                 value="{{ settings.studs_data_path }}" required>
-        </div>
-        <div>
-          <label for="status_interval_ms">Status Poll Interval (ms)</label>
-          <input id="status_interval_ms" name="status_interval_ms" type="text" inputmode="none" data-kbd="num"
-                 value="{{ settings.status_interval_ms }}" required>
+    {% call panel_shell('Safety Settings', 'Robot collision detection sensitivity.', class_name='settings-shell') %}
+      <form class="settings-grid" hx-post="/ui/diagnostics/save-collision-sensitivity" hx-target="#toast-rack" hx-swap="innerHTML">
+        <div class="sens-dots-wrapper">
+          <label>Collision Sensitivity</label>
+          <div class="sens-dots">
+            {% for val, hint in [(1,'Most'),(2,''),(3,'Default'),(4,''),(5,'Least')] %}
+            <label class="sens-dot-option">
+              <input type="radio" name="collision_sensitivity" value="{{ val }}"{% if val == collision_sensitivity %} checked{% endif %}>
+              <span class="sens-dot"></span>
+              <span class="sens-dot-num">{{ val }}</span>
+              {% if hint %}<span class="sens-dot-hint">{{ hint }}</span>{% endif %}
+            </label>
+            {% endfor %}
+          </div>
         </div>
         <div class="settings-actions">
-          {{ action_button('Save Connection Settings', variant='run', icon='save', button_type='submit') }}
+          {{ action_button('Save Sensitivity', variant='run', icon='save', button_type='submit') }}
         </div>
       </form>
     {% endcall %}
+
+    {% call panel_shell('Error', 'Last connection or communication error.', class_name='settings-shell') %}
+      <div id="diagnostics-error"></div>
+    {% endcall %}
+
   </div>
 </div>
 {% endblock %}

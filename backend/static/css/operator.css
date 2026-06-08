@@ -738,9 +738,7 @@ select {
   color: var(--muted);
 }
 
-.library-shell,
-.diagnostics-shell,
-.settings-shell {
+.library-shell {
   min-height: 320px;
 }
 
@@ -931,6 +929,78 @@ select {
   font-size: 0.82rem;
   color: #7f1d1d;
   word-break: break-word;
+}
+
+/* ── Collision sensitivity dot-slider ── */
+.sens-dots-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sens-dots-wrapper > label {
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.sens-dots {
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 4px 0 0;
+}
+
+.sens-dots::before {
+  content: '';
+  position: absolute;
+  top: 13px;
+  left: 13px;
+  right: 13px;
+  height: 2px;
+  background: var(--line);
+  border-radius: 1px;
+}
+
+.sens-dot-option {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  z-index: 1;
+}
+
+.sens-dot-option input[type="radio"] {
+  display: none;
+}
+
+.sens-dot {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 2px solid var(--line);
+  background: var(--panel);
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.sens-dot-option input:checked ~ .sens-dot {
+  background: var(--header-end);
+  border-color: var(--header-end);
+}
+
+.sens-dot-num {
+  font-size: 0.7rem;
+  color: var(--muted);
+  line-height: 1;
+}
+
+.sens-dot-hint {
+  font-size: 0.62rem;
+  color: var(--muted);
+  opacity: 0.7;
+  line-height: 1;
+  margin-top: -2px;
 }
 
 .settings-grid {

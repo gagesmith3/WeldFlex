@@ -15,7 +15,7 @@
           <h2>Parts</h2>
           <p class="panel-note">Select a saved part or start a new one.</p>
         </div>
-        {{ action_button('New Part', variant='recipe-save', icon='plus', href='/parts?new=1') }}
+        {{ action_button('New Part', variant='recipe-save', icon='plus', href='/operator/parts?new=1') }}
       </div>
       {% if parts_error %}
       <p class="input-error">{{ parts_error }}</p>

@@ -1038,7 +1038,7 @@ def create_app() -> Flask:
     @app.post("/ui/home/goto-zerozero")
     def ui_home_goto_zerozero() -> Any:
         try:
-            robot_service.goto_clearance_z(get_clearance_z_mm(), runtime_settings["program_path"])
+            robot_service.goto_zerozero()
             stamp_command_state("ZeroZero", "ok", "P2P to calibrated zerozero sent")
             return render_template(
                 "partials/command_result.html",

@@ -272,6 +272,22 @@ studs = {{
             run_result = robot.ProgramRun()
         return {"load_result": load_result, "run_result": run_result}
 
+    def goto_zerozero(self) -> dict[str, Any]:
+        lua_path = Path(__file__).resolve().parents[1] / "robot" / "lua" / "goto_zerozero.lua"
+        if not lua_path.exists():
+            raise RuntimeError("goto_zerozero.lua not found in robot/lua.")
+
+        with self._lock:
+            robot = self._client()
+            self.upload_lua(lua_path.read_text(encoding="utf-8"), "/fruser/goto_zerozero.lua")
+            try:
+                load_result = robot.ProgramLoad(program_name="/fruser/goto_zerozero.lua")
+            except TypeError:
+                load_result = robot.ProgramLoad("/fruser/goto_zerozero.lua")
+            robot.Mode(0)
+            run_result = robot.ProgramRun()
+        return {"load_result": load_result, "run_result": run_result}
+
     def _run_with_timeout(self, fn: Callable[[], Any], timeout: float = SDK_CALL_TIMEOUT_S) -> Any:
         future = self._sdk_executor.submit(fn)
         try:

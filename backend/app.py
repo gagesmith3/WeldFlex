@@ -1261,12 +1261,24 @@ def create_app() -> Flask:
         try:
             clearance_z = get_clearance_z_mm()
             sensitivity = get_collision_sensitivity()
+
+            def _launch_and_log(studs: list[dict[str, float]], path: str) -> Any:
+                result = robot_service.upload_load_run(
+                    studs,
+                    path,
+                    clearance_z_mm=clearance_z,
+                    collision_sensitivity=sensitivity,
+                )
+                app.logger.info("Run-next robot result: %s", result)
+                return result
+
             run_state_manager.start_next_batch_cycle(
-                launch_cycle=lambda studs, path: robot_service.upload_load_run(studs, path, clearance_z_mm=clearance_z, collision_sensitivity=sensitivity),
+                launch_cycle=_launch_and_log,
                 program_path=runtime_settings["program_path"],
             )
             return "", 204
         except Exception as exc:
+            app.logger.exception("Run-next failed")
             stamp_command_state("Run", "error", str(exc))
             return render_template(
                 "partials/command_result.html",

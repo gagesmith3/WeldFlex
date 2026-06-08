@@ -1,10 +1,69 @@
-{% extends "base.html" %}
-{% from "components/ui.html" import panel_shell with context %}
-
-{% block body %}
-<div class="page-body">
-  {% call panel_shell('Manager', 'Part design, data, and system configuration.') %}
-    <p style="color: var(--muted); padding: 8px 0;">Coming soon.</p>
-  {% endcall %}
-</div>
-{% endblock %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>WeldFlex Manager</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/operator.css') }}">
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+</head>
+<body>
+  <div class="mgr-shell">
+    <div class="mgr-topbar">
+      <button type="button" class="mgr-menu-btn" onclick="toggleMgrDrawer()">
+        {{ icon_safe('menu', size=20) }}
+      </button>
+      <div class="mgr-topbar-left">
+        <span class="mgr-topbar-title">WeldFlex Manager</span>
+        <span class="mgr-topbar-version">BETA {{ git_sha }}</span>
+      </div>
+    </div>
+    <div class="mgr-body">
+      <div class="mgr-drawer-backdrop" id="mgr-backdrop" onclick="closeMgrDrawer()"></div>
+      <nav class="mgr-sidebar" id="mgr-drawer">
+        <button type="button" class="mgr-nav-btn active"
+                hx-get="/ui/manager/part-designer"
+                hx-target="#mgr-content"
+                hx-swap="innerHTML"
+                onclick="setMgrTab(this)">
+          {{ icon_safe('pen_tool', size=16) }}
+          Part Designer
+        </button>
+        <button type="button" class="mgr-nav-btn"
+                hx-get="/ui/manager/settings"
+                hx-target="#mgr-content"
+                hx-swap="innerHTML"
+                onclick="setMgrTab(this)">
+          {{ icon_safe('settings', size=16) }}
+          Settings
+        </button>
+        <div class="mgr-sidebar-spacer"></div>
+        <a class="mgr-nav-btn mgr-nav-operator" href="/operator">
+          {{ icon_safe('bot', size=16) }}
+          Operator
+        </a>
+      </nav>
+      <div class="mgr-content-wrap">
+        <div id="mgr-content">
+          {% include "partials/mgr_part_designer.html" %}
+        </div>
+      </div>
+    </div>
+  </div>
+  <script>
+    function toggleMgrDrawer() {
+      const open = document.getElementById('mgr-drawer').classList.toggle('open');
+      document.getElementById('mgr-backdrop').classList.toggle('open', open);
+    }
+    function closeMgrDrawer() {
+      document.getElementById('mgr-drawer').classList.remove('open');
+      document.getElementById('mgr-backdrop').classList.remove('open');
+    }
+    function setMgrTab(el) {
+      document.querySelectorAll('.mgr-nav-btn').forEach(n => n.classList.remove('active'));
+      el.classList.add('active');
+      closeMgrDrawer();
+    }
+  </script>
+</body>
+</html>

@@ -516,6 +516,29 @@ def create_app() -> Flask:
     def manager() -> Any:
         return render_template("manager.html", page_title="Manager")
 
+    @app.get("/ui/manager/part-designer")
+    def ui_mgr_part_designer() -> Any:
+        return render_template("partials/mgr_part_designer.html")
+
+    @app.get("/ui/manager/settings")
+    def ui_mgr_settings() -> Any:
+        return render_template("partials/mgr_settings.html")
+
+    @app.get("/ui/manager/parts-list")
+    def ui_mgr_parts_list() -> Any:
+        return jsonify(recipe_catalog())
+
+    @app.get("/ui/manager/part-points")
+    def ui_mgr_part_points() -> Any:
+        name = request.args.get("name", "").strip()
+        try:
+            text = get_recipe_text(name)
+            studs = parse_studs_text(text)
+            points = [{"id": i + 1, "x": s["x"], "y": s["y"]} for i, s in enumerate(studs)]
+            return jsonify({"ok": True, "points": points})
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 404
+
     @app.get("/operator/parts")
     def parts() -> Any:
         selected_recipe_name: str | None = None

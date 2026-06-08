@@ -1,0 +1,67 @@
+<div class="pd-shell">
+
+  <!-- ── Left: part list ──────────────────────────────────────── -->
+  <div class="pd-panel pd-left">
+    <div class="pd-panel-header">
+      <span class="pd-panel-title">Parts</span>
+      <button type="button" class="pd-icon-btn" title="New part (demo)">
+        {{ icon_safe('plus', size=13) }}
+      </button>
+    </div>
+    <div class="pd-panel-body">
+      <div id="pd-part-list"></div>
+    </div>
+  </div>
+
+  <!-- ── Center: canvas ───────────────────────────────────────── -->
+  <div class="pd-canvas-area">
+    <div class="pd-canvas-toolbar">
+      <button type="button" class="pd-tool-btn active" id="pd-tool-select" onclick="pdSetMode('select')">
+        {{ icon_safe('mouse_pointer_2', size=13) }}
+        Select
+      </button>
+      <button type="button" class="pd-tool-btn" id="pd-tool-add" onclick="pdSetMode('add')">
+        {{ icon_safe('plus_circle', size=13) }}
+        Add Point
+      </button>
+      <div class="pd-toolbar-sep"></div>
+      <label class="pd-tool-btn" title="Upload bed image overlay">
+        {{ icon_safe('image', size=13) }}
+        Image
+        <input type="file" id="pd-img-upload" accept="image/*" class="pd-file-input">
+      </label>
+      <div class="pd-opacity-wrap pd-hidden" id="pd-opacity-wrap">
+        <input type="range" id="pd-opacity-slider" min="0" max="100" value="40" title="Image opacity">
+      </div>
+      <div class="pd-flex-spacer"></div>
+      <button type="button" class="pd-tool-btn danger" onclick="pdClearPoints()">
+        {{ icon_safe('trash_2', size=13) }}
+        Clear
+      </button>
+    </div>
+    <div class="pd-canvas-stage">
+      <svg id="pd-bed" viewBox="0 0 508 508" preserveAspectRatio="xMidYMid meet"
+           xmlns="http://www.w3.org/2000/svg">
+        <image id="pd-overlay" class="pd-hidden pd-overlay-img"
+               x="0" y="0" width="508" height="508" href="" opacity="0.4"/>
+        <g id="pd-grid"></g>
+        <g id="pd-path"></g>
+        <g id="pd-points"></g>
+      </svg>
+    </div>
+    <div class="pd-canvas-coords" id="pd-coords">508 × 508 mm bed</div>
+  </div>
+
+  <!-- ── Right: analysis ──────────────────────────────────────── -->
+  <div class="pd-panel pd-right">
+    <div class="pd-panel-header">
+      <span class="pd-panel-title">Run Analysis</span>
+    </div>
+    <div class="pd-panel-body" id="pd-analysis"></div>
+  </div>
+
+</div>
+
+<div class="pd-tooltip pd-hidden" id="pd-tooltip"></div>
+<script src="{{ url_for('static', filename='js/part_designer.js') }}"></script>
+<script>pdInit();</script>

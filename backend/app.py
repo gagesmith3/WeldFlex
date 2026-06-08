@@ -582,7 +582,6 @@ def create_app() -> Flask:
             page_title="Robot Diagnostics",
             status_interval_ms=runtime_settings["status_interval_ms"],
             settings=runtime_settings,
-            collision_sensitivity=get_collision_sensitivity(),
         )
 
     @app.get("/operator/admin")
@@ -1367,30 +1366,6 @@ def create_app() -> Flask:
             )
 
 
-
-    @app.post("/ui/diagnostics/save-collision-sensitivity")
-    def ui_diagnostics_save_collision_sensitivity() -> Any:
-        try:
-            try:
-                collision_sensitivity = max(1, min(5, int(request.form.get("collision_sensitivity", str(get_collision_sensitivity())))))
-            except (TypeError, ValueError):
-                collision_sensitivity = 3
-            config = read_machine_config()
-            config["collision_sensitivity"] = collision_sensitivity
-            write_machine_config(config)
-            return render_template(
-                "partials/command_result.html",
-                ok=True,
-                title="Safety Settings",
-                payload={"message": f"Collision sensitivity set to {collision_sensitivity}."},
-            )
-        except Exception as exc:
-            return render_template(
-                "partials/command_result.html",
-                ok=False,
-                title="Safety Settings",
-                payload={"error": str(exc)},
-            )
 
     @app.post("/ui/settings/ntp")
     def ui_settings_ntp() -> Any:

@@ -1,0 +1,99 @@
+{% if applied %}
+
+<div class="calib-done-banner">
+  <div class="calib-done-check">✓</div>
+  <div class="calib-done-body">
+    <strong>Tool 1 TCP Applied</strong>
+    <p>X={{ "%.2f"|format(tcp_offset[0]) }} &nbsp; Y={{ "%.2f"|format(tcp_offset[1]) }} &nbsp; Z={{ "%.2f"|format(tcp_offset[2]) }} mm</p>
+    <p class="calib-center-note">Rx={{ "%.2f"|format(tcp_offset[3]) }}° &nbsp; Ry={{ "%.2f"|format(tcp_offset[4]) }}° &nbsp; Rz={{ "%.2f"|format(tcp_offset[5]) }}°</p>
+  </div>
+</div>
+<div class="calib-apply-row">
+  <button class="btn calib-reset-btn" type="button"
+          hx-post="/ui/tcp-calibrate/reset"
+          hx-target="#tcp-calib-steps"
+          hx-swap="innerHTML">
+    Calibrate Again
+  </button>
+</div>
+
+{% else %}
+
+<div class="calib-pin-grid calib-pin-grid-2x2">
+  {% for point_num, point_name, point_desc in [
+      (1, 'Point 1', 'Touch pin — natural posture'),
+      (2, 'Point 2', 'Touch pin — tilt wrist significantly'),
+      (3, 'Point 3', 'Touch pin — different arm posture'),
+      (4, 'Point 4', 'Touch pin — another unique posture')
+  ] %}
+  {% set is_recorded = point_num in points_recorded %}
+  {% set is_drag = drag_point == point_num %}
+  {% set other_drag = drag_point is not none and not is_drag %}
+
+  <div class="calib-pin-card{% if is_recorded %} calib-pin-done{% elif is_drag %} calib-pin-drag{% endif %}">
+
+    <div class="calib-pin-num{% if is_recorded %} calib-pin-num-done{% elif is_drag %} calib-pin-num-drag{% endif %}">
+      {% if is_recorded %}✓{% elif is_drag %}◉{% else %}{{ point_num }}{% endif %}
+    </div>
+
+    <div class="calib-pin-name">{{ point_name }}</div>
+    <div class="calib-pin-desc">
+      {%- if is_drag -%}
+        Guide tip flush against pin
+      {%- else -%}
+        {{ point_desc }}
+      {%- endif -%}
+    </div>
+
+    {% if is_drag %}
+    <button class="btn calib-record-btn calib-btn-record" type="button"
+            hx-post="/ui/tcp-calibrate/record-point"
+            hx-vals='{"point": "{{ point_num }}"}'
+            hx-target="#tcp-calib-steps"
+            hx-swap="innerHTML">
+      Record
+    </button>
+    {% else %}
+    <button class="btn calib-record-btn{% if is_recorded %} calib-btn-done{% else %} calib-btn-pending{% endif %}{% if other_drag %} is-disabled{% endif %}"
+            type="button"
+            hx-post="/ui/tcp-calibrate/enable-drag"
+            hx-vals='{"point": "{{ point_num }}"}'
+            hx-target="#tcp-calib-steps"
+            hx-swap="innerHTML"
+            {% if other_drag %}disabled{% endif %}>
+      {% if is_recorded %}Re-record{% else %}Enable Drag{% endif %}
+    </button>
+    {% endif %}
+
+  </div>
+  {% endfor %}
+</div>
+
+{% if drag_error %}
+<p class="calib-error-note">Drag error: {{ drag_error }}</p>
+{% endif %}
+{% if record_error %}
+<p class="calib-error-note">Record error: {{ record_error }}</p>
+{% endif %}
+{% if apply_error %}
+<p class="calib-error-note">Apply error: {{ apply_error }}</p>
+{% endif %}
+
+<div class="calib-apply-row">
+  <button class="btn calib-apply-btn{% if not all_recorded %} is-disabled{% endif %}"
+          type="button"
+          hx-post="/ui/tcp-calibrate/apply"
+          hx-target="#tcp-calib-steps"
+          hx-swap="innerHTML"
+          {% if not all_recorded %}disabled{% endif %}>
+    Apply TCP
+  </button>
+  <button class="btn calib-reset-btn" type="button"
+          hx-post="/ui/tcp-calibrate/reset"
+          hx-target="#tcp-calib-steps"
+          hx-swap="innerHTML">
+    Reset
+  </button>
+</div>
+
+{% endif %}

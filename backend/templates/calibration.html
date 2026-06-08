@@ -2,14 +2,24 @@
 
 {% block body %}
 <div class="calib-menu-body">
-  <a class="calib-menu-card" href="/jog">
+  <a class="calib-menu-card" href="/operator/jog">
     <div class="calib-menu-icon">{{ icon_safe('move_3d', fallback='move', width=48, height=48) }}</div>
     <h2>Jog</h2>
     <p>Jog the robot in set increments</p>
   </a>
-  <a class="calib-menu-card" href="/calibrate">
+  <div class="calib-menu-card calib-menu-card-soon">
+    <div class="calib-menu-icon">{{ icon_safe('sliders_horizontal', fallback='settings', width=48, height=48) }}</div>
+    <h2>Set</h2>
+    <p>Coming soon</p>
+  </div>
+  <a class="calib-menu-card" href="/operator/tcp-calibrate">
+    <div class="calib-menu-icon">{{ icon_safe('wrench', fallback='tool', width=48, height=48) }}</div>
+    <h2>Tool Calibration</h2>
+    <p>Calibrate the tool center point offset</p>
+  </a>
+  <a class="calib-menu-card" href="/operator/calibrate">
     <div class="calib-menu-icon">{{ icon_safe('crosshair', fallback='target', width=48, height=48) }}</div>
-    <h2>Calibrate</h2>
+    <h2>Work Area Calibration</h2>
     <p>Recalibrate robot to align zerozero point</p>
   </a>
 </div>

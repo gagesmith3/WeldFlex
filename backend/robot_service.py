@@ -68,6 +68,9 @@ class WeldFlexRobotService:
         self.controller_host = controller_host or robot_ip
         self.studs_data_path = studs_data_path
         self._robot: Any | None = None
+        self._last_jog_safety_sensitivity: int | None = None
+        self._last_jog_safety_monotonic = 0.0
+        self._jog_safety_refresh_s = 0.75
         self._lock = threading.Lock()
         self._sdk_executor = concurrent.futures.ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="robot-sdk"
@@ -84,6 +87,8 @@ class WeldFlexRobotService:
                 self.robot_ip = robot_ip
                 # Force a fresh RPC client when IP changes.
                 self._robot = None
+                self._last_jog_safety_sensitivity = None
+                self._last_jog_safety_monotonic = 0.0
 
             if controller_host:
                 self.controller_host = controller_host
@@ -177,6 +182,18 @@ class WeldFlexRobotService:
             "static_collision": static,
         }
 
+    def _ensure_jog_safety(self, collision_sensitivity: int) -> None:
+        sensitivity = max(1, min(5, int(collision_sensitivity)))
+        now = time.monotonic()
+        should_apply = (
+            self._last_jog_safety_sensitivity != sensitivity
+            or (now - self._last_jog_safety_monotonic) > self._jog_safety_refresh_s
+        )
+        if should_apply:
+            self.configure_safety(sensitivity)
+            self._last_jog_safety_sensitivity = sensitivity
+            self._last_jog_safety_monotonic = now
+
     def upload_load_run(self, studs: list[dict[str, float]], remote_file: str, clearance_z_mm: float = 50.0, collision_sensitivity: int = 3) -> dict[str, Any]:
         studs_data_lua = build_studs_data_lua(studs, clearance_z_mm)
 
@@ -221,6 +238,20 @@ class WeldFlexRobotService:
             },
         }
 
+    def goto_clearance_z(self, clearance_z_mm: float, program_path: str) -> dict[str, Any]:
+        studs_data_lua = build_studs_data_lua([], clearance_z_mm)
+        with self._lock:
+            robot = self._client()
+            self._upload_static_lua_scripts()
+            self.upload_lua(studs_data_lua, self.studs_data_path)
+            try:
+                load_result = robot.ProgramLoad(program_name=program_path)
+            except TypeError:
+                load_result = robot.ProgramLoad(program_path)
+            robot.Mode(0)
+            run_result = robot.ProgramRun()
+        return {"load_result": load_result, "run_result": run_result}
+
     def _run_with_timeout(self, fn: Callable[[], Any], timeout: float = SDK_CALL_TIMEOUT_S) -> Any:
         future = self._sdk_executor.submit(fn)
         try:
@@ -264,7 +295,16 @@ class WeldFlexRobotService:
             raise RuntimeError(f"Read joint positions failed with error code {error_code}.")
         return [float(value) for value in joints]
 
-    def jog(self, ref: int, axis: int, direction: int, distance: float, velocity: float) -> dict[str, Any]:
+    def jog(
+        self,
+        ref: int,
+        axis: int,
+        direction: int,
+        distance: float,
+        velocity: float,
+        collision_sensitivity: int = 3,
+    ) -> dict[str, Any]:
+        self._ensure_jog_safety(collision_sensitivity)
         with self._lock:
             robot = self._client()
 
@@ -357,6 +397,26 @@ class WeldFlexRobotService:
         error_code, _ = self._split_error_value(result)
         if error_code != 0:
             raise RuntimeError(f"SetWObjCoordPoint({point_num}) failed with error code {error_code}.")
+
+    def compute_and_apply_tcp(self, joint_positions: list[list[float]], tool_id: int = 1) -> list[float]:
+        with self._lock:
+            robot = self._client()
+        result = self._run_with_timeout(
+            lambda: robot.ComputeToolCoordWithPoints(0, joint_positions)
+        )
+        error_code, tcp_offset = self._split_error_value(result)
+        if error_code != 0 or not isinstance(tcp_offset, list) or len(tcp_offset) < 6:
+            raise RuntimeError(f"ComputeToolCoordWithPoints failed (code {error_code}).")
+        tcp_floats = [float(v) for v in tcp_offset[:6]]
+        with self._lock:
+            robot = self._client()
+        set_resp = self._run_with_timeout(
+            lambda: robot.SetToolList(tool_id, tcp_floats, 0, 0, 0)
+        )
+        error_code2, _ = self._split_error_value(set_resp)
+        if error_code2 != 0:
+            raise RuntimeError(f"SetToolList failed (code {error_code2}).")
+        return tcp_floats
 
     def compute_and_apply_wobj(self, wobj_id: int = 1) -> list[float]:
         with self._lock:

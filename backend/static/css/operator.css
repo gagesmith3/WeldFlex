@@ -1879,6 +1879,14 @@ pre {
   overflow-y: auto;
 }
 
+#tcp-calib-steps {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  gap: 12px;
+}
+
 .calib-instructions-bar {
   background: var(--panel);
   border: 1px solid var(--line);
@@ -1894,6 +1902,12 @@ pre {
   grid-template-columns: 1fr 1fr 1fr;
   gap: 12px;
   flex-shrink: 0;
+}
+
+.calib-pin-grid-2x2 {
+  grid-template-columns: 1fr 1fr;
+  flex: 1;
+  align-content: stretch;
 }
 
 .calib-pin-card {
@@ -2070,6 +2084,19 @@ pre {
   flex-shrink: 0;
 }
 
+.calib-clearance-inline.calib-clearance-locked {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.btn.calib-btn-test {
+  background: #1d5f9a;
+  padding: 6px 12px;
+  font-size: 0.82rem;
+  flex-shrink: 0;
+  gap: 5px;
+}
+
 /* ── Calibration landing menu ── */
 .calib-menu-body {
   display: grid;
@@ -2108,6 +2135,12 @@ pre {
 .calib-menu-card h2 {
   margin: 0;
   font-size: 1.6rem;
+}
+
+.calib-menu-card-soon {
+  opacity: 0.4;
+  cursor: not-allowed;
+  pointer-events: none;
 }
 
 .calib-menu-card p {

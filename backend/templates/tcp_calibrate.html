@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+
+{% block body %}
+<div class="calib-workflow">
+
+  <div class="calib-instructions-bar">
+    <strong>TCP calibration:</strong> Mount a sharp fixed reference pin. All 4 points touch the <strong>same pin tip</strong> — only the arm posture changes each time. The more different the orientations, the more accurate the result.
+  </div>
+
+  <div id="tcp-calib-steps"
+       hx-get="/ui/tcp-calibrate/status"
+       hx-trigger="load"
+       hx-swap="innerHTML">
+  </div>
+
+</div>
+{% endblock %}

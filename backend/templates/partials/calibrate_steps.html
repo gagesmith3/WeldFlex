@@ -78,14 +78,24 @@
 <p class="calib-error-note">Apply error: {{ apply_error }}</p>
 {% endif %}
 
-<div class="calib-clearance-inline">
+<div class="calib-clearance-inline{% if not all_recorded %} calib-clearance-locked{% endif %}">
   <label for="calib_clearance_z">Clearance Height</label>
   <input type="number" id="calib_clearance_z" name="clearance_z_mm"
          value="{{ clearance_z_mm }}"
          min="5" max="500" step="0.1"
          inputmode="decimal"
-         required>
+         required
+         {% if not all_recorded %}disabled{% endif %}>
   <span class="calib-clearance-unit">mm</span>
+  <button type="button"
+          class="btn calib-btn-test{% if not all_recorded %} is-disabled{% endif %}"
+          hx-post="/ui/calibrate/goto-clearance"
+          hx-include="#calib_clearance_z"
+          hx-target="#toast-rack"
+          hx-swap="innerHTML"
+          {% if not all_recorded %}disabled{% endif %}>
+    {{ icon_safe('move_3d', fallback='arrow_up', size=13) }} Test Z
+  </button>
 </div>
 
 <div class="calib-apply-row">

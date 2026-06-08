@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 140" role="img" aria-label="Point 2 wrist tilted right">
+  <rect width="220" height="140" rx="10" fill="#f5f8fc"/>
+  <circle cx="110" cy="106" r="5" fill="#cc2f2f"/>
+  <line x1="110" y1="16" x2="110" y2="106" stroke="#cc2f2f" stroke-width="2" stroke-dasharray="4 4"/>
+  <rect x="72" y="22" width="36" height="14" rx="3" fill="#5d6d7c"/>
+  <line x1="90" y1="36" x2="122" y2="84" stroke="#1c3d5a" stroke-width="8" stroke-linecap="round"/>
+  <line x1="122" y1="84" x2="110" y2="104" stroke="#1c3d5a" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="110" cy="104" r="2.8" fill="#1c3d5a"/>
+</svg>

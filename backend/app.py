@@ -722,6 +722,28 @@ def create_app() -> Flask:
         except Exception as exc:
             return _calib_render(apply_error=str(exc))
 
+    @app.post("/ui/calibrate/goto-clearance")
+    def ui_calibrate_goto_clearance() -> Any:
+        try:
+            clearance_z_mm = parse_bounded_float(
+                request.form.get("clearance_z_mm", str(get_clearance_z_mm())),
+                "Clearance height", 5.0, 500.0,
+            )
+            robot_service.goto_clearance_z(clearance_z_mm, runtime_settings["program_path"])
+            return render_template(
+                "partials/command_result.html",
+                ok=True,
+                title="Clearance Test",
+                payload={"message": f"Moving to Z={clearance_z_mm:g} mm."},
+            )
+        except Exception as exc:
+            return render_template(
+                "partials/command_result.html",
+                ok=False,
+                title="Clearance Test",
+                payload={"error": str(exc)},
+            )
+
     @app.post("/ui/calibrate/reset")
     def ui_calibrate_reset() -> Any:
         if _calib_state["drag_pin"] is not None:
@@ -732,6 +754,86 @@ def create_app() -> Flask:
         _calib_state["pins"].clear()
         _calib_state["drag_pin"] = None
         return _calib_render()
+
+    _tcp_calib_state: dict[str, Any] = {"points": {}, "drag_point": None}
+
+    def _tcp_calib_render(
+        applied: bool = False,
+        tcp_offset: list[float] | None = None,
+        drag_error: str | None = None,
+        record_error: str | None = None,
+        apply_error: str | None = None,
+    ) -> Any:
+        points = _tcp_calib_state["points"]
+        return render_template(
+            "partials/tcp_calibrate_steps.html",
+            points_recorded=set(points.keys()),
+            all_recorded=len(points) == 4,
+            drag_point=_tcp_calib_state["drag_point"],
+            applied=applied,
+            tcp_offset=tcp_offset,
+            drag_error=drag_error,
+            record_error=record_error,
+            apply_error=apply_error,
+        )
+
+    @app.get("/operator/tcp-calibrate")
+    def tcp_calibrate() -> Any:
+        return render_template("tcp_calibrate.html", page_title="TCP Calibrate", content_class="app-content-scroll-locked")
+
+    @app.get("/ui/tcp-calibrate/status")
+    def ui_tcp_calibrate_status() -> Any:
+        return _tcp_calib_render()
+
+    @app.post("/ui/tcp-calibrate/enable-drag")
+    def ui_tcp_calibrate_enable_drag() -> Any:
+        try:
+            point = int(request.form.get("point", "0"))
+            if point not in (1, 2, 3, 4):
+                raise ValueError(f"Invalid point number: {point}")
+            robot_service.enable_drag()
+            _tcp_calib_state["drag_point"] = point
+            return _tcp_calib_render()
+        except Exception as exc:
+            return _tcp_calib_render(drag_error=str(exc))
+
+    @app.post("/ui/tcp-calibrate/record-point")
+    def ui_tcp_calibrate_record_point() -> Any:
+        try:
+            point = int(request.form.get("point", "0"))
+            if point not in (1, 2, 3, 4):
+                raise ValueError(f"Invalid point number: {point}")
+            joint_positions = robot_service.get_joint_positions()
+            robot_service.disable_drag()
+            _tcp_calib_state["points"][point] = joint_positions
+            _tcp_calib_state["drag_point"] = None
+            return _tcp_calib_render()
+        except Exception as exc:
+            return _tcp_calib_render(record_error=str(exc))
+
+    @app.post("/ui/tcp-calibrate/apply")
+    def ui_tcp_calibrate_apply() -> Any:
+        try:
+            if len(_tcp_calib_state["points"]) < 4:
+                raise ValueError("All 4 points must be recorded before applying.")
+            ordered = [_tcp_calib_state["points"][i] for i in (1, 2, 3, 4)]
+            tcp_offset = robot_service.compute_and_apply_tcp(ordered)
+            _tcp_calib_state["points"].clear()
+            _tcp_calib_state["drag_point"] = None
+            return _tcp_calib_render(applied=True, tcp_offset=tcp_offset)
+        except Exception as exc:
+            return _tcp_calib_render(apply_error=str(exc))
+
+    @app.post("/ui/tcp-calibrate/reset")
+    def ui_tcp_calibrate_reset() -> Any:
+        if _tcp_calib_state["drag_point"] is not None:
+            try:
+                robot_service.disable_drag()
+            except Exception:
+                pass
+        _tcp_calib_state["points"].clear()
+        _tcp_calib_state["drag_point"] = None
+        return _tcp_calib_render()
 
     @app.get("/operator/jog")
     def jog() -> Any:
@@ -795,7 +897,14 @@ def create_app() -> Flask:
             else:
                 raise ValueError("Invalid jog mode.")
 
-            robot_service.jog(ref=ref, axis=axis_number, direction=direction_value, distance=distance, velocity=velocity)
+            robot_service.jog(
+                ref=ref,
+                axis=axis_number,
+                direction=direction_value,
+                distance=distance,
+                velocity=velocity,
+                collision_sensitivity=get_collision_sensitivity(),
+            )
             stamp_command_state("Jog", "ok", move_label)
             return render_template(
                 "partials/command_result.html",

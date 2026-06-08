@@ -140,8 +140,9 @@ class WeldFlexRobotService:
                     ftp.storbinary(f"STOR {remote_name}", fp)
         except ftp_errors as exc:
             raise RuntimeError(
-                "FTP upload failed. The controller likely rejected anonymous/guest access "
-                f"for {remote_file}. Set WELDFLEX_FTP_USER/WELDFLEX_FTP_PASS or fix SDK upload support."
+                "FTP upload failed "
+                f"for {remote_file} via {self.controller_host} as user '{user}'. "
+                "Set WELDFLEX_FTP_USER/WELDFLEX_FTP_PASS or fix SDK upload support."
             ) from exc
 
     def upload_lua(self, lua_text: str, remote_file: str) -> None:
@@ -212,7 +213,6 @@ class WeldFlexRobotService:
             robot.SetAnticollision(mode=0, level=[float(collision_sensitivity)] * 6, config=0)
             robot.SetCollisionStrategy(strategy=0, safeTime=1000, safeDistance=100, safetyMargin=[10, 10, 10, 10, 10, 10])
             robot.SetStaticCollisionOnOff(status=1)
-            self._upload_static_lua_scripts()
             self.upload_lua(studs_data_lua, self.studs_data_path)
             try:
                 load_result = robot.ProgramLoad(program_name=remote_file)
@@ -221,10 +221,9 @@ class WeldFlexRobotService:
 
             load_retry_result: Any = None
             if not self._is_success_result(load_result):
-                # Controller may have lost static files after reboot while app cache says uploaded.
+                # First recovery path: force re-upload static scripts, then retry ProgramLoad.
                 self._static_scripts_uploaded = False
                 self._upload_static_lua_scripts()
-                self.upload_lua(studs_data_lua, self.studs_data_path)
                 try:
                     load_retry_result = robot.ProgramLoad(program_name=remote_file)
                 except TypeError:

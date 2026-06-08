@@ -221,14 +221,19 @@ class WeldFlexRobotService:
 
             load_retry_result: Any = None
             if not self._is_success_result(load_result):
-                # First recovery path: force re-upload static scripts, then retry ProgramLoad.
-                self._static_scripts_uploaded = False
-                self._upload_static_lua_scripts()
+                # Retry ProgramLoad once without FTP/static upload fallback.
                 try:
                     load_retry_result = robot.ProgramLoad(program_name=remote_file)
                 except TypeError:
                     load_retry_result = robot.ProgramLoad(remote_file)
                 load_result = load_retry_result
+
+            if not self._is_success_result(load_result):
+                raise RuntimeError(
+                    f"ProgramLoad failed for {remote_file}. "
+                    f"load_result={load_result!r}, load_retry_result={load_retry_result!r}, "
+                    f"upload_events={self._last_upload_events!r}"
+                )
 
             mode_result = robot.Mode(0)
             run_result = robot.ProgramRun()

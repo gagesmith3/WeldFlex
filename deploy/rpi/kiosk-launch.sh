@@ -23,10 +23,15 @@ xset s off
 xset -dpms
 xset s noblank
 
-# Hide mouse cursor if available.
-if command -v unclutter >/dev/null 2>&1; then
-  unclutter -idle 0.1 -root &
-fi
+# Set an invisible 1×1 cursor at the X level so it never appears on touch.
+_blank=$(mktemp --suffix=.xbm)
+cat > "$_blank" <<'XBM'
+#define blank_width 1
+#define blank_height 1
+static unsigned char blank_bits[] = { 0x00 };
+XBM
+xsetroot -cursor "$_blank" "$_blank" || true
+rm -f "$_blank"
 
 # Wait for the Flask backend before launching Chromium so the browser never
 # shows an "unable to connect" error page on startup.

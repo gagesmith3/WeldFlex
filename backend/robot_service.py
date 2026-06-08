@@ -271,22 +271,6 @@ studs = {{
             run_result = robot.ProgramRun()
         return {"load_result": load_result, "run_result": run_result}
 
-    def goto_zerozero(self, program_path: str) -> dict[str, Any]:
-        zerozero_program = """-- Temporary WeldFlex zerozero move.
-PTP(zerozero, 50, -1, 0)
-"""
-        with self._lock:
-            robot = self._client()
-            self._upload_static_lua_scripts()
-            self.upload_lua(zerozero_program, "/fruser/zerozero_tmp.lua")
-            try:
-                load_result = robot.ProgramLoad(program_name="/fruser/zerozero_tmp.lua")
-            except TypeError:
-                load_result = robot.ProgramLoad("/fruser/zerozero_tmp.lua")
-            robot.Mode(0)
-            run_result = robot.ProgramRun()
-        return {"load_result": load_result, "run_result": run_result}
-
     def _run_with_timeout(self, fn: Callable[[], Any], timeout: float = SDK_CALL_TIMEOUT_S) -> Any:
         future = self._sdk_executor.submit(fn)
         try:

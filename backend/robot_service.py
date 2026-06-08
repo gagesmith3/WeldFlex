@@ -262,15 +262,19 @@ class WeldFlexRobotService:
                 )
 
             mode_result = robot.Mode(0)
-            if isinstance(mode_result, int) and mode_result < 0:
+            if not self._is_success_result(mode_result):
+                fault_codes = self._get_fault_codes(robot)
                 raise RuntimeError(
-                    f"Failed to set robot mode to auto before run. mode_result={mode_result!r}"
+                    "Failed to set robot mode to auto before run. "
+                    f"mode_result={mode_result!r}, fault_codes={fault_codes!r}"
                 )
 
             run_result = robot.ProgramRun()
             if not self._is_success_result(run_result):
+                fault_codes = self._get_fault_codes(robot)
                 raise RuntimeError(
-                    f"ProgramRun failed after successful load/mode. run_result={run_result!r}"
+                    "ProgramRun failed after successful load/mode. "
+                    f"run_result={run_result!r}, fault_codes={fault_codes!r}"
                 )
 
             # Capture immediate post-run state for troubleshooting when run command succeeds but no motion occurs.
@@ -280,6 +284,7 @@ class WeldFlexRobotService:
             state_error, program_state = self._split_error_value(program_state_resp)
             line_error, current_line = self._split_error_value(current_line_resp)
             loaded_program = self._get_loaded_program(robot)
+            fault_codes = self._get_fault_codes(robot)
 
         return {
             "program_path": remote_file,
@@ -290,6 +295,7 @@ class WeldFlexRobotService:
             "run_result": run_result,
             "upload_events": list(self._last_upload_events),
             "loaded_program": loaded_program,
+            "fault_codes": fault_codes,
             "post_run_status": {
                 "connected": state_error == 0 and line_error == 0,
                 "program_state": STATE_MAP.get(program_state, "unknown"),
@@ -541,6 +547,7 @@ studs = {{
         program_state_resp, current_line_resp = self._run_with_timeout(
             lambda: (robot.GetProgramState(), robot.GetCurrentLine())
         )
+        fault_codes = self._get_fault_codes(robot)
 
         state_error, program_state = self._split_error_value(program_state_resp)
         line_error, current_line = self._split_error_value(current_line_resp)
@@ -555,6 +562,46 @@ studs = {{
             "program_state_raw": program_state,
             "program_state": STATE_MAP.get(program_state, "unknown"),
             "current_line": current_line,
+            "fault_codes": fault_codes,
+        }
+
+    def _get_fault_codes(self, robot: Any) -> dict[str, Any]:
+        robot_error_raw: Any = None
+        safety_raw: Any = None
+
+        get_robot_error = getattr(robot, "GetRobotErrorCode", None)
+        if callable(get_robot_error):
+            try:
+                robot_error_raw = get_robot_error()
+            except Exception as exc:
+                robot_error_raw = f"GetRobotErrorCode failed: {exc}"
+
+        get_safety_code = getattr(robot, "GetSafetyCode", None)
+        if callable(get_safety_code):
+            try:
+                safety_raw = get_safety_code()
+            except Exception as exc:
+                safety_raw = f"GetSafetyCode failed: {exc}"
+
+        error_code, error_value = self._split_error_value(robot_error_raw)
+        main_code = None
+        sub_code = None
+        if isinstance(error_value, list) and len(error_value) >= 2:
+            main_code = error_value[0]
+            sub_code = error_value[1]
+
+        safety_error, safety_value = self._split_error_value(safety_raw)
+        if safety_value is None and isinstance(safety_raw, (int, float)):
+            safety_value = int(safety_raw)
+
+        return {
+            "robot_error_response": robot_error_raw,
+            "robot_error_error": error_code,
+            "main_code": main_code,
+            "sub_code": sub_code,
+            "safety_response": safety_raw,
+            "safety_error": safety_error,
+            "safety_code": safety_value,
         }
 
     @staticmethod

@@ -261,7 +261,16 @@ class WeldFlexRobotService:
                 )
 
             mode_result = robot.Mode(0)
+            if not self._is_success_result(mode_result):
+                raise RuntimeError(
+                    f"Failed to set robot mode to auto before run. mode_result={mode_result!r}"
+                )
+
             run_result = robot.ProgramRun()
+            if not self._is_success_result(run_result):
+                raise RuntimeError(
+                    f"ProgramRun failed after successful load/mode. run_result={run_result!r}"
+                )
 
             # Capture immediate post-run state for troubleshooting when run command succeeds but no motion occurs.
             time.sleep(0.2)

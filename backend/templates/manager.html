@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% from "components/ui.html" import panel_shell with context %}
+
+{% block body %}
+<div class="page-body">
+  {% call panel_shell('Manager', 'Part design, data, and system configuration.') %}
+    <p style="color: var(--muted); padding: 8px 0;">Coming soon.</p>
+  {% endcall %}
+</div>
+{% endblock %}

@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+  <title>WeldFlex</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/operator.css') }}">
+</head>
+<body class="landing-body">
+  <div class="landing-wrap">
+    <div class="landing-header">
+      <h1>WeldFlex</h1>
+      <span class="landing-version">BETA {{ git_sha }}</span>
+    </div>
+    <div class="landing-cards">
+      <a class="landing-card" href="/operator">
+        {% from "components/ui.html" import icon_safe %}
+        <div class="landing-card-icon">{{ icon_safe('bot', size=36) }}</div>
+        <div class="landing-card-body">
+          <strong>Operator</strong>
+          <span>Run parts, jog robot, calibrate, and manage production.</span>
+        </div>
+      </a>
+      <a class="landing-card" href="/manager">
+        <div class="landing-card-icon">{{ icon_safe('layout_dashboard', size=36) }}</div>
+        <div class="landing-card-body">
+          <strong>Manager</strong>
+          <span>Design parts, view data, and configure the system.</span>
+        </div>
+      </a>
+    </div>
+  </div>
+</body>
+</html>

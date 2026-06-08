@@ -176,6 +176,82 @@ input, textarea, select, [contenteditable] {
   height: 100%;
 }
 
+/* ── Landing page ── */
+.landing-body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  overflow: hidden;
+}
+.landing-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 32px;
+  width: 100%;
+  max-width: 560px;
+  padding: 24px;
+}
+.landing-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.landing-header h1 {
+  margin: 0;
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+.landing-version {
+  font-size: 0.72rem;
+  color: var(--muted);
+  letter-spacing: 0.06em;
+}
+.landing-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 100%;
+}
+.landing-card {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 20px 24px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  text-decoration: none;
+  color: var(--ink);
+  transition: box-shadow 0.15s, border-color 0.15s;
+}
+.landing-card:hover {
+  border-color: var(--header-end);
+  box-shadow: 0 4px 16px rgba(39, 95, 132, 0.12);
+}
+.landing-card-icon {
+  flex-shrink: 0;
+  color: var(--header-end);
+  display: flex;
+  align-items: center;
+}
+.landing-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.landing-card-body strong {
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+.landing-card-body span {
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
 /* ── Toast notification rack ── */
 .toast-rack {
   position: fixed;

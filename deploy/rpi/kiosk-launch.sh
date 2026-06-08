@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-URL="${WELDFLEX_KIOSK_URL:-http://127.0.0.1:5000}"
+URL="${WELDFLEX_KIOSK_URL:-http://127.0.0.1:5000/operator}"
 
 # Resolve browser binary — explicit override wins, otherwise auto-detect.
 if [[ -n "${WELDFLEX_BROWSER_CMD:-}" ]]; then

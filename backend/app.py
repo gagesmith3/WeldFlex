@@ -505,10 +505,18 @@ def create_app() -> Flask:
         run_state_manager.stamp_command_state(command, status, detail)
 
     @app.get("/")
+    def landing() -> Any:
+        return render_template("landing.html", page_title="WeldFlex")
+
+    @app.get("/operator")
     def index() -> Any:
         return render_template("home.html", page_title="Home", status_interval_ms=runtime_settings["status_interval_ms"])
 
-    @app.get("/parts")
+    @app.get("/manager")
+    def manager() -> Any:
+        return render_template("manager.html", page_title="Manager")
+
+    @app.get("/operator/parts")
     def parts() -> Any:
         selected_recipe_name: str | None = None
         studs_text = ""
@@ -536,15 +544,15 @@ def create_app() -> Flask:
             parts_error=parts_error,
         )
 
-    @app.get("/part-library")
+    @app.get("/operator/part-library")
     def part_library() -> Any:
-        return redirect("/parts", code=301)
+        return redirect("/operator/parts", code=301)
 
-    @app.get("/part-designer")
+    @app.get("/operator/part-designer")
     def part_designer() -> Any:
-        return redirect("/parts", code=301)
+        return redirect("/operator/parts", code=301)
 
-    @app.get("/robot-diagnostics")
+    @app.get("/operator/robot-diagnostics")
     def robot_diagnostics() -> Any:
         return render_template(
             "robot_diagnostics.html",
@@ -554,11 +562,11 @@ def create_app() -> Flask:
             collision_sensitivity=get_collision_sensitivity(),
         )
 
-    @app.get("/admin")
+    @app.get("/operator/admin")
     def admin() -> Any:
         return render_template("admin.html", page_title="Admin", settings=runtime_settings)
 
-    @app.get("/settings")
+    @app.get("/operator/settings")
     def settings() -> Any:
         return render_template(
             "settings.html",
@@ -567,7 +575,7 @@ def create_app() -> Flask:
             common_timezones=COMMON_TIMEZONES,
         )
 
-    @app.get("/calibration")
+    @app.get("/operator/calibration")
     def calibration() -> Any:
         return render_template("calibration.html", page_title="Calibration")
 
@@ -596,7 +604,7 @@ def create_app() -> Flask:
             collision_sensitivity=get_collision_sensitivity(),
         )
 
-    @app.get("/calibrate")
+    @app.get("/operator/calibrate")
     def calibrate() -> Any:
         return render_template(
             "calibrate.html",
@@ -702,7 +710,7 @@ def create_app() -> Flask:
         _calib_state["drag_pin"] = None
         return _calib_render()
 
-    @app.get("/jog")
+    @app.get("/operator/jog")
     def jog() -> Any:
         return render_template(
             "jog.html",
@@ -831,7 +839,7 @@ def create_app() -> Flask:
             del recipes[name]
             write_recipe_store(store)
             if request.headers.get("HX-Request") == "true":
-                return "", 204, {"HX-Redirect": "/parts"}
+                return "", 204, {"HX-Redirect": "/operator/parts"}
             return render_template(
                 "partials/command_result.html", ok=True, title="Delete Part", payload={"message": f"Deleted '{name}'"}
             )
@@ -986,8 +994,8 @@ def create_app() -> Flask:
             stamp_command_state("Run", "ok", f"Staged {recipe_name} for {run_count} target parts. Click Run on Home to start.")
 
             if request.headers.get("HX-Request") == "true":
-                return "", 204, {"HX-Redirect": "/"}
-            return redirect("/")
+                return "", 204, {"HX-Redirect": "/operator"}
+            return redirect("/operator")
         except Exception as exc:
             stamp_command_state("Run", "error", str(exc))
             return render_template(
@@ -1008,8 +1016,8 @@ def create_app() -> Flask:
             del recipes[recipe_name]
             write_recipe_store(store)
             if request.headers.get("HX-Request") == "true":
-                return "", 204, {"HX-Redirect": "/part-library"}
-            return redirect("/part-library")
+                return "", 204, {"HX-Redirect": "/operator/parts"}
+            return redirect("/operator/parts")
         except Exception as exc:
             return render_template(
                 "partials/command_result.html",

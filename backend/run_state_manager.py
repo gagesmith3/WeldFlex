@@ -175,6 +175,20 @@ class RunStateManager:
         self._state["cycle_unknown_since"] = 0.0
 
         if not self._state.get("cycle_seen_running", False):
+            stopped_since = float(self._state.get("cycle_stopped_since", 0.0) or 0.0)
+            if stopped_since <= 0.0:
+                self._state["cycle_stopped_since"] = now
+                return
+            # If program never leaves "stopped" shortly after launch, mark the cycle as failed to start.
+            if now - stopped_since > 4.0:
+                self._state["cycle_running"] = False
+                self._state["cycle_seen_running"] = False
+                self._state["cycle_stopped_since"] = 0.0
+                self._state["cycle_unknown_since"] = 0.0
+                self._state["active"] = False
+                self._state["last_command"] = "Run: Failed to start - program remained stopped"
+                self._state["last_command_status"] = "error"
+                self._state["last_command_at"] = self._utc_now_str()
             return
 
         stopped_since = float(self._state.get("cycle_stopped_since", 0.0) or 0.0)

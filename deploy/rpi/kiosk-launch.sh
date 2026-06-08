@@ -28,8 +28,12 @@ xset s noblank
 # request so the window fills the screen exactly.
 matchbox-window-manager -use_titlebar no &
 
-# Hide the cursor via the XFixes protocol so touch taps never show a pointer.
-unclutter --timeout 0 &
+# Detach the touchscreen from the master pointer so taps never move the X11
+# cursor. Chromium still receives touch events directly via XInput2.
+_tid=$(xinput list | grep -i 'ft5x06' | grep -oP 'id=\d+' | grep -oP '\d+' | head -1)
+if [[ -n "$_tid" ]]; then
+  xinput float "$_tid" 2>/dev/null || true
+fi
 
 # Wait for the Flask backend before launching Chromium so the browser never
 # shows an "unable to connect" error page on startup.
@@ -42,6 +46,7 @@ echo "Backend ready."
 while true; do
   "$BROWSER_CMD" \
     --kiosk \
+    --touch-events=enabled \
     --incognito \
     --noerrdialogs \
     --disable-infobars \

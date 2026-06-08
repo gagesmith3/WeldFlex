@@ -1038,8 +1038,8 @@ def create_app() -> Flask:
     @app.post("/ui/home/goto-zerozero")
     def ui_home_goto_zerozero() -> Any:
         try:
-            # Temporary helper: run the standard cycle program with zero clearance to P2P at calibrated zerozero.
-            robot_service.goto_clearance_z(0.0, runtime_settings["program_path"])
+            # Temporary helper: P2P to the calibrated zerozero work origin.
+            robot_service.goto_zerozero(runtime_settings["program_path"])
             stamp_command_state("ZeroZero", "ok", "P2P to calibrated zerozero sent")
             return render_template(
                 "partials/command_result.html",

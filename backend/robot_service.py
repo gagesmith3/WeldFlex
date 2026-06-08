@@ -73,6 +73,7 @@ class WeldFlexRobotService:
         self._jog_safety_refresh_s = 0.75
         self._static_scripts_uploaded = False
         self._last_upload_events: list[dict[str, str]] = []
+        self._last_sdk_attempts: list[dict[str, Any]] = []
         self._lock = threading.Lock()
         self._sdk_executor = concurrent.futures.ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="robot-sdk"
@@ -107,6 +108,7 @@ class WeldFlexRobotService:
 
     def _upload_with_sdk(self, local_file: str, remote_file: str) -> str | None:
         robot = self._client()
+        self._last_sdk_attempts = []
 
         for name, args in [
             ("LuaUpload", (local_file,)),
@@ -117,13 +119,23 @@ class WeldFlexRobotService:
         ]:
             method = getattr(robot, name, None)
             if method is None:
+                self._last_sdk_attempts.append({"method": name, "status": "missing"})
                 continue
             try:
                 result = method(*args)
-            except Exception:
+            except Exception as exc:
+                self._last_sdk_attempts.append(
+                    {"method": name, "status": "exception", "detail": f"{type(exc).__name__}: {exc}"}
+                )
                 continue
             if self._is_success_result(result):
+                self._last_sdk_attempts.append(
+                    {"method": name, "status": "success", "result": repr(result)}
+                )
                 return name
+            self._last_sdk_attempts.append(
+                {"method": name, "status": "failed", "result": repr(result)}
+            )
 
         return None
 
@@ -147,6 +159,12 @@ class WeldFlexRobotService:
 
     def upload_lua(self, lua_text: str, remote_file: str) -> None:
         remote_name = remote_file.rsplit("/", 1)[1]
+        disable_ftp = os.getenv("WELDFLEX_DISABLE_FTP_FALLBACK", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = os.path.join(tmp_dir, remote_name)
             with open(tmp_path, "w", encoding="utf-8") as tmp:
@@ -158,6 +176,11 @@ class WeldFlexRobotService:
                     {"remote_file": remote_file, "transport": f"sdk:{sdk_method}"}
                 )
                 return
+            if disable_ftp:
+                raise RuntimeError(
+                    f"SDK upload failed for {remote_file}; FTP fallback disabled. "
+                    f"sdk_attempts={self._last_sdk_attempts!r}"
+                )
             self._upload_with_ftp(tmp_path, remote_file)
             self._last_upload_events.append(
                 {"remote_file": remote_file, "transport": "ftp"}

@@ -21,10 +21,10 @@
 
 <div class="calib-pin-grid calib-pin-grid-2x2">
   {% for point_num, point_name, point_desc in [
-      (1, 'Point 1', 'Touch pin — natural posture'),
-      (2, 'Point 2', 'Touch pin — tilt wrist significantly'),
-      (3, 'Point 3', 'Touch pin — different arm posture'),
-      (4, 'Point 4', 'Touch pin — another unique posture')
+      (1, 'Point 1', 'Neutral wrist'),
+      (2, 'Point 2', 'Pitch wrist'),
+      (3, 'Point 3', 'Yaw arm'),
+      (4, 'Point 4', 'Roll wrist')
   ] %}
   {% set is_recorded = point_num in points_recorded %}
   {% set is_drag = drag_point == point_num %}

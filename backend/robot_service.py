@@ -7,7 +7,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
-from ftplib import FTP
+from ftplib import FTP, all_errors as ftp_errors
 from typing import Any, Callable
 
 SDK_CALL_TIMEOUT_S = 5.0
@@ -71,6 +71,7 @@ class WeldFlexRobotService:
         self._last_jog_safety_sensitivity: int | None = None
         self._last_jog_safety_monotonic = 0.0
         self._jog_safety_refresh_s = 0.75
+        self._static_scripts_uploaded = False
         self._lock = threading.Lock()
         self._sdk_executor = concurrent.futures.ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="robot-sdk"
@@ -85,10 +86,10 @@ class WeldFlexRobotService:
         with self._lock:
             if robot_ip and robot_ip != self.robot_ip:
                 self.robot_ip = robot_ip
-                # Force a fresh RPC client when IP changes.
                 self._robot = None
                 self._last_jog_safety_sensitivity = None
                 self._last_jog_safety_monotonic = 0.0
+                self._static_scripts_uploaded = False
 
             if controller_host:
                 self.controller_host = controller_host
@@ -106,29 +107,20 @@ class WeldFlexRobotService:
     def _upload_with_sdk(self, local_file: str, remote_file: str) -> bool:
         robot = self._client()
 
-        lua_upload = getattr(robot, "LuaUpload", None)
-        if lua_upload is not None:
-            result = lua_upload(local_file)
-            if self._is_success_result(result):
-                return True
-
-        method_names = [
-            "FileUpload",
-            "UploadFile",
-            "ProgramUpload",
-            "UploadProgram",
-        ]
-
-        for name in method_names:
+        for name, args in [
+            ("LuaUpload", (local_file,)),
+            ("FileUpload", (local_file, remote_file)),
+            ("UploadFile", (local_file, remote_file)),
+            ("ProgramUpload", (local_file, remote_file)),
+            ("UploadProgram", (local_file, remote_file)),
+        ]:
             method = getattr(robot, name, None)
             if method is None:
                 continue
-
             try:
-                result = method(local_file, remote_file)
-            except TypeError:
+                result = method(*args)
+            except Exception:
                 continue
-
             if self._is_success_result(result):
                 return True
 
@@ -139,11 +131,17 @@ class WeldFlexRobotService:
         password = os.getenv("WELDFLEX_FTP_PASS", "")
         remote_dir, remote_name = remote_file.rsplit("/", 1)
 
-        with FTP(self.controller_host, timeout=8) as ftp:
-            ftp.login(user=user, passwd=password)
-            ftp.cwd(remote_dir)
-            with open(local_file, "rb") as fp:
-                ftp.storbinary(f"STOR {remote_name}", fp)
+        try:
+            with FTP(self.controller_host, timeout=8) as ftp:
+                ftp.login(user=user, passwd=password)
+                ftp.cwd(remote_dir)
+                with open(local_file, "rb") as fp:
+                    ftp.storbinary(f"STOR {remote_name}", fp)
+        except ftp_errors as exc:
+            raise RuntimeError(
+                "FTP upload failed. The controller likely rejected anonymous/guest access "
+                f"for {remote_file}. Set WELDFLEX_FTP_USER/WELDFLEX_FTP_PASS or fix SDK upload support."
+            ) from exc
 
     def upload_lua(self, lua_text: str, remote_file: str) -> None:
         remote_name = remote_file.rsplit("/", 1)[1]
@@ -157,11 +155,14 @@ class WeldFlexRobotService:
             self._upload_with_ftp(tmp_path, remote_file)
 
     def _upload_static_lua_scripts(self) -> None:
+        if self._static_scripts_uploaded:
+            return
         lua_dir = Path(__file__).resolve().parents[1] / "robot" / "lua"
         for script_name in ("studCycle.lua", "weld.lua"):
             script_path = lua_dir / script_name
             if script_path.exists():
                 self.upload_lua(script_path.read_text(encoding="utf-8"), f"/fruser/{script_name}")
+        self._static_scripts_uploaded = True
 
     def configure_safety(self, collision_sensitivity: int = 3) -> dict[str, Any]:
         with self._lock:

@@ -78,10 +78,30 @@
 <p class="calib-error-note">Apply error: {{ apply_error }}</p>
 {% endif %}
 
+<div class="calib-clearance-inline">
+  <label for="calib_collision_sens">Collision Sensitivity</label>
+  <select id="calib_collision_sens" name="collision_sensitivity">
+    {% for val, label in [(1,'1 — Most sensitive'),(2,'2'),(3,'3 — Default'),(4,'4'),(5,'5 — Least sensitive')] %}
+    <option value="{{ val }}"{% if val == collision_sensitivity %} selected{% endif %}>{{ label }}</option>
+    {% endfor %}
+  </select>
+</div>
+
+<div class="calib-clearance-inline">
+  <label for="calib_clearance_z">Clearance Height</label>
+  <input type="number" id="calib_clearance_z" name="clearance_z_mm"
+         value="{{ clearance_z_mm }}"
+         min="5" max="500" step="0.1"
+         inputmode="decimal"
+         required>
+  <span class="calib-clearance-unit">mm</span>
+</div>
+
 <div class="calib-apply-row">
   <button class="btn calib-apply-btn{% if not all_recorded %} is-disabled{% endif %}"
           type="button"
           hx-post="/ui/calibrate/apply"
+          hx-include="#calib_collision_sens,#calib_clearance_z"
           hx-target="#calib-steps"
           hx-swap="innerHTML"
           {% if not all_recorded %}disabled{% endif %}>

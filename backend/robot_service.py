@@ -158,13 +158,35 @@ class WeldFlexRobotService:
             if script_path.exists():
                 self.upload_lua(script_path.read_text(encoding="utf-8"), f"/fruser/{script_name}")
 
-    def upload_load_run(self, studs: list[dict[str, float]], remote_file: str) -> dict[str, Any]:
-        studs_data_lua = build_studs_data_lua(studs)
+    def configure_safety(self, collision_sensitivity: int = 3) -> dict[str, Any]:
+        with self._lock:
+            robot = self._client()
+        level = [float(collision_sensitivity)] * 6
+        anticollision = self._run_with_timeout(
+            lambda: robot.SetAnticollision(mode=0, level=level, config=0)
+        )
+        strategy = self._run_with_timeout(
+            lambda: robot.SetCollisionStrategy(strategy=0, safeTime=1000, safeDistance=100, safetyMargin=[10, 10, 10, 10, 10, 10])
+        )
+        static = self._run_with_timeout(
+            lambda: robot.SetStaticCollisionOnOff(status=1)
+        )
+        return {
+            "anticollision": anticollision,
+            "strategy": strategy,
+            "static_collision": static,
+        }
+
+    def upload_load_run(self, studs: list[dict[str, float]], remote_file: str, clearance_z_mm: float = 50.0, collision_sensitivity: int = 3) -> dict[str, Any]:
+        studs_data_lua = build_studs_data_lua(studs, clearance_z_mm)
 
         with self._lock:
+            robot = self._client()
+            robot.SetAnticollision(mode=0, level=[float(collision_sensitivity)] * 6, config=0)
+            robot.SetCollisionStrategy(strategy=0, safeTime=1000, safeDistance=100, safetyMargin=[10, 10, 10, 10, 10, 10])
+            robot.SetStaticCollisionOnOff(status=1)
             self._upload_static_lua_scripts()
             self.upload_lua(studs_data_lua, self.studs_data_path)
-            robot = self._client()
             try:
                 load_result = robot.ProgramLoad(program_name=remote_file)
             except TypeError:

@@ -1892,6 +1892,38 @@ pre {
   opacity: 0.8;
 }
 
+/* ── Clearance height inline row ── */
+.calib-clearance-inline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0 4px;
+  border-top: 1px solid var(--line);
+  flex-shrink: 0;
+}
+
+.calib-clearance-inline label {
+  flex: 1;
+  font-size: 0.88rem;
+  color: var(--muted);
+  margin: 0;
+}
+
+.calib-clearance-inline input[type="number"] {
+  width: 80px;
+  text-align: right;
+}
+
+.calib-clearance-inline select {
+  flex-shrink: 0;
+}
+
+.calib-clearance-unit {
+  font-size: 0.88rem;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
 /* ── Calibration landing menu ── */
 .calib-menu-body {
   display: grid;

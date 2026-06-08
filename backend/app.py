@@ -209,6 +209,41 @@ def create_app() -> Flask:
     recipes_dir = workspace_root / "data"
     recipes_file = recipes_dir / "recipes.json"
     recipes_lock = threading.Lock()
+    machine_config_file = recipes_dir / "machine_config.json"
+    machine_config_lock = threading.Lock()
+
+    _machine_config_defaults: dict[str, Any] = {"clearance_z_mm": 50.0, "collision_sensitivity": 3}
+
+    def read_machine_config() -> dict[str, Any]:
+        with machine_config_lock:
+            if not machine_config_file.exists():
+                return dict(_machine_config_defaults)
+            try:
+                data = json.loads(machine_config_file.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                return dict(_machine_config_defaults)
+        if not isinstance(data, dict):
+            return dict(_machine_config_defaults)
+        return data
+
+    def write_machine_config(config: dict[str, Any]) -> None:
+        recipes_dir.mkdir(parents=True, exist_ok=True)
+        with machine_config_lock:
+            machine_config_file.write_text(json.dumps(config, indent=2), encoding="utf-8")
+
+    def get_clearance_z_mm() -> float:
+        config = read_machine_config()
+        try:
+            return float(config.get("clearance_z_mm", 50.0))
+        except (TypeError, ValueError):
+            return 50.0
+
+    def get_collision_sensitivity() -> int:
+        config = read_machine_config()
+        try:
+            return max(1, min(5, int(config.get("collision_sensitivity", 3))))
+        except (TypeError, ValueError):
+            return 3
 
     def parse_studs_text(studs_text: str) -> list[dict[str, float]]:
         studs: list[dict[str, float]] = []
@@ -555,6 +590,8 @@ def create_app() -> Flask:
             record_error=record_error,
             apply_error=apply_error,
             drag_error=drag_error,
+            clearance_z_mm=get_clearance_z_mm(),
+            collision_sensitivity=get_collision_sensitivity(),
         )
 
     @app.get("/calibrate")
@@ -563,7 +600,31 @@ def create_app() -> Flask:
             "calibrate.html",
             page_title="Calibrate",
             content_class="app-content-scroll-locked",
+            clearance_z_mm=get_clearance_z_mm(),
         )
+
+    @app.post("/ui/calibrate/clearance")
+    def ui_calibrate_clearance() -> Any:
+        try:
+            clearance_z_mm = parse_bounded_float(
+                request.form.get("clearance_z_mm", ""), "Clearance height", 5.0, 500.0
+            )
+            config = read_machine_config()
+            config["clearance_z_mm"] = clearance_z_mm
+            write_machine_config(config)
+            return render_template(
+                "partials/command_result.html",
+                ok=True,
+                title="Clearance Height",
+                payload={"message": f"Clearance height set to {clearance_z_mm:g} mm."},
+            )
+        except Exception as exc:
+            return render_template(
+                "partials/command_result.html",
+                ok=False,
+                title="Clearance Height",
+                payload={"error": str(exc)},
+            )
 
     @app.get("/ui/calibrate/status")
     def ui_calibrate_status() -> Any:
@@ -609,7 +670,19 @@ def create_app() -> Flask:
         try:
             if len(_calib_state["pins"]) < 3:
                 raise ValueError("All 3 pins must be recorded before applying.")
+            clearance_z_mm = parse_bounded_float(
+                request.form.get("clearance_z_mm", str(get_clearance_z_mm())),
+                "Clearance height", 5.0, 500.0,
+            )
+            try:
+                collision_sensitivity = max(1, min(5, int(request.form.get("collision_sensitivity", str(get_collision_sensitivity())))))
+            except (TypeError, ValueError):
+                collision_sensitivity = 3
             coord = robot_service.compute_and_apply_wobj(wobj_id=1)
+            config = read_machine_config()
+            config["clearance_z_mm"] = clearance_z_mm
+            config["collision_sensitivity"] = collision_sensitivity
+            write_machine_config(config)
             _calib_state["pins"].clear()
             _calib_state["drag_pin"] = None
             return _calib_render(applied=True, coord=coord)
@@ -971,7 +1044,7 @@ def create_app() -> Flask:
 
         try:
             studs = parse_studs_text(studs_text)
-            result = robot_service.upload_load_run(studs, program_path)
+            result = robot_service.upload_load_run(studs, program_path, clearance_z_mm=get_clearance_z_mm(), collision_sensitivity=get_collision_sensitivity())
             run_state_manager.start_designer_cycle()
             stamp_command_state("Run", "ok", "Launched unsaved designer job")
             return render_template("partials/command_result.html", ok=True, title="Run", payload=result)
@@ -1024,8 +1097,10 @@ def create_app() -> Flask:
     @app.post("/ui/home/run-next")
     def ui_home_run_next() -> Any:
         try:
+            clearance_z = get_clearance_z_mm()
+            sensitivity = get_collision_sensitivity()
             run_state_manager.start_next_batch_cycle(
-                launch_cycle=robot_service.upload_load_run,
+                launch_cycle=lambda studs, path: robot_service.upload_load_run(studs, path, clearance_z_mm=clearance_z, collision_sensitivity=sensitivity),
                 program_path=runtime_settings["program_path"],
             )
             return "", 204
@@ -1341,7 +1416,7 @@ def create_app() -> Flask:
             normalized_studs.append({"x": x, "y": y})
 
         try:
-            result = robot_service.upload_load_run(normalized_studs, program_path)
+            result = robot_service.upload_load_run(normalized_studs, program_path, clearance_z_mm=get_clearance_z_mm(), collision_sensitivity=get_collision_sensitivity())
             return jsonify({"ok": True, **result})
         except Exception as exc:
             return jsonify({"ok": False, "error": str(exc)}), 500

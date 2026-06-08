@@ -112,6 +112,8 @@ class WeldFlexRobotService:
 
         for name, args in [
             ("LuaUpload", (local_file,)),
+            ("OpenLuaUpload", (local_file,)),
+            ("AxleLuaUpload", (local_file,)),
             ("FileUpload", (local_file, remote_file)),
             ("UploadFile", (local_file, remote_file)),
             ("ProgramUpload", (local_file, remote_file)),

@@ -72,6 +72,7 @@ class WeldFlexRobotService:
         self._last_jog_safety_monotonic = 0.0
         self._jog_safety_refresh_s = 0.75
         self._static_scripts_uploaded = False
+        self._last_upload_events: list[dict[str, str]] = []
         self._lock = threading.Lock()
         self._sdk_executor = concurrent.futures.ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="robot-sdk"
@@ -104,7 +105,7 @@ class WeldFlexRobotService:
             self._robot = Robot.RPC(self.robot_ip)
         return self._robot
 
-    def _upload_with_sdk(self, local_file: str, remote_file: str) -> bool:
+    def _upload_with_sdk(self, local_file: str, remote_file: str) -> str | None:
         robot = self._client()
 
         for name, args in [
@@ -122,9 +123,9 @@ class WeldFlexRobotService:
             except Exception:
                 continue
             if self._is_success_result(result):
-                return True
+                return name
 
-        return False
+        return None
 
     def _upload_with_ftp(self, local_file: str, remote_file: str) -> None:
         user = os.getenv("WELDFLEX_FTP_USER", "anonymous")
@@ -150,9 +151,16 @@ class WeldFlexRobotService:
             with open(tmp_path, "w", encoding="utf-8") as tmp:
                 tmp.write(lua_text)
 
-            if self._upload_with_sdk(tmp_path, remote_file):
+            sdk_method = self._upload_with_sdk(tmp_path, remote_file)
+            if sdk_method:
+                self._last_upload_events.append(
+                    {"remote_file": remote_file, "transport": f"sdk:{sdk_method}"}
+                )
                 return
             self._upload_with_ftp(tmp_path, remote_file)
+            self._last_upload_events.append(
+                {"remote_file": remote_file, "transport": "ftp"}
+            )
 
     def _upload_static_lua_scripts(self) -> None:
         if self._static_scripts_uploaded:
@@ -199,6 +207,7 @@ class WeldFlexRobotService:
         studs_data_lua = build_studs_data_lua(studs, clearance_z_mm)
 
         with self._lock:
+            self._last_upload_events = []
             robot = self._client()
             robot.SetAnticollision(mode=0, level=[float(collision_sensitivity)] * 6, config=0)
             robot.SetCollisionStrategy(strategy=0, safeTime=1000, safeDistance=100, safetyMargin=[10, 10, 10, 10, 10, 10])
@@ -209,6 +218,19 @@ class WeldFlexRobotService:
                 load_result = robot.ProgramLoad(program_name=remote_file)
             except TypeError:
                 load_result = robot.ProgramLoad(remote_file)
+
+            load_retry_result: Any = None
+            if not self._is_success_result(load_result):
+                # Controller may have lost static files after reboot while app cache says uploaded.
+                self._static_scripts_uploaded = False
+                self._upload_static_lua_scripts()
+                self.upload_lua(studs_data_lua, self.studs_data_path)
+                try:
+                    load_retry_result = robot.ProgramLoad(program_name=remote_file)
+                except TypeError:
+                    load_retry_result = robot.ProgramLoad(remote_file)
+                load_result = load_retry_result
+
             mode_result = robot.Mode(0)
             run_result = robot.ProgramRun()
 
@@ -224,8 +246,10 @@ class WeldFlexRobotService:
             "program_path": remote_file,
             "studs_data_path": self.studs_data_path,
             "load_result": load_result,
+            "load_retry_result": load_retry_result,
             "mode_result": mode_result,
             "run_result": run_result,
+            "upload_events": list(self._last_upload_events),
             "loaded_program": loaded_program,
             "post_run_status": {
                 "connected": state_error == 0 and line_error == 0,

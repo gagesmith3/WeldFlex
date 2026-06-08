@@ -19,6 +19,7 @@
 
 * {
   box-sizing: border-box;
+  cursor: none !important;
 }
 
 body {
@@ -29,6 +30,7 @@ body {
   min-height: 100vh;
   height: 100vh;
   overflow: hidden;
+  cursor: none;
   /* Kiosk: disable text drag-selection and tap highlight */
   -webkit-user-select: none;
   user-select: none;

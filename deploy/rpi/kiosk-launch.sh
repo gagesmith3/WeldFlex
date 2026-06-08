@@ -48,6 +48,7 @@ while true; do
     --incognito \
     --noerrdialogs \
     --disable-infobars \
+    --password-store=basic \
     --check-for-update-interval=31536000 \
     "$URL"
 

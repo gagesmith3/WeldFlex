@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import hashlib
 import os
 import sys
 import tempfile
@@ -11,6 +12,7 @@ from ftplib import FTP, all_errors as ftp_errors
 from typing import Any, Callable
 
 SDK_CALL_TIMEOUT_S = 5.0
+DEFAULT_STUDS_DATA_PATH = "/fruser/studs_data.lua"
 
 def _bootstrap_local_fairino() -> None:
     """Add local FAIRINO SDK directories to sys.path for offline use."""
@@ -62,16 +64,16 @@ class WeldFlexRobotService:
         self,
         robot_ip: str,
         controller_host: str | None = None,
-        studs_data_path: str = "/fruser/studs_data.lua",
+        studs_data_path: str = DEFAULT_STUDS_DATA_PATH,
     ) -> None:
         self.robot_ip = robot_ip
         self.controller_host = controller_host or robot_ip
-        self.studs_data_path = studs_data_path
+        self.studs_data_path = self._normalize_studs_data_path(studs_data_path)
         self._robot: Any | None = None
         self._last_jog_safety_sensitivity: int | None = None
         self._last_jog_safety_monotonic = 0.0
         self._jog_safety_refresh_s = 0.75
-        self._static_scripts_uploaded = False
+        self._static_script_hashes: dict[str, str] = {}
         self._last_upload_events: list[dict[str, str]] = []
         self._last_sdk_attempts: list[dict[str, Any]] = []
         self._lock = threading.Lock()
@@ -91,7 +93,7 @@ class WeldFlexRobotService:
                 self._robot = None
                 self._last_jog_safety_sensitivity = None
                 self._last_jog_safety_monotonic = 0.0
-                self._static_scripts_uploaded = False
+                self._static_script_hashes = {}
 
             if controller_host:
                 self.controller_host = controller_host
@@ -99,7 +101,20 @@ class WeldFlexRobotService:
                 self.controller_host = robot_ip
 
             if studs_data_path:
-                self.studs_data_path = studs_data_path
+                self.studs_data_path = self._normalize_studs_data_path(studs_data_path)
+
+    @staticmethod
+    def _normalize_studs_data_path(studs_data_path: str) -> str:
+        normalized = str(studs_data_path or "").strip()
+        if normalized != DEFAULT_STUDS_DATA_PATH:
+            raise ValueError(
+                f"studs_data_path must be '{DEFAULT_STUDS_DATA_PATH}' to match studCycle.lua include path."
+            )
+        return normalized
+
+    @staticmethod
+    def _sha256_text(content: str) -> str:
+        return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
     def _client(self) -> Any:
         if self._robot is None:
@@ -189,14 +204,16 @@ class WeldFlexRobotService:
             )
 
     def _upload_static_lua_scripts(self) -> None:
-        if self._static_scripts_uploaded:
-            return
         lua_dir = Path(__file__).resolve().parents[1] / "robot" / "lua"
         for script_name in ("studCycle.lua", "weld.lua"):
             script_path = lua_dir / script_name
             if script_path.exists():
-                self.upload_lua(script_path.read_text(encoding="utf-8"), f"/fruser/{script_name}")
-        self._static_scripts_uploaded = True
+                content = script_path.read_text(encoding="utf-8")
+                content_hash = self._sha256_text(content)
+                if self._static_script_hashes.get(script_name) == content_hash:
+                    continue
+                self.upload_lua(content, f"/fruser/{script_name}")
+                self._static_script_hashes[script_name] = content_hash
 
     def configure_safety(self, collision_sensitivity: int = 3) -> dict[str, Any]:
         with self._lock:
@@ -543,25 +560,37 @@ studs = {{
         error_code3, _ = self._split_error_value(list_resp)
         if error_code3 != 0:
             raise RuntimeError(f"SetToolList failed (code {error_code3}).")
-        return tcp_floats
+        verify_resp = self._run_with_timeout(lambda: robot.GetTCPOffset(0))
+        error_code4, tcp_verified = self._split_error_value(verify_resp)
+        if error_code4 != 0 or not isinstance(tcp_verified, list) or len(tcp_verified) < 6:
+            raise RuntimeError(f"GetTCPOffset verification failed (code {error_code4}).")
+        return [float(v) for v in tcp_verified[:6]]
 
-    def compute_and_apply_wobj(self, wobj_id: int = 1) -> list[float]:
+    def compute_and_apply_wobj(self, wobj_id: int = 1, method: int = 1, ref_frame: int = 0) -> list[float]:
         with self._lock:
             robot = self._client()
-        compute_resp = self._run_with_timeout(lambda: robot.ComputeWObjCoord(wobj_id, 0))
+        method = int(method)
+        if method not in (0, 1):
+            raise ValueError("WObj compute method must be 0 (origin-x-z) or 1 (origin-x-xy).")
+        ref_frame = int(ref_frame)
+        compute_resp = self._run_with_timeout(lambda: robot.ComputeWObjCoord(method, ref_frame))
         error_code, coord = self._split_error_value(compute_resp)
         if error_code != 0 or not isinstance(coord, list) or len(coord) < 6:
             raise RuntimeError(f"ComputeWObjCoord failed with error code {error_code}.")
         coord_floats = [float(v) for v in coord[:6]]
-        set_resp = self._run_with_timeout(lambda: robot.SetWObjCoord(wobj_id, coord_floats, 0))
+        set_resp = self._run_with_timeout(lambda: robot.SetWObjCoord(wobj_id, coord_floats, ref_frame))
         error_code2, _ = self._split_error_value(set_resp)
         if error_code2 != 0:
             raise RuntimeError(f"SetWObjCoord failed with error code {error_code2}.")
-        list_resp = self._run_with_timeout(lambda: robot.SetWObjList(wobj_id, coord_floats, 0))
+        list_resp = self._run_with_timeout(lambda: robot.SetWObjList(wobj_id, coord_floats, ref_frame))
         error_code3, _ = self._split_error_value(list_resp)
         if error_code3 != 0:
             raise RuntimeError(f"SetWObjList failed with error code {error_code3}.")
-        return coord_floats
+        verify_resp = self._run_with_timeout(lambda: robot.GetWObjOffset(0))
+        error_code4, wobj_verified = self._split_error_value(verify_resp)
+        if error_code4 != 0 or not isinstance(wobj_verified, list) or len(wobj_verified) < 6:
+            raise RuntimeError(f"GetWObjOffset verification failed (code {error_code4}).")
+        return [float(v) for v in wobj_verified[:6]]
 
     def status(self) -> dict[str, Any]:
         with self._lock:

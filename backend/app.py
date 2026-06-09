@@ -187,7 +187,11 @@ def create_app() -> Flask:
     robot_ip = os.getenv("WELDFLEX_ROBOT_IP", "192.168.58.2")
     controller_host = os.getenv("WELDFLEX_CONTROLLER_HOST", robot_ip)
     default_program_path = os.getenv("WELDFLEX_PROGRAM_PATH", "/fruser/studCycle.lua")
-    studs_data_path = os.getenv("WELDFLEX_STUDS_DATA_PATH", "/fruser/studs_data.lua")
+    studs_data_path = os.getenv("WELDFLEX_STUDS_DATA_PATH", "/fruser/studs_data.lua").strip()
+    if studs_data_path != "/fruser/studs_data.lua":
+        raise ValueError(
+            "WELDFLEX_STUDS_DATA_PATH must be '/fruser/studs_data.lua' to match studCycle.lua include path."
+        )
     status_interval_ms = int(os.getenv("WELDFLEX_STATUS_INTERVAL_MS", "1000"))
 
     runtime_settings: dict[str, Any] = {
@@ -710,7 +714,7 @@ def create_app() -> Flask:
                 collision_sensitivity = max(1, min(5, int(request.form.get("collision_sensitivity", str(get_collision_sensitivity())))))
             except (TypeError, ValueError):
                 collision_sensitivity = 3
-            coord = robot_service.compute_and_apply_wobj(wobj_id=1)
+            coord = robot_service.compute_and_apply_wobj(wobj_id=1, method=1)
             config = read_machine_config()
             config["clearance_z_mm"] = clearance_z_mm
             config["collision_sensitivity"] = collision_sensitivity
@@ -790,10 +794,16 @@ def create_app() -> Flask:
             point = int(request.form.get("point", "0"))
             if point not in (1, 2, 3, 4):
                 raise ValueError(f"Invalid point number: {point}")
+            if _tcp_calib_state["drag_point"] is not None:
+                try:
+                    robot_service.disable_drag()
+                except Exception:
+                    pass
             robot_service.enable_drag()
             _tcp_calib_state["drag_point"] = point
             return _tcp_calib_render()
         except Exception as exc:
+            _tcp_calib_state["drag_point"] = None
             return _tcp_calib_render(drag_error=str(exc))
 
     @app.post("/ui/tcp-calibrate/record-point")
@@ -1349,6 +1359,8 @@ def create_app() -> Flask:
                 raise ValueError("Program path is required.")
             if not new_studs_data_path:
                 raise ValueError("Studs data path is required.")
+            if new_studs_data_path != "/fruser/studs_data.lua":
+                raise ValueError("Studs data path must be '/fruser/studs_data.lua' to match studCycle.lua.")
 
             try:
                 new_interval = int(new_interval_raw)

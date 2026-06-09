@@ -1310,6 +1310,28 @@ def create_app() -> Flask:
 
         return render_template("partials/diagnostics_readout.html", snapshot=snapshot, ok=True, status=status, uptime=uptime)
 
+    @app.post("/ui/diagnostics/reset-errors")
+    def ui_diagnostics_reset_errors() -> Any:
+        try:
+            result = robot_service.reset_all_errors()
+            return render_template("partials/command_result.html", ok=True, title="Reset Errors", payload=result)
+        except Exception as exc:
+            return (
+                render_template("partials/command_result.html", ok=False, title="Reset Errors", payload={"error": str(exc)}),
+                500,
+            )
+
+    @app.post("/ui/diagnostics/reconnect")
+    def ui_diagnostics_reconnect() -> Any:
+        try:
+            result = robot_service.reconnect()
+            return render_template("partials/command_result.html", ok=True, title="Reconnect", payload=result)
+        except Exception as exc:
+            return (
+                render_template("partials/command_result.html", ok=False, title="Reconnect", payload={"error": str(exc)}),
+                500,
+            )
+
     @app.post("/ui/settings/save")
     def ui_settings_save() -> Any:
         try:

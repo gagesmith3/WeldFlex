@@ -1,16 +1,15 @@
 {% from "components/ui.html" import action_button, metric_card with context %}
-<div class="hero-controls hero-controls-top">
-  {% if summary.start_button_label == 'Run' %}
-    {{ action_button('Run', variant='run', icon='play', loading_icon='loader_2', hx_post='/ui/home/run-next', hx_target='#toast-rack', hx_sync='#home-current-run:replace', hx_on_click='this.disabled=true;this.classList.add("is-running")', hx_on_after_request='if(event.detail.failed){this.disabled=false;this.classList.remove("is-running")}', class_name='is-running' if summary.cycle_running else '', disabled=not summary.can_run_next) }}
-  {% else %}
-    {{ action_button('Start From Library', variant='run', icon='play', href='/operator/part-library') }}
-  {% endif %}
-  {{ action_button('Pause', variant='pause', icon='pause', hx_post='/ui/pause', hx_target='#toast-rack', disabled=not summary.can_pause) }}
-  {{ action_button('Stop', variant='stop', icon='square', hx_post='/ui/stop', hx_target='#toast-rack', disabled=not summary.can_stop) }}
-</div>
-
 <div class="hero-metrics hero-metrics-stacked">
-  {{ metric_card('Current Part', summary.current_part, 'clipboard') }}
+  <div class="metric-card">
+    <div class="metric-icon">{{ icon_safe('clipboard', fallback='circle', width=14, height=14) }}</div>
+    <span class="metric-label">Current Part</span>
+    <strong class="metric-value">{{ summary.current_part }}</strong>
+    {% if summary.start_button_label != 'Run' %}
+      <div class="metric-card-action">
+        {{ action_button('Start From Library', variant='run', icon='play', href='/operator/parts', class_name='start-from-library-btn') }}
+      </div>
+    {% endif %}
+  </div>
   <div class="metric-card">
     <div class="metric-icon">{{ icon_safe('activity', fallback='circle', width=14, height=14) }}</div>
     <span class="metric-label">Progress</span>
@@ -19,8 +18,12 @@
   </div>
 </div>
 
-<div class="hero-controls">
-  {{ action_button('Go ZeroZero', variant='run', icon='crosshair', hx_post='/ui/home/goto-zerozero', hx_target='#toast-rack', disabled=summary.cycle_running) }}
+<div class="hero-main-controls">
+  {{ action_button('Run', variant='run', icon='play', loading_icon='loader_2', hx_post='/ui/home/run-next', hx_target='#toast-rack', hx_sync='#home-current-run:replace', hx_on_click='this.disabled=true;this.classList.add("is-running")', hx_on_after_request='if(event.detail.failed){this.disabled=false;this.classList.remove("is-running")}', class_name='is-running' if summary.cycle_running else '', disabled=not summary.can_run_next) }}
+  {{ action_button('Pause', variant='pause', icon='pause', hx_post='/ui/pause', hx_target='#toast-rack', disabled=not summary.can_pause) }}
+  {{ action_button('Stop', variant='stop', icon='square', hx_post='/ui/stop', hx_target='#toast-rack', disabled=not summary.can_stop) }}
 </div>
+
+
 
 

@@ -1,30 +1,96 @@
 <div class="diagnostics-grid">
 
   {# ── Connection health banner ── #}
-  <div class="diag-health {% if ok and snapshot.online %}diag-health-ok{% else %}diag-health-error{% endif %}">
+  {% set is_online = ok and snapshot.online %}
+  <div class="diag-health {% if is_online %}diag-health-ok{% else %}diag-health-error{% endif %}">
     <div class="diag-health-dot"></div>
     <div class="diag-health-body">
-      <strong>{% if ok and snapshot.online %}Online{% elif ok %}Offline{% else %}Unreachable{% endif %}</strong>
+      <strong>{% if is_online %}Online{% elif ok %}Offline{% else %}Unreachable{% endif %}</strong>
       <span>{{ snapshot.robot_ip }}</span>
     </div>
+    {% if ok %}
+    <div class="diag-health-right">
+      {% set state_ok = status.program_state not in ('unknown',) and status.connected %}
+      <span class="diag-code-num diag-health-state {% if state_ok %}diag-code-num-ok{% else %}diag-code-num-error{% endif %}">
+        {{ status.program_state }}
+      </span>
+      {% if status.current_line is not none and status.current_line != 'unknown' %}
+      <span class="diag-health-line">line {{ status.current_line }}</span>
+      {% endif %}
+    </div>
+    {% endif %}
   </div>
 
-  {# ── Runtime stats ── #}
+  {# ── SDK call health grid ── #}
+  {% if ok %}
+  {% set fc = status.fault_codes %}
+  <div class="diag-calls">
+
+    <div class="diag-call {% if status.program_state_error == 0 %}diag-call-ok{% else %}diag-call-error{% endif %}">
+      <div class="diag-call-name">Program State</div>
+      <div class="diag-call-code">
+        <span class="diag-code-num {% if status.program_state_error == 0 %}diag-code-num-ok{% else %}diag-code-num-error{% endif %}">{{ status.program_state_error }}</span>
+        <span class="diag-code-label">{{ status.program_state }}</span>
+      </div>
+    </div>
+
+    <div class="diag-call {% if status.current_line_error == 0 %}diag-call-ok{% else %}diag-call-error{% endif %}">
+      <div class="diag-call-name">Current Line</div>
+      <div class="diag-call-code">
+        <span class="diag-code-num {% if status.current_line_error == 0 %}diag-code-num-ok{% else %}diag-code-num-error{% endif %}">{{ status.current_line_error }}</span>
+        <span class="diag-code-label">{{ status.current_line }}</span>
+      </div>
+    </div>
+
+    <div class="diag-call {% if fc.robot_error_error == 0 and (fc.main_code == 0 or fc.main_code is none) %}diag-call-ok{% else %}diag-call-error{% endif %}">
+      <div class="diag-call-name">Robot Fault</div>
+      <div class="diag-call-code">
+        <span class="diag-code-num {% if fc.robot_error_error == 0 and (fc.main_code == 0 or fc.main_code is none) %}diag-code-num-ok{% else %}diag-code-num-error{% endif %}">{{ fc.main_code if fc.main_code is not none else '—' }}</span>
+        <span class="diag-code-label">sub: {{ fc.sub_code if fc.sub_code is not none else '—' }}</span>
+      </div>
+    </div>
+
+    <div class="diag-call {% if fc.safety_error == 0 and (fc.safety_code == 0 or fc.safety_code is none) %}diag-call-ok{% else %}diag-call-error{% endif %}">
+      <div class="diag-call-name">Safety Code</div>
+      <div class="diag-call-code">
+        <span class="diag-code-num {% if fc.safety_error == 0 and (fc.safety_code == 0 or fc.safety_code is none) %}diag-code-num-ok{% else %}diag-code-num-error{% endif %}">{{ fc.safety_code if fc.safety_code is not none else '—' }}</span>
+        <span class="diag-code-label">err: {{ fc.safety_error }}</span>
+      </div>
+    </div>
+
+  </div>
+
+  {# ── Active fault detail banner ── #}
+  {% if fc.main_code is not none and fc.main_code != 0 %}
+  <div class="diag-error-detail">
+    <strong>Robot Fault Active</strong> — main: {{ fc.main_code }}, sub: {{ fc.sub_code }}
+    {% if fc.safety_code is not none and fc.safety_code != 0 %} | safety: {{ fc.safety_code }}{% endif %}
+    <div class="diag-fault-hint">Use "Reset Errors" below to clear, or fix the underlying condition first.</div>
+  </div>
+  {% elif fc.safety_code is not none and fc.safety_code != 0 %}
+  <div class="diag-error-detail">
+    <strong>Safety Fault Active</strong> — code: {{ fc.safety_code }}
+    <div class="diag-fault-hint">Use "Reset Errors" below to clear after resolving the safety condition.</div>
+  </div>
+  {% endif %}
+  {% endif %}
+
+  {# ── Runtime / connection meta ── #}
   <div class="diag-meta">
     <div class="diag-meta-section">
       <div class="diag-meta-title">Runtime</div>
       <div class="row"><span>Uptime</span><strong>{{ uptime }}</strong></div>
     </div>
-    {% if ok %}
-    <div class="diag-meta-section">
-      <div class="diag-meta-title">Robot</div>
-      <div class="row"><span>Jobs Ran</span><strong>N/A</strong></div>
-      <div class="row"><span>Parts Completed</span><strong>N/A</strong></div>
+    <div class="diag-meta-section diag-meta-section-overflow">
+      <div class="diag-meta-title">Connection</div>
+      <div class="row"><span>IP</span><strong>{{ snapshot.robot_ip }}</strong></div>
+      <div class="row"><span>Controller</span><strong>{{ snapshot.controller_host }}</strong></div>
+      <div class="row"><span>Program</span><strong class="diag-path-value">{{ snapshot.program_path }}</strong></div>
     </div>
-    {% endif %}
   </div>
 
-  {% set error_msg = snapshot.error if snapshot.error else (status.error if not ok else none) %}
+  {# ── OOB error slot (connection/snapshot errors) ── #}
+  {% set error_msg = snapshot.error if snapshot.error else (status.error if (not ok and status.error is defined) else none) %}
   <div id="diagnostics-error" hx-swap-oob="innerHTML">
     {% if error_msg %}<span class="diag-error-detail">{{ error_msg }}</span>{% endif %}
   </div>

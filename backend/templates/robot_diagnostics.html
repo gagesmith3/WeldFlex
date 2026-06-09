@@ -8,7 +8,19 @@
       {{ htmx_mount('diagnostics-readout', '/ui/diagnostics', 'load, every ' ~ (status_interval_ms or 1000) ~ 'ms', 'innerHTML') }}
     {% endcall %}
 
-    {% call panel_shell('Error', 'Last connection or communication error.', class_name='settings-shell') %}
+    {% call panel_shell('Actions', 'Reset robot errors, force reconnect, or stop an active program.', class_name='settings-shell') %}
+      <div class="btn-row">
+        {{ action_button('Reset Errors', variant='recipe-delete', icon='shield-alert',
+            hx_post='/ui/diagnostics/reset-errors', hx_target='#diag-action-result', hx_swap='innerHTML') }}
+        {{ action_button('Reconnect', variant='run', icon='refresh-cw',
+            hx_post='/ui/diagnostics/reconnect', hx_target='#diag-action-result', hx_swap='innerHTML') }}
+        {{ action_button('Stop Program', variant='stop', icon='square',
+            hx_post='/ui/stop', hx_target='#diag-action-result', hx_swap='innerHTML') }}
+      </div>
+      <div id="diag-action-result" class="command-result"></div>
+    {% endcall %}
+
+    {% call panel_shell('Connection Error', 'Last connection or communication error.', class_name='settings-shell') %}
       <div id="diagnostics-error"></div>
     {% endcall %}
 

@@ -382,6 +382,18 @@ studs = {{
         stop_result = self._run_with_timeout(lambda: robot.ProgramStop())
         return {"stop_result": stop_result}
 
+    def reset_all_errors(self) -> dict[str, Any]:
+        with self._lock:
+            robot = self._client()
+        result = self._run_with_timeout(lambda: robot.ResetAllError())
+        return {"reset_result": result}
+
+    def reconnect(self) -> dict[str, Any]:
+        with self._lock:
+            self._robot = None
+            robot = self._client()
+        return {"reconnected": True, "robot_ip": self.robot_ip}
+
     def get_tcp_pose(self) -> list[float]:
         with self._lock:
             robot = self._client()
@@ -517,12 +529,20 @@ studs = {{
         tcp_floats = [float(v) for v in tcp_offset[:6]]
         with self._lock:
             robot = self._client()
-        set_resp = self._run_with_timeout(
+        # SetToolCoord activates the coordinate slot immediately (RAM); SetToolList persists it.
+        # Both are required — pattern from FAIRINO SDK example (TestSetCommand.py).
+        coord_resp = self._run_with_timeout(
+            lambda: robot.SetToolCoord(tool_id, tcp_floats, 0, 0, 0, 0)
+        )
+        error_code2, _ = self._split_error_value(coord_resp)
+        if error_code2 != 0:
+            raise RuntimeError(f"SetToolCoord failed (code {error_code2}).")
+        list_resp = self._run_with_timeout(
             lambda: robot.SetToolList(tool_id, tcp_floats, 0, 0, 0)
         )
-        error_code2, _ = self._split_error_value(set_resp)
-        if error_code2 != 0:
-            raise RuntimeError(f"SetToolList failed (code {error_code2}).")
+        error_code3, _ = self._split_error_value(list_resp)
+        if error_code3 != 0:
+            raise RuntimeError(f"SetToolList failed (code {error_code3}).")
         return tcp_floats
 
     def compute_and_apply_wobj(self, wobj_id: int = 1) -> list[float]:
@@ -537,7 +557,10 @@ studs = {{
         error_code2, _ = self._split_error_value(set_resp)
         if error_code2 != 0:
             raise RuntimeError(f"SetWObjCoord failed with error code {error_code2}.")
-        self._run_with_timeout(lambda: robot.SetWObjList(wobj_id, coord_floats, 0))
+        list_resp = self._run_with_timeout(lambda: robot.SetWObjList(wobj_id, coord_floats, 0))
+        error_code3, _ = self._split_error_value(list_resp)
+        if error_code3 != 0:
+            raise RuntimeError(f"SetWObjList failed with error code {error_code3}.")
         return coord_floats
 
     def status(self) -> dict[str, Any]:

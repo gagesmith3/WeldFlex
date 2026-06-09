@@ -249,12 +249,9 @@ class WeldFlexRobotService:
                     self.upload_lua(content, f"/fruser/{script_name}")
                     self._static_script_hashes[script_name] = content_hash
                 except Exception as exc:
-                    # LuaUpload always rejects studCycle.lua at upload-time because the robot's
-                    # validator looks up PTP waypoint names in its database and zerozeroWF is a
-                    # Lua variable, not a registered point. FTP is the real upload path; if it
-                    # also failed (robot in bad state), log the warning and continue — the file
-                    # is typically already on the robot from a prior session. ProgramLoad will
-                    # give a clear error if it really isn't there.
+                    # Upload failed (SDK rejected or FTP timed out). Log and continue — the
+                    # file may already be current on the robot from a prior session. ProgramLoad
+                    # will give a clear error if it really isn't there.
                     self._last_upload_events.append({
                         "remote_file": f"/fruser/{script_name}",
                         "transport": "failed",
@@ -316,8 +313,38 @@ class WeldFlexRobotService:
                 raise RuntimeError(f"GetForwardKin failed: code={fk_error}, result={fk_result!r}")
             zerozero_tcp = [float(v) for v in fk_result[:6]]
 
+            studs_with_joints: list[dict[str, Any]] = []
+            for index, stud in enumerate(studs, start=1):
+                target_desc = [
+                    zerozero_tcp[0] + float(stud["x"]),
+                    zerozero_tcp[1] + float(stud["y"]),
+                    zerozero_tcp[2] + float(clearance_z_mm),
+                    zerozero_tcp[3],
+                    zerozero_tcp[4],
+                    zerozero_tcp[5],
+                ]
+                ik_error, ik_joints = self._split_error_value(
+                    robot.GetInverseKin(type=0, desc_pos=target_desc, config=-1)
+                )
+                if ik_error != 0 or not isinstance(ik_joints, (list, tuple)) or len(ik_joints) != 6:
+                    raise RuntimeError(
+                        "GetInverseKin failed for stud target "
+                        f"#{index} ({stud['x']}, {stud['y']}). code={ik_error}, "
+                        f"target={target_desc!r}, result={ik_joints!r}"
+                    )
+                studs_with_joints.append(
+                    {
+                        "x": float(stud["x"]),
+                        "y": float(stud["y"]),
+                        "joints": [float(v) for v in ik_joints],
+                    }
+                )
+
             studs_data_lua = build_studs_data_lua(
-                studs, clearance_z_mm, zerozero_joints=joints, zerozero_tcp=zerozero_tcp
+                studs_with_joints,
+                clearance_z_mm,
+                zerozero_joints=joints,
+                zerozero_tcp=zerozero_tcp,
             )
             self.upload_lua(studs_data_lua, self.studs_data_path)
             # Non-fatal: keep static Lua scripts current on the robot.
@@ -437,6 +464,7 @@ studs = {{
             zerozero_tcp = [float(v) for v in fk_result[:6]]
             studs_data_lua = self._build_empty_studs_data_lua(clearance_z_mm, joints, zerozero_tcp)
             self.upload_lua(studs_data_lua, self.studs_data_path)
+            self._upload_static_lua_scripts()
             try:
                 load_result = robot.ProgramLoad(program_name=program_path)
             except TypeError:

@@ -3,7 +3,6 @@
 -- Dynamic stud coordinates and clearance height are loaded from /fruser/studs_data.lua.
 
 studs = studs or {}
-clearance_z_mm = clearance_z_mm or 50.0
 
 NewDofile("/fruser/studs_data.lua",1,1)
 DofileEnd()
@@ -12,22 +11,17 @@ if studs == nil then
     studs = {}
 end
 
--- Move to work origin at clearance height before cycling
-PointsOffsetEnable(0, 0, 0, clearance_z_mm, 0, 0, 0)
-Lin(zerozeroWF, 50, -1, 0)
-PointsOffsetDisable()
+-- Move to work origin before cycling
+PTP(zerozeroJoints, 50, -1, 0)
 
 for _, stud in ipairs(studs) do
-    -- Travel to stud XY at clearance height
-    PointsOffsetEnable(0, stud.x, stud.y, clearance_z_mm, 0, 0, 0)
-    Lin(zerozeroWF, 50, -1, 0)
-    -- Weld cycle runs with offset active: weld.lua descends to surface and retracts
+    if stud.joints ~= nil then
+        PTP(stud.joints, 50, -1, 0)
+    end
+    -- Weld cycle runs at stud target
     --NewDofile("/fruser/weld.lua",1,1)
     --DofileEnd()
-    PointsOffsetDisable()
 end
 
--- Return to work origin at clearance height
-PointsOffsetEnable(0, 0, 0, clearance_z_mm, 0, 0, 0)
-Lin(zerozeroWF, 50, -1, 0)
-PointsOffsetDisable()
+-- Return to work origin
+PTP(zerozeroJoints, 50, -1, 0)

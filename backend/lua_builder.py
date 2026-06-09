@@ -63,9 +63,22 @@ def build_studs_data_lua(
     tcp = validate_zerozero_tcp(zerozero_tcp)
     if not math.isfinite(clearance_z_mm) or clearance_z_mm < 5.0 or clearance_z_mm > MAX_CLEARANCE_MM:
         raise ValueError(f"clearance_z_mm must be between 5 and {int(MAX_CLEARANCE_MM)} mm.")
-    studs_lua = ",\n".join(
-        f"    {{x={_format_number(stud['x'])}, y={_format_number(stud['y'])}}}" for stud in studs
-    )
+    stud_rows: list[str] = []
+    for i, stud in enumerate(studs, start=1):
+        row = f"    {{x={_format_number(stud['x'])}, y={_format_number(stud['y'])}"
+        joints_value = stud.get("joints")
+        if joints_value is not None:
+            if not isinstance(joints_value, Sequence) or len(joints_value) != 6:
+                raise ValueError(f"Stud {i}: joints must contain exactly 6 values.")
+            parsed_joints = [float(value) for value in joints_value]
+            if any(not math.isfinite(value) for value in parsed_joints):
+                raise ValueError(f"Stud {i}: joints must be finite numbers.")
+            joints_lua = ", ".join(_format_number(value) for value in parsed_joints)
+            row += f", joints={{{joints_lua}}}"
+        row += "}"
+        stud_rows.append(row)
+
+    studs_lua = ",\n".join(stud_rows)
     joints_lua = ", ".join(_format_number(v) for v in joints)
     tcp_lua = ", ".join(_format_number(v) for v in tcp)
 

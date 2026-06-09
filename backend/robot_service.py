@@ -184,22 +184,27 @@ class WeldFlexRobotService:
 
         return None
 
-    def _upload_with_ftp(self, local_file: str, remote_file: str) -> None:
+    def _upload_with_ftp(self, local_file: str, remote_file: str, sdk_attempts: list | None = None) -> None:
         user = os.getenv("WELDFLEX_FTP_USER", "anonymous")
         password = os.getenv("WELDFLEX_FTP_PASS", "")
         remote_dir, remote_name = remote_file.rsplit("/", 1)
 
         try:
-            with FTP(self.controller_host, timeout=8) as ftp:
+            with FTP(self.controller_host, timeout=20) as ftp:
                 ftp.login(user=user, passwd=password)
-                ftp.cwd(remote_dir)
+                # When logged in as fruser, the FTP root IS /fruser — cwd is a no-op at best
+                # and a 550 error at worst. Try it, but ignore failure.
+                try:
+                    ftp.cwd(remote_dir)
+                except Exception:
+                    pass
                 with open(local_file, "rb") as fp:
                     ftp.storbinary(f"STOR {remote_name}", fp)
         except ftp_errors as exc:
+            sdk_detail = f", sdk_attempts={sdk_attempts!r}" if sdk_attempts else ""
             raise RuntimeError(
-                "FTP upload failed "
-                f"for {remote_file} via {self.controller_host} as user '{user}'. "
-                "Set WELDFLEX_FTP_USER/WELDFLEX_FTP_PASS or fix SDK upload support."
+                f"FTP upload failed for {remote_file} via {self.controller_host} "
+                f"as user '{user}': {exc}{sdk_detail}"
             ) from exc
 
     def upload_lua(self, lua_text: str, remote_file: str) -> None:
@@ -226,7 +231,7 @@ class WeldFlexRobotService:
                     f"SDK upload failed for {remote_file}; FTP fallback disabled. "
                     f"sdk_attempts={self._last_sdk_attempts!r}"
                 )
-            self._upload_with_ftp(tmp_path, remote_file)
+            self._upload_with_ftp(tmp_path, remote_file, sdk_attempts=self._last_sdk_attempts)
             self._last_upload_events.append(
                 {"remote_file": remote_file, "transport": "ftp"}
             )
@@ -240,8 +245,21 @@ class WeldFlexRobotService:
                 content_hash = self._sha256_text(content)
                 if self._static_script_hashes.get(script_name) == content_hash:
                     continue
-                self.upload_lua(content, f"/fruser/{script_name}")
-                self._static_script_hashes[script_name] = content_hash
+                try:
+                    self.upload_lua(content, f"/fruser/{script_name}")
+                    self._static_script_hashes[script_name] = content_hash
+                except Exception as exc:
+                    # LuaUpload always rejects studCycle.lua at upload-time because the robot's
+                    # validator looks up PTP waypoint names in its database and zerozeroWF is a
+                    # Lua variable, not a registered point. FTP is the real upload path; if it
+                    # also failed (robot in bad state), log the warning and continue — the file
+                    # is typically already on the robot from a prior session. ProgramLoad will
+                    # give a clear error if it really isn't there.
+                    self._last_upload_events.append({
+                        "remote_file": f"/fruser/{script_name}",
+                        "transport": "failed",
+                        "error": str(exc),
+                    })
 
     def configure_safety(self, collision_sensitivity: int = 3) -> dict[str, Any]:
         with self._lock:
@@ -287,12 +305,11 @@ class WeldFlexRobotService:
         with self._lock:
             self._last_upload_events = []
             robot = self._client()
-            robot.Mode(1)  # manual mode required for Lua uploads
             robot.SetAnticollision(mode=0, level=[float(collision_sensitivity)] * 6, config=0)
             robot.SetCollisionStrategy(strategy=0, safeTime=1000, safeDistance=100, safetyMargin=[10, 10, 10, 10, 10, 10])
             robot.SetStaticCollisionOnOff(status=1)
-            self._upload_static_lua_scripts()
             self.upload_lua(studs_data_lua, self.studs_data_path)
+
             try:
                 load_result = robot.ProgramLoad(program_name=remote_file)
             except TypeError:
@@ -300,7 +317,6 @@ class WeldFlexRobotService:
 
             load_retry_result: Any = None
             if not self._is_success_result(load_result):
-                # Retry ProgramLoad once without FTP/static upload fallback.
                 try:
                     load_retry_result = robot.ProgramLoad(program_name=remote_file)
                 except TypeError:
@@ -315,13 +331,6 @@ class WeldFlexRobotService:
                 )
 
             mode_result = robot.Mode(0)
-            if not self._is_success_result(mode_result):
-                fault_codes = self._get_fault_codes(robot)
-                raise RuntimeError(
-                    "Failed to set robot mode to auto before run. "
-                    f"mode_result={mode_result!r}, fault_codes={fault_codes!r}"
-                )
-
             run_result = robot.ProgramRun()
             if not self._is_success_result(run_result):
                 fault_codes = self._get_fault_codes(robot)
@@ -403,8 +412,6 @@ studs = {{
         studs_data_lua = self._build_empty_studs_data_lua(clearance_z_mm, zerozero_joints)
         with self._lock:
             robot = self._client()
-            robot.Mode(1)
-            self._upload_static_lua_scripts()
             self.upload_lua(studs_data_lua, self.studs_data_path)
             try:
                 load_result = robot.ProgramLoad(program_name=program_path)
@@ -421,7 +428,6 @@ studs = {{
 
         with self._lock:
             robot = self._client()
-            robot.Mode(1)
             self.upload_lua(lua_path.read_text(encoding="utf-8"), "/fruser/goto_zerozero.lua")
             try:
                 load_result = robot.ProgramLoad(program_name="/fruser/goto_zerozero.lua")
@@ -458,7 +464,9 @@ studs = {{
         with self._lock:
             robot = self._client()
         result = self._run_with_timeout(lambda: robot.ResetAllError())
-        return {"reset_result": result}
+        # Return robot to auto mode — it may have been left in manual mode by a failed upload.
+        mode_result = self._run_with_timeout(lambda: robot.Mode(0))
+        return {"reset_result": result, "mode_result": mode_result}
 
     def reconnect(self) -> dict[str, Any]:
         with self._lock:

@@ -119,7 +119,34 @@ class WeldFlexRobotService:
     def _client(self) -> Any:
         if self._robot is None:
             self._robot = Robot.RPC(self.robot_ip)
+            self._repair_sdk_connect_gate(self._robot)
         return self._robot
+
+    def _repair_sdk_connect_gate(self, robot: Any) -> None:
+        """Best-effort compatibility fix for SDK builds that gate XML-RPC on CNDE state.
+
+        Some SDK versions leave RPC.is_connect=False unless both CNDE and XML-RPC
+        initialize cleanly. WeldFlex relies on XML-RPC control paths, so if XML-RPC
+        is actually reachable we flip the gate to prevent false offline (-4) results.
+        """
+        rpc_cls = getattr(Robot, "RPC", None)
+        if rpc_cls is None:
+            return
+
+        if getattr(rpc_cls, "is_connect", True) is not False:
+            return
+
+        proxy = getattr(robot, "robot", None)
+        if proxy is None:
+            return
+
+        try:
+            probe = proxy.GetControllerIP()
+        except Exception:
+            return
+
+        if self._is_success_result(probe):
+            setattr(rpc_cls, "is_connect", True)
 
     def _upload_with_sdk(self, local_file: str, remote_file: str) -> str | None:
         robot = self._client()

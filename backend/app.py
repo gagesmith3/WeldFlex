@@ -1152,7 +1152,7 @@ def create_app() -> Flask:
     @app.post("/ui/home/goto-zerozero")
     def ui_home_goto_zerozero() -> Any:
         try:
-            robot_service.goto_zerozero()
+            robot_service.goto_zerozero(zerozero_joints=get_zerozero_joint_positions())
             stamp_command_state("ZeroZero", "ok", "P2P to calibrated zerozero sent")
             return render_template(
                 "partials/command_result.html",

@@ -3,7 +3,7 @@
 
 
 -- goto_zerozero.lua
--- Minimal helper: one P2P move to calibrated zerozero.
+-- Minimal helper: joint-space PTP to calibrated zerozero position.
 NewDofile("/fruser/studs_data.lua",1,1)
 DofileEnd()
-PTP(zerozeroWF, 50, -1, 0)
+PTP(zerozeroJoints, 50, -1, 0)

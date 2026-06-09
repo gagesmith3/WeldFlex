@@ -13,14 +13,14 @@ if studs == nil then
 end
 
 -- Move to work origin at clearance height before cycling
-PointsOffsetEnable(1, 0, 0, clearance_z_mm, 0, 0, 0)
-PTP(zerozeroWF, 50, -1, 0)
+PointsOffsetEnable(0, 0, 0, clearance_z_mm, 0, 0, 0)
+Lin(zerozeroWF, 50, -1, 0)
 PointsOffsetDisable()
 
 for _, stud in ipairs(studs) do
     -- Travel to stud XY at clearance height
-    PointsOffsetEnable(1, stud.x, stud.y, clearance_z_mm, 0, 0, 0)
-    PTP(zerozeroWF, 50, -1, 0)
+    PointsOffsetEnable(0, stud.x, stud.y, clearance_z_mm, 0, 0, 0)
+    Lin(zerozeroWF, 50, -1, 0)
     -- Weld cycle runs with offset active: weld.lua descends to surface and retracts
     --NewDofile("/fruser/weld.lua",1,1)
     --DofileEnd()
@@ -28,6 +28,6 @@ for _, stud in ipairs(studs) do
 end
 
 -- Return to work origin at clearance height
-PointsOffsetEnable(1, 0, 0, clearance_z_mm, 0, 0, 0)
-PTP(zerozeroWF, 50, -1, 0)
+PointsOffsetEnable(0, 0, 0, clearance_z_mm, 0, 0, 0)
+Lin(zerozeroWF, 50, -1, 0)
 PointsOffsetDisable()

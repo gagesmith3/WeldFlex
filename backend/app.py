@@ -217,7 +217,11 @@ def create_app() -> Flask:
     machine_config_file = recipes_dir / "machine_config.json"
     machine_config_lock = threading.Lock()
 
-    _machine_config_defaults: dict[str, Any] = {"clearance_z_mm": 50.0, "collision_sensitivity": 3}
+    _machine_config_defaults: dict[str, Any] = {
+        "clearance_z_mm": 50.0,
+        "collision_sensitivity": 3,
+        "zerozero_joint_positions": None,
+    }
 
     def read_machine_config() -> dict[str, Any]:
         with machine_config_lock:
@@ -249,6 +253,18 @@ def create_app() -> Flask:
             return max(1, min(5, int(config.get("collision_sensitivity", 3))))
         except (TypeError, ValueError):
             return 3
+
+    def get_zerozero_joint_positions() -> list[float] | None:
+        config = read_machine_config()
+        raw = config.get("zerozero_joint_positions")
+        if raw is None:
+            return None
+        if not isinstance(raw, list) or len(raw) != 6:
+            return None
+        try:
+            return [float(value) for value in raw]
+        except (TypeError, ValueError):
+            return None
 
     def parse_studs_text(studs_text: str) -> list[dict[str, float]]:
         studs: list[dict[str, float]] = []
@@ -496,14 +512,92 @@ def create_app() -> Flask:
         return snapshot
 
     def current_run_summary() -> dict[str, Any]:
+        def _fault_snapshot(status_payload: dict[str, Any]) -> dict[str, Any]:
+            fault_codes = status_payload.get("fault_codes") if isinstance(status_payload, dict) else {}
+            if not isinstance(fault_codes, dict):
+                fault_codes = {}
+            main_code = fault_codes.get("main_code")
+            sub_code = fault_codes.get("sub_code")
+            safety_code = fault_codes.get("safety_code")
+            return {
+                "main_code": main_code,
+                "sub_code": sub_code,
+                "safety_code": safety_code,
+                "robot_error_error": fault_codes.get("robot_error_error"),
+                "robot_error_response": fault_codes.get("robot_error_response"),
+                "safety_error": fault_codes.get("safety_error"),
+                "safety_response": fault_codes.get("safety_response"),
+            }
+
+        def _format_fault_brief(fault_snapshot: dict[str, Any]) -> str:
+            main_code = fault_snapshot.get("main_code")
+            sub_code = fault_snapshot.get("sub_code")
+            safety_code = fault_snapshot.get("safety_code")
+            parts: list[str] = []
+            if main_code not in (None, 0):
+                parts.append(f"main={main_code}")
+                if sub_code is not None:
+                    parts.append(f"sub={sub_code}")
+            if safety_code not in (None, 0):
+                parts.append(f"safety={safety_code}")
+            return ", ".join(parts)
+
         try:
             status = robot_service.status()
             program_state = status.get("program_state", "unknown")
+            program_state_raw = status.get("program_state_raw")
             current_line = status.get("current_line", "-")
+            connected = bool(status.get("connected", False))
+            fault_snapshot = _fault_snapshot(status)
         except Exception:
             program_state = "unknown"
+            program_state_raw = None
             current_line = "-"
-        return run_state_manager.current_summary(program_state, current_line)
+            connected = None
+            fault_snapshot = {
+                "main_code": None,
+                "sub_code": None,
+                "safety_code": None,
+                "robot_error_error": None,
+                "robot_error_response": None,
+                "safety_error": None,
+                "safety_response": None,
+            }
+
+        summary = run_state_manager.current_summary(program_state, current_line, connected)
+        summary["program_state_raw"] = program_state_raw
+        summary["status_connected"] = connected
+        summary["fault_main_code"] = fault_snapshot.get("main_code")
+        summary["fault_sub_code"] = fault_snapshot.get("sub_code")
+        summary["fault_safety_code"] = fault_snapshot.get("safety_code")
+        summary["fault_robot_error_error"] = fault_snapshot.get("robot_error_error")
+        summary["fault_robot_error_response"] = fault_snapshot.get("robot_error_response")
+        summary["fault_safety_error"] = fault_snapshot.get("safety_error")
+        summary["fault_safety_response"] = fault_snapshot.get("safety_response")
+
+        fault_brief = _format_fault_brief(fault_snapshot)
+        summary["fault_brief"] = fault_brief
+        if (
+            fault_brief
+            and summary.get("cycle_running", False)
+            and summary.get("program_state") == "stopped"
+            and summary.get("last_command_status") != "error"
+        ):
+            summary["last_command"] = f"Run: Controller blocked motion ({fault_brief})"
+            summary["last_command_status"] = "error"
+
+        summary["debug_output"] = "\n".join(
+            [
+                f"Robot State: {summary.get('program_state')} (raw {summary.get('program_state_raw')})",
+                f"Connection: {'Online' if summary.get('status_connected') else ('Offline' if summary.get('status_connected') is False else 'Unknown')}",
+                f"Last Command: {summary.get('last_command')}",
+                f"Robot Fault Err: {summary.get('fault_robot_error_error')}",
+                f"Safety Err: {summary.get('fault_safety_error')}",
+                f"Robot Fault Raw: {summary.get('fault_robot_error_response')}",
+                f"Safety Raw: {summary.get('fault_safety_response')}",
+            ]
+        )
+        return summary
 
     def stamp_command_state(command: str, status: str, detail: str = "") -> None:
         run_state_manager.stamp_command_state(command, status, detail)
@@ -690,11 +784,18 @@ def create_app() -> Flask:
             pin = int(request.form.get("pin", "0"))
             if pin not in (1, 2, 3):
                 raise ValueError("Pin number must be 1, 2, or 3.")
+            origin_joints: list[float] | None = None
+            if pin == 1:
+                origin_joints = robot_service.get_joint_positions()
             robot_service.record_wobj_point(pin)
             try:
                 robot_service.disable_drag()
             except Exception:
                 pass
+            if pin == 1 and origin_joints is not None:
+                config = read_machine_config()
+                config["zerozero_joint_positions"] = origin_joints
+                write_machine_config(config)
             _calib_state["pins"].add(pin)
             _calib_state["drag_pin"] = None
             return _calib_render()
@@ -732,7 +833,11 @@ def create_app() -> Flask:
                 request.form.get("clearance_z_mm", str(get_clearance_z_mm())),
                 "Clearance height", 5.0, 500.0,
             )
-            robot_service.goto_clearance_z(clearance_z_mm, runtime_settings["program_path"])
+            robot_service.goto_clearance_z(
+                clearance_z_mm,
+                runtime_settings["program_path"],
+                zerozero_joints=get_zerozero_joint_positions(),
+            )
             return render_template(
                 "partials/command_result.html",
                 ok=True,
@@ -1215,7 +1320,13 @@ def create_app() -> Flask:
 
         try:
             studs = parse_studs_text(studs_text)
-            result = robot_service.upload_load_run(studs, program_path, clearance_z_mm=get_clearance_z_mm(), collision_sensitivity=get_collision_sensitivity())
+            result = robot_service.upload_load_run(
+                studs,
+                program_path,
+                clearance_z_mm=get_clearance_z_mm(),
+                collision_sensitivity=get_collision_sensitivity(),
+                zerozero_joints=get_zerozero_joint_positions(),
+            )
             run_state_manager.start_designer_cycle()
             stamp_command_state("Run", "ok", "Launched unsaved designer job")
             return render_template("partials/command_result.html", ok=True, title="Run", payload=result)
@@ -1277,6 +1388,7 @@ def create_app() -> Flask:
                     path,
                     clearance_z_mm=clearance_z,
                     collision_sensitivity=sensitivity,
+                    zerozero_joints=get_zerozero_joint_positions(),
                 )
                 app.logger.info("Run-next robot result: %s", result)
                 return result
@@ -1613,7 +1725,13 @@ def create_app() -> Flask:
             normalized_studs.append({"x": x, "y": y})
 
         try:
-            result = robot_service.upload_load_run(normalized_studs, program_path, clearance_z_mm=get_clearance_z_mm(), collision_sensitivity=get_collision_sensitivity())
+            result = robot_service.upload_load_run(
+                normalized_studs,
+                program_path,
+                clearance_z_mm=get_clearance_z_mm(),
+                collision_sensitivity=get_collision_sensitivity(),
+                zerozero_joints=get_zerozero_joint_positions(),
+            )
             return jsonify({"ok": True, **result})
         except Exception as exc:
             return jsonify({"ok": False, "error": str(exc)}), 500

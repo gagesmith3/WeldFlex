@@ -7,6 +7,7 @@ from typing import Any, Callable
 
 
 CYCLE_LOST_TIMEOUT_S = 30.0
+CYCLE_UNKNOWN_ONLINE_TIMEOUT_S = 6.0
 
 
 class RunStateManager:
@@ -137,7 +138,7 @@ class RunStateManager:
             self._state["last_command_status"] = "ok"
             self._state["last_command_at"] = self._utc_now_str()
 
-    def _refresh_cycle_completion(self, program_state: str, current_line: Any) -> None:
+    def _refresh_cycle_completion(self, program_state: str, current_line: Any, status_connected: bool | None = None) -> None:
         now = time.monotonic()
 
         line_number: int | None = None
@@ -156,20 +157,41 @@ class RunStateManager:
             return
 
         if program_state != "stopped":
-            # Robot is unreachable or state is unknown — start / advance lost-connection timeout.
+            # Unknown states can occur from transient status-read hiccups.
+            # Only start/advance lost-connection timeout when we have an explicit offline signal.
             self._state["cycle_stopped_since"] = 0.0
             unknown_since = float(self._state.get("cycle_unknown_since", 0.0) or 0.0)
             if unknown_since <= 0.0:
                 self._state["cycle_unknown_since"] = now
-            elif now - unknown_since > CYCLE_LOST_TIMEOUT_S:
-                self._state["cycle_running"] = False
-                self._state["cycle_seen_running"] = False
-                self._state["cycle_stopped_since"] = 0.0
-                self._state["cycle_unknown_since"] = 0.0
-                self._state["active"] = False
-                self._state["last_command"] = "Run: Aborted — robot connection lost during cycle"
-                self._state["last_command_status"] = "error"
-                self._state["last_command_at"] = self._utc_now_str()
+                return
+
+            unknown_duration = now - unknown_since
+            if status_connected is False:
+                if unknown_duration > CYCLE_LOST_TIMEOUT_S:
+                    self._state["cycle_running"] = False
+                    self._state["cycle_seen_running"] = False
+                    self._state["cycle_stopped_since"] = 0.0
+                    self._state["cycle_unknown_since"] = 0.0
+                    self._state["active"] = False
+                    self._state["last_command"] = "Run: Aborted — robot connection lost during cycle"
+                    self._state["last_command_status"] = "error"
+                    self._state["last_command_at"] = self._utc_now_str()
+            elif status_connected is True:
+                # Controller is reachable but state is not running/paused/stopped.
+                # If this persists right after launch, treat as failed start instead of hanging forever.
+                if (not self._state.get("cycle_seen_running", False)) and unknown_duration > CYCLE_UNKNOWN_ONLINE_TIMEOUT_S:
+                    self._state["cycle_running"] = False
+                    self._state["cycle_seen_running"] = False
+                    self._state["cycle_stopped_since"] = 0.0
+                    self._state["cycle_unknown_since"] = 0.0
+                    self._state["active"] = False
+                    self._state["last_command"] = "Run: Failed to start - controller state unknown while online"
+                    self._state["last_command_status"] = "error"
+                    self._state["last_command_at"] = self._utc_now_str()
+            else:
+                # Connection certainty unknown (e.g. transient status endpoint error).
+                # Keep waiting without forcing a stop.
+                pass
             return
 
         self._state["cycle_unknown_since"] = 0.0
@@ -216,9 +238,9 @@ class RunStateManager:
         self._state["last_command_status"] = "ok"
         self._state["last_command_at"] = self._utc_now_str()
 
-    def current_summary(self, program_state: str, current_line: Any) -> dict[str, Any]:
+    def current_summary(self, program_state: str, current_line: Any, status_connected: bool | None = None) -> dict[str, Any]:
         with self._lock:
-            self._refresh_cycle_completion(program_state, current_line)
+            self._refresh_cycle_completion(program_state, current_line, status_connected)
 
             can_pause = program_state in {"running", "paused"}
             if not can_pause and not self._state.get("active", False):

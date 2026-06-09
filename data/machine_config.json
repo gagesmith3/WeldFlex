@@ -1,4 +1,12 @@
 {
   "clearance_z_mm": 50.0,
-  "collision_sensitivity": 5
+  "collision_sensitivity": 5,
+  "zerozero_joint_positions": [
+    11.78038946472772,
+    -44.15307375464109,
+    58.9646020266089,
+    -104.9886148282797,
+    -89.30079091893565,
+    -36.5416150990099
+  ]
 }

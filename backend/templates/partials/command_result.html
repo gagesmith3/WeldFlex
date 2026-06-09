@@ -11,10 +11,13 @@
 (function(){
   var t = document.getElementById('active-toast');
   if (!t) return;
-  setTimeout(function(){ t.classList.add('toast-dismiss'); }, 3500);
+  var isError = t.classList.contains('toast-error');
+  var dismissMs = isError ? 9000 : 3500;
+  var clearMs = dismissMs + 600;
+  setTimeout(function(){ t.classList.add('toast-dismiss'); }, dismissMs);
   setTimeout(function(){
     var r = document.getElementById('toast-rack');
     if (r) r.innerHTML = '';
-  }, 4100);
+  }, clearMs);
 })();
 </script>

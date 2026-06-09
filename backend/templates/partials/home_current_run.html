@@ -24,6 +24,57 @@
   {{ action_button('Stop', variant='stop', icon='square', hx_post='/ui/stop', hx_target='#toast-rack', disabled=not summary.can_stop) }}
 </div>
 
+<div class="run-summary-card {% if summary.last_command_status == 'error' %}run-summary-error{% elif summary.last_command_status == 'ok' %}run-summary-ok{% endif %}">
+  <div class="run-summary-row">
+    <span>Robot State</span>
+    <strong>{{ summary.program_state }}{% if summary.program_state_raw is not none %} (raw {{ summary.program_state_raw }}){% endif %}</strong>
+  </div>
+  <div class="run-summary-row">
+    <span>Connection</span>
+    <strong>{{ 'Online' if summary.status_connected else 'Offline' }}</strong>
+  </div>
+  <div class="run-summary-row">
+    <span>Last Command</span>
+    <strong>{{ summary.last_command }}</strong>
+  </div>
+  {% if summary.fault_brief %}
+  <div class="run-summary-row">
+    <span>Controller Faults</span>
+    <strong>{{ summary.fault_brief }}</strong>
+  </div>
+  {% endif %}
+  {% if summary.fault_robot_error_error is not none %}
+  <div class="run-summary-row">
+    <span>Robot Fault Err</span>
+    <strong>{{ summary.fault_robot_error_error }}</strong>
+  </div>
+  {% endif %}
+  {% if summary.fault_safety_error is not none %}
+  <div class="run-summary-row">
+    <span>Safety Err</span>
+    <strong>{{ summary.fault_safety_error }}</strong>
+  </div>
+  {% endif %}
+  {% if summary.fault_robot_error_response is not none %}
+  <div class="run-summary-row">
+    <span>Robot Fault Raw</span>
+    <strong>{{ summary.fault_robot_error_response }}</strong>
+  </div>
+  {% endif %}
+  {% if summary.fault_safety_response is not none %}
+  <div class="run-summary-row">
+    <span>Safety Raw</span>
+    <strong>{{ summary.fault_safety_response }}</strong>
+  </div>
+  {% endif %}
+
+  <div class="run-summary-copy-row">
+    <span>Copy/Paste Output</span>
+    <button type="button" class="btn secondary run-copy-btn" onclick='(function(){var txt={{ summary.debug_output|tojson }}; if (navigator.clipboard && navigator.clipboard.writeText){navigator.clipboard.writeText(txt);} else {window.prompt("Copy output:", txt);}})()'>Copy</button>
+  </div>
+  <textarea class="run-debug-text" readonly title="Copyable run diagnostics output">{{ summary.debug_output }}</textarea>
+</div>
+
 
 
 

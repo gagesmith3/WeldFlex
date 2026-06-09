@@ -305,6 +305,7 @@ class WeldFlexRobotService:
         with self._lock:
             self._last_upload_events = []
             robot = self._client()
+            mode_result = robot.Mode(0)
             robot.SetAnticollision(mode=0, level=[float(collision_sensitivity)] * 6, config=0)
             robot.SetCollisionStrategy(strategy=0, safeTime=1000, safeDistance=100, safetyMargin=[10, 10, 10, 10, 10, 10])
             robot.SetStaticCollisionOnOff(status=1)
@@ -330,7 +331,6 @@ class WeldFlexRobotService:
                     f"upload_events={self._last_upload_events!r}"
                 )
 
-            mode_result = robot.Mode(0)
             run_result = robot.ProgramRun()
             if not self._is_success_result(run_result):
                 fault_codes = self._get_fault_codes(robot)
@@ -412,12 +412,12 @@ studs = {{
         studs_data_lua = self._build_empty_studs_data_lua(clearance_z_mm, zerozero_joints)
         with self._lock:
             robot = self._client()
+            robot.Mode(0)
             self.upload_lua(studs_data_lua, self.studs_data_path)
             try:
                 load_result = robot.ProgramLoad(program_name=program_path)
             except TypeError:
                 load_result = robot.ProgramLoad(program_path)
-            robot.Mode(0)
             run_result = robot.ProgramRun()
         return {"load_result": load_result, "run_result": run_result}
 
@@ -428,12 +428,12 @@ studs = {{
 
         with self._lock:
             robot = self._client()
+            robot.Mode(0)
             self.upload_lua(lua_path.read_text(encoding="utf-8"), "/fruser/goto_zerozero.lua")
             try:
                 load_result = robot.ProgramLoad(program_name="/fruser/goto_zerozero.lua")
             except TypeError:
                 load_result = robot.ProgramLoad("/fruser/goto_zerozero.lua")
-            robot.Mode(0)
             run_result = robot.ProgramRun()
         return {"load_result": load_result, "run_result": run_result}
 

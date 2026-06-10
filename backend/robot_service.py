@@ -77,7 +77,14 @@ class WeldFlexRobotService:
         self._static_script_hashes: dict[str, str] = {}
         self._last_upload_events: list[dict[str, str]] = []
         self._last_sdk_attempts: list[dict[str, Any]] = []
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
+        self._motion_lock = threading.Lock()
+        self._motion_thread: threading.Thread | None = None
+        self._motion_stop_event = threading.Event()
+        self._motion_state = "stopped"
+        self._motion_current_stud = 0
+        self._motion_total_studs = 0
+        self._motion_error: str | None = None
         self._sdk_executor = concurrent.futures.ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="robot-sdk"
         )
@@ -154,6 +161,7 @@ class WeldFlexRobotService:
         self._last_sdk_attempts = []
 
         for name, args in [
+            ("_RPC__FileUpLoad", (0, local_file)),
             ("LuaUpload", (local_file,)),
             ("OpenLuaUpload", (local_file,)),
             ("AxleLuaUpload", (local_file,)),
@@ -289,6 +297,61 @@ class WeldFlexRobotService:
             self._last_jog_safety_sensitivity = sensitivity
             self._last_jog_safety_monotonic = now
 
+    def _run_direct_joint_cycle(
+        self,
+        robot: Any,
+        zerozero_joints: list[float],
+        studs: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        move_timeout = float(os.getenv("WELDFLEX_DIRECT_MOVE_TIMEOUT_S", "45"))
+        move_vel = float(os.getenv("WELDFLEX_DIRECT_MOVE_VEL", "50"))
+        exaxis_pos = [0.0, 0.0, 0.0, 0.0]
+        offset_pos = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+        def _movej(target_joints: list[float], label: str) -> Any:
+            try:
+                response = self._run_with_timeout(
+                    lambda: robot.MoveJ(
+                        joint_pos=target_joints,
+                        tool=0,
+                        user=0,
+                        vel=move_vel,
+                        acc=100.0,
+                        ovl=100.0,
+                        exaxis_pos=exaxis_pos,
+                        blendT=-1.0,
+                        offset_flag=0,
+                        offset_pos=offset_pos,
+                    ),
+                    timeout=move_timeout,
+                )
+            except TypeError:
+                response = self._run_with_timeout(
+                    lambda: robot.MoveJ(target_joints, 0, 0, vel=move_vel),
+                    timeout=move_timeout,
+                )
+
+            error_code, _ = self._split_error_value(response)
+            if error_code != 0:
+                raise RuntimeError(f"Direct MoveJ failed at {label}: code={error_code}, result={response!r}")
+            return response
+
+        _movej(zerozero_joints, "home-start")
+        for index, stud in enumerate(studs, start=1):
+            stud_joints_raw = stud.get("joints")
+            if not isinstance(stud_joints_raw, list) or len(stud_joints_raw) != 6:
+                raise RuntimeError(f"Stud #{index} missing joint target for direct move fallback.")
+            stud_joints = [float(v) for v in stud_joints_raw]
+            _movej(stud_joints, f"stud-{index}")
+        _movej(zerozero_joints, "home-end")
+
+        return {
+            "mode": "direct_movej_fallback",
+            "stud_count": len(studs),
+            "velocity": move_vel,
+            "move_timeout_s": move_timeout,
+        }
+
     def upload_load_run(
         self,
         studs: list[dict[str, float]],
@@ -303,11 +366,14 @@ class WeldFlexRobotService:
             self._last_upload_events = []
             robot = self._client()
             mode_result = robot.Mode(0)
+            enable_result = robot.RobotEnable(1)
             robot.SetAnticollision(mode=0, level=[float(collision_sensitivity)] * 6, config=0)
             robot.SetCollisionStrategy(strategy=0, safeTime=1000, safeDistance=100, safetyMargin=[10, 10, 10, 10, 10, 10])
             robot.SetStaticCollisionOnOff(status=1)
 
-            fk_resp = robot.GetForwardKin(joints)
+            fk_resp = self._sdk_call_with_reconnect_retry(
+                lambda r: r.GetForwardKin(joints)
+            )
             fk_error, fk_result = self._split_error_value(fk_resp)
             if fk_error != 0 or not isinstance(fk_result, (list, tuple)) or len(fk_result) < 6:
                 raise RuntimeError(f"GetForwardKin failed: code={fk_error}, result={fk_result!r}")
@@ -323,9 +389,10 @@ class WeldFlexRobotService:
                     zerozero_tcp[4],
                     zerozero_tcp[5],
                 ]
-                ik_error, ik_joints = self._split_error_value(
-                    robot.GetInverseKin(type=0, desc_pos=target_desc, config=-1)
+                ik_resp = self._sdk_call_with_reconnect_retry(
+                    lambda r: r.GetInverseKin(type=0, desc_pos=target_desc, config=-1)
                 )
+                ik_error, ik_joints = self._split_error_value(ik_resp)
                 if ik_error != 0 or not isinstance(ik_joints, (list, tuple)) or len(ik_joints) != 6:
                     raise RuntimeError(
                         "GetInverseKin failed for stud target "
@@ -336,6 +403,7 @@ class WeldFlexRobotService:
                     {
                         "x": float(stud["x"]),
                         "y": float(stud["y"]),
+                        "wf": [float(v) for v in target_desc],
                         "joints": [float(v) for v in ik_joints],
                     }
                 )
@@ -379,23 +447,51 @@ class WeldFlexRobotService:
                     f"run_result={run_result!r}, fault_codes={fault_codes!r}"
                 )
 
-            # Capture immediate post-run state for troubleshooting when run command succeeds but no motion occurs.
-            time.sleep(0.2)
-            program_state_resp = robot.GetProgramState()
-            current_line_resp = robot.GetCurrentLine()
-            state_error, program_state = self._split_error_value(program_state_resp)
-            line_error, current_line = self._split_error_value(current_line_resp)
+            # Verify launch over a short window; single-sample checks are too brittle.
+            launch_seen_running = False
+            state_error = -1
+            line_error = -1
+            program_state = None
+            current_line = None
+            program_state_resp: Any = None
+            current_line_resp: Any = None
+            launch_deadline = time.monotonic() + 2.0
+            while time.monotonic() < launch_deadline:
+                program_state_resp = self._run_with_timeout(lambda: robot.GetProgramState())
+                current_line_resp = self._run_with_timeout(lambda: robot.GetCurrentLine())
+                state_error, program_state = self._split_error_value(program_state_resp)
+                line_error, current_line = self._split_error_value(current_line_resp)
+                mapped_state = STATE_MAP.get(program_state, "unknown")
+                if state_error == 0 and mapped_state in {"running", "paused"}:
+                    launch_seen_running = True
+                    break
+                time.sleep(0.2)
+
             loaded_program = self._get_loaded_program(robot)
             fault_codes = self._get_fault_codes(robot)
 
-            # Fail fast if ProgramRun was accepted but controller never left stopped state.
-            # This avoids UI "running" timeouts when motion could not start (e.g. bad point data).
-            if state_error == 0 and line_error == 0 and STATE_MAP.get(program_state, "unknown") == "stopped":
-                raise RuntimeError(
-                    "ProgramRun accepted but controller remained stopped immediately after launch. "
-                    f"loaded_program={loaded_program!r}, current_line={current_line!r}, "
-                    f"fault_codes={fault_codes!r}, upload_events={self._last_upload_events!r}"
-                )
+            # Fall back when ProgramRun was accepted but never transitions into running/paused.
+            direct_fallback_result: dict[str, Any] | None = None
+            if (
+                not launch_seen_running
+                and state_error == 0
+                and line_error == 0
+                and STATE_MAP.get(program_state, "unknown") == "stopped"
+            ):
+                enable_direct_fallback = os.getenv("WELDFLEX_ENABLE_DIRECT_MOVE_FALLBACK", "1").strip().lower() in {
+                    "1",
+                    "true",
+                    "yes",
+                    "on",
+                }
+                if enable_direct_fallback:
+                    direct_fallback_result = self._run_direct_joint_cycle(robot, joints, studs_with_joints)
+                else:
+                    raise RuntimeError(
+                        "ProgramRun accepted but controller remained stopped immediately after launch. "
+                        f"loaded_program={loaded_program!r}, current_line={current_line!r}, "
+                        f"fault_codes={fault_codes!r}, upload_events={self._last_upload_events!r}"
+                    )
 
         return {
             "program_path": remote_file,
@@ -403,10 +499,13 @@ class WeldFlexRobotService:
             "load_result": load_result,
             "load_retry_result": load_retry_result,
             "mode_result": mode_result,
+            "enable_result": enable_result,
             "run_result": run_result,
             "upload_events": list(self._last_upload_events),
             "loaded_program": loaded_program,
             "fault_codes": fault_codes,
+            "direct_fallback_result": direct_fallback_result,
+            "direct_cycle_completed": direct_fallback_result is not None,
             "post_run_status": {
                 "connected": state_error == 0 and line_error == 0,
                 "program_state": STATE_MAP.get(program_state, "unknown"),
@@ -419,6 +518,127 @@ class WeldFlexRobotService:
             },
         }
 
+
+    def run_direct_cycle(
+        self,
+        studs: list[dict[str, float]],
+        clearance_z_mm: float = 50.0,
+        collision_sensitivity: int = 3,
+        zerozero_joints: list[float] | None = None,
+    ) -> dict[str, Any]:
+        """Start a direct-motion stud cycle in a background thread. Returns immediately."""
+        joints = validate_zerozero_joints(zerozero_joints)
+
+        with self._motion_lock:
+            if self._motion_thread is not None and self._motion_thread.is_alive():
+                raise RuntimeError("A motion cycle is already running.")
+            self._motion_stop_event.clear()
+            self._motion_state = "starting"
+            self._motion_current_stud = 0
+            self._motion_total_studs = len(studs)
+            self._motion_error = None
+
+        move_vel = float(os.getenv("WELDFLEX_DIRECT_MOVE_VEL", "50"))
+
+        with self._lock:
+            robot = self._client()
+            robot.Mode(0)
+            robot.RobotEnable(1)
+            robot.SetAnticollision(mode=0, level=[float(collision_sensitivity)] * 6, config=0)
+            robot.SetCollisionStrategy(
+                strategy=0, safeTime=1000, safeDistance=100,
+                safetyMargin=[10, 10, 10, 10, 10, 10],
+            )
+            robot.SetStaticCollisionOnOff(status=1)
+
+            fk_resp = self._run_with_timeout(lambda: robot.GetForwardKin(joints))
+            fk_err, fk_result = self._split_error_value(fk_resp)
+            if fk_err != 0 or not isinstance(fk_result, (list, tuple)) or len(fk_result) < 6:
+                with self._motion_lock:
+                    self._motion_state = "stopped"
+                raise RuntimeError(f"GetForwardKin failed: code={fk_err}, result={fk_result!r}")
+            zerozero_tcp = [float(v) for v in fk_result[:6]]
+
+        zerozero_clearance = [
+            zerozero_tcp[0], zerozero_tcp[1], zerozero_tcp[2] + clearance_z_mm,
+            zerozero_tcp[3], zerozero_tcp[4], zerozero_tcp[5],
+        ]
+        stud_targets = [
+            [
+                zerozero_tcp[0] + float(s["x"]),
+                zerozero_tcp[1] + float(s["y"]),
+                zerozero_tcp[2] + clearance_z_mm,
+                zerozero_tcp[3], zerozero_tcp[4], zerozero_tcp[5],
+            ]
+            for s in studs
+        ]
+
+        thread = threading.Thread(
+            target=self._motion_loop,
+            args=(joints, zerozero_clearance, stud_targets, move_vel),
+            daemon=True,
+            name="weldflex-motion",
+        )
+        with self._motion_lock:
+            self._motion_thread = thread
+        thread.start()
+
+        return {"stud_count": len(studs), "move_vel": move_vel}
+
+    def _motion_loop(
+        self,
+        zerozero_joints: list[float],
+        zerozero_clearance: list[float],
+        stud_targets: list[list[float]],
+        move_vel: float,
+    ) -> None:
+        motion_robot = Robot.RPC(self.robot_ip)
+        self._repair_sdk_connect_gate(motion_robot)
+        try:
+            with self._motion_lock:
+                if not self._motion_stop_event.is_set():
+                    self._motion_state = "running"
+
+            if not self._motion_stop_event.is_set():
+                try:
+                    resp = motion_robot.MoveJ(
+                        joint_pos=zerozero_joints, tool=0, user=0,
+                        vel=move_vel, acc=100.0, ovl=100.0,
+                        exaxis_pos=[0.0, 0.0, 0.0, 0.0],
+                        blendT=-1.0, offset_flag=0,
+                        offset_pos=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                    )
+                except TypeError:
+                    resp = motion_robot.MoveJ(zerozero_joints, 0, 0, vel=move_vel)
+                err, _ = self._split_error_value(resp)
+                if err != 0 and not self._motion_stop_event.is_set():
+                    raise RuntimeError(f"MoveJ home (start) failed: code={err}")
+
+            for idx, target in enumerate(stud_targets):
+                if self._motion_stop_event.is_set():
+                    break
+                with self._motion_lock:
+                    self._motion_current_stud = idx + 1
+
+                resp = motion_robot.MoveL(desc_pos=target, tool=0, user=0, vel=move_vel)
+                err, _ = self._split_error_value(resp)
+                if err != 0 and not self._motion_stop_event.is_set():
+                    raise RuntimeError(f"MoveL stud {idx + 1} failed: code={err}")
+
+            if not self._motion_stop_event.is_set():
+                motion_robot.MoveL(desc_pos=zerozero_clearance, tool=0, user=0, vel=move_vel)
+
+        except Exception as exc:
+            with self._motion_lock:
+                self._motion_error = str(exc)
+        finally:
+            with self._motion_lock:
+                self._motion_state = "stopped"
+                self._motion_current_stud = 0
+            try:
+                motion_robot.CloseRPC()
+            except Exception:
+                pass
 
     @staticmethod
     def _format_lua_number(value: float) -> str:
@@ -507,16 +727,57 @@ studs = {{
                 f"Robot did not respond within {int(timeout)} s — connection may be lost."
             )
 
+    def _sdk_call_with_reconnect_retry(
+        self,
+        call_factory: Callable[[Any], Any],
+        *,
+        attempts: int = 2,
+    ) -> Any:
+        """Run an SDK call and retry once after reconnect when errcode is -4."""
+        last_result: Any = None
+        for attempt in range(attempts):
+            with self._lock:
+                robot = self._client()
+
+            result = self._run_with_timeout(lambda: call_factory(robot))
+            errcode, _ = self._split_error_value(result)
+            last_result = result
+            if errcode != -4:
+                return result
+
+            if attempt < attempts - 1:
+                with self._lock:
+                    self._robot = None
+
+        return last_result
+
     def pause(self) -> dict[str, Any]:
         with self._lock:
             robot = self._client()
-        pause_result = self._run_with_timeout(lambda: robot.ProgramPause())
+        # PauseMotion uses TCP port 8080 (independent of XML-RPC) and works mid-move.
+        pause_result = self._run_with_timeout(lambda: robot.PauseMotion())
+        with self._motion_lock:
+            if self._motion_state == "running":
+                self._motion_state = "paused"
         return {"pause_result": pause_result}
 
-    def stop(self) -> dict[str, Any]:
+    def resume(self) -> dict[str, Any]:
         with self._lock:
             robot = self._client()
-        stop_result = self._run_with_timeout(lambda: robot.ProgramStop())
+        resume_result = self._run_with_timeout(lambda: robot.ResumeMotion())
+        with self._motion_lock:
+            if self._motion_state == "paused":
+                self._motion_state = "running"
+        return {"resume_result": resume_result}
+
+    def stop(self) -> dict[str, Any]:
+        self._motion_stop_event.set()
+        with self._lock:
+            robot = self._client()
+        stop_result = self._run_with_timeout(lambda: robot.StopMotion())
+        with self._motion_lock:
+            self._motion_state = "stopped"
+            self._motion_current_stud = 0
         return {"stop_result": stop_result}
 
     def reset_all_errors(self) -> dict[str, Any]:
@@ -715,16 +976,22 @@ studs = {{
         return [float(v) for v in wobj_verified[:6]]
 
     def status(self) -> dict[str, Any]:
+        with self._motion_lock:
+            motion_state = self._motion_state
+            motion_current_stud = self._motion_current_stud
+
         with self._lock:
             robot = self._client()
 
+        # GetProgramState reads from local CNDE cache (no XML-RPC call).
+        # GetCurrentLine is XML-RPC — used only for connection health check.
         program_state_resp, current_line_resp = self._run_with_timeout(
             lambda: (robot.GetProgramState(), robot.GetCurrentLine())
         )
         fault_codes = self._get_fault_codes(robot)
 
-        state_error, program_state = self._split_error_value(program_state_resp)
-        line_error, current_line = self._split_error_value(current_line_resp)
+        state_error, _ = self._split_error_value(program_state_resp)
+        line_error, _ = self._split_error_value(current_line_resp)
         connected = state_error == 0 and line_error == 0
 
         return {
@@ -733,9 +1000,9 @@ studs = {{
             "current_line_error": line_error,
             "program_state_response": program_state_resp,
             "current_line_response": current_line_resp,
-            "program_state_raw": program_state,
-            "program_state": STATE_MAP.get(program_state, "unknown"),
-            "current_line": current_line,
+            "program_state_raw": None,
+            "program_state": motion_state,
+            "current_line": motion_current_stud,
             "fault_codes": fault_codes,
         }
 

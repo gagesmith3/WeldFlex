@@ -11,17 +11,26 @@ if studs == nil then
     studs = {}
 end
 
--- Move to work origin before cycling
-PTP(zerozeroJoints, 50, -1, 0)
+local originWF = {
+    zerozeroWF[1],
+    zerozeroWF[2],
+    zerozeroWF[3] + (clearance_z_mm or 50.0),
+    zerozeroWF[4],
+    zerozeroWF[5],
+    zerozeroWF[6],
+}
+
+-- Move to work origin at clearance
+Lin(originWF, 50, -1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 0, 0)
 
 for _, stud in ipairs(studs) do
-    if stud.joints ~= nil then
-        PTP(stud.joints, 50, -1, 0)
+    if stud.wf ~= nil then
+        Lin(stud.wf, 50, -1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 0, 0)
     end
     -- Weld cycle runs at stud target
     --NewDofile("/fruser/weld.lua",1,1)
     --DofileEnd()
 end
 
--- Return to work origin
-PTP(zerozeroJoints, 50, -1, 0)
+-- Return to work origin at clearance
+Lin(originWF, 50, -1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 0, 0)

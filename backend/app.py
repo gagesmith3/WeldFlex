@@ -1257,7 +1257,25 @@ def create_app() -> Flask:
                 raise ValueError("Another production run is already active. Stop it before starting a new run.")
 
             run_state_manager.stage_batch(recipe_name, run_count, studs)
-            stamp_command_state("Run", "ok", f"Staged {recipe_name} for {run_count} target parts. Click Run on Home to start.")
+
+            clearance_z = get_clearance_z_mm()
+            sensitivity = get_collision_sensitivity()
+
+            def _launch_and_log(batch_studs: list[dict[str, float]], _: str) -> Any:
+                result = robot_service.run_direct_cycle(
+                    batch_studs,
+                    clearance_z_mm=clearance_z,
+                    collision_sensitivity=sensitivity,
+                    zerozero_joints=get_zerozero_joint_positions(),
+                )
+                app.logger.info("Library run started: %s", result)
+                return result
+
+            run_state_manager.start_next_batch_cycle(
+                launch_cycle=_launch_and_log,
+                program_path=runtime_settings["program_path"],
+            )
+            stamp_command_state("Run", "ok", f"Started {recipe_name} cycle 1/{run_count}")
 
             if request.headers.get("HX-Request") == "true":
                 return "", 204, {"HX-Redirect": "/operator"}
@@ -1304,7 +1322,6 @@ def create_app() -> Flask:
     @app.post("/ui/run")
     def ui_run_program() -> Any:
         studs_text = request.form.get("studs_text", "")
-        program_path = runtime_settings["program_path"]
 
         if not studs_text.strip():
             x_values = request.form.getlist("x")
@@ -1320,9 +1337,8 @@ def create_app() -> Flask:
 
         try:
             studs = parse_studs_text(studs_text)
-            result = robot_service.upload_load_run(
+            result = robot_service.run_direct_cycle(
                 studs,
-                program_path,
                 clearance_z_mm=get_clearance_z_mm(),
                 collision_sensitivity=get_collision_sensitivity(),
                 zerozero_joints=get_zerozero_joint_positions(),
@@ -1357,6 +1373,24 @@ def create_app() -> Flask:
                 500,
             )
 
+    @app.post("/ui/resume")
+    def ui_resume_program() -> Any:
+        try:
+            result = robot_service.resume()
+            stamp_command_state("Resume", "ok", "Resume command sent")
+            return render_template("partials/command_result.html", ok=True, title="Resume", payload=result)
+        except Exception as exc:
+            stamp_command_state("Resume", "error", str(exc))
+            return (
+                render_template(
+                    "partials/command_result.html",
+                    ok=False,
+                    title="Resume",
+                    payload={"error": str(exc)},
+                ),
+                500,
+            )
+
     @app.post("/ui/stop")
     def ui_stop_program() -> Any:
         try:
@@ -1382,15 +1416,14 @@ def create_app() -> Flask:
             clearance_z = get_clearance_z_mm()
             sensitivity = get_collision_sensitivity()
 
-            def _launch_and_log(studs: list[dict[str, float]], path: str) -> Any:
-                result = robot_service.upload_load_run(
+            def _launch_and_log(studs: list[dict[str, float]], _: str) -> Any:
+                result = robot_service.run_direct_cycle(
                     studs,
-                    path,
                     clearance_z_mm=clearance_z,
                     collision_sensitivity=sensitivity,
                     zerozero_joints=get_zerozero_joint_positions(),
                 )
-                app.logger.info("Run-next robot result: %s", result)
+                app.logger.info("Run-next started: %s", result)
                 return result
 
             run_state_manager.start_next_batch_cycle(
@@ -1706,7 +1739,6 @@ def create_app() -> Flask:
     def run_program() -> Any:
         payload = request.get_json(silent=True) or {}
         studs = payload.get("studs")
-        program_path = payload.get("program_path", runtime_settings["program_path"])
 
         if not isinstance(studs, list) or not studs:
             return jsonify({"error": "Body must include a non-empty studs array."}), 400
@@ -1725,9 +1757,8 @@ def create_app() -> Flask:
             normalized_studs.append({"x": x, "y": y})
 
         try:
-            result = robot_service.upload_load_run(
+            result = robot_service.run_direct_cycle(
                 normalized_studs,
-                program_path,
                 clearance_z_mm=get_clearance_z_mm(),
                 collision_sensitivity=get_collision_sensitivity(),
                 zerozero_joints=get_zerozero_joint_positions(),
@@ -1740,6 +1771,14 @@ def create_app() -> Flask:
     def pause_program() -> Any:
         try:
             result = robot_service.pause()
+            return jsonify({"ok": True, **result})
+        except Exception as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 500
+
+    @app.post("/api/resume")
+    def resume_program() -> Any:
+        try:
+            result = robot_service.resume()
             return jsonify({"ok": True, **result})
         except Exception as exc:
             return jsonify({"ok": False, "error": str(exc)}), 500

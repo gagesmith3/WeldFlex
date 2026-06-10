@@ -66,6 +66,15 @@ def build_studs_data_lua(
     stud_rows: list[str] = []
     for i, stud in enumerate(studs, start=1):
         row = f"    {{x={_format_number(stud['x'])}, y={_format_number(stud['y'])}"
+        wf_value = stud.get("wf")
+        if wf_value is not None:
+            if not isinstance(wf_value, Sequence) or len(wf_value) != 6:
+                raise ValueError(f"Stud {i}: wf must contain exactly 6 values.")
+            parsed_wf = [float(value) for value in wf_value]
+            if any(not math.isfinite(value) for value in parsed_wf):
+                raise ValueError(f"Stud {i}: wf must be finite numbers.")
+            wf_lua = ", ".join(_format_number(value) for value in parsed_wf)
+            row += f", wf={{{wf_lua}}}"
         joints_value = stud.get("joints")
         if joints_value is not None:
             if not isinstance(joints_value, Sequence) or len(joints_value) != 6:

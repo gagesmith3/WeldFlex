@@ -125,13 +125,31 @@ class RunStateManager:
             studs = list(self._studs)
 
         try:
-            launch_cycle(studs, program_path)
+            launch_result = launch_cycle(studs, program_path)
         except Exception:
             with self._lock:
                 self._state["cycle_running"] = False
                 self._state["cycle_seen_running"] = False
                 self._state["cycle_stopped_since"] = 0.0
             raise
+
+        if isinstance(launch_result, dict) and launch_result.get("direct_cycle_completed"):
+            with self._lock:
+                completed = int(self._state.get("completed_runs", 0) or 0) + 1
+                requested = int(self._state.get("requested_run_count", 0) or 0)
+                self._state["completed_runs"] = completed
+                self._state["cycle_running"] = False
+                self._state["cycle_seen_running"] = False
+                self._state["cycle_stopped_since"] = 0.0
+                self._state["cycle_unknown_since"] = 0.0
+                if completed >= requested:
+                    self._state["active"] = False
+                    self._state["last_command"] = f"Run: Batch complete ({completed}/{requested})"
+                else:
+                    self._state["last_command"] = f"Run: Cycle complete ({completed}/{requested})"
+                self._state["last_command_status"] = "ok"
+                self._state["last_command_at"] = self._utc_now_str()
+            return
 
         with self._lock:
             self._state["last_command"] = f"Run: Cycle {cycle_number}/{requested} started for {part_name}"

@@ -274,7 +274,10 @@ class WeldFlexRobotService:
             lambda: robot.SetAnticollision(mode=0, level=level, config=0)
         )
         strategy = self._run_with_timeout(
-            lambda: robot.SetCollisionStrategy(strategy=0, safeTime=1000, safeDistance=100, safetyMargin=[10, 10, 10, 10, 10, 10])
+            lambda: robot.SetCollisionStrategy(
+                strategy=0, safeTime=1000, safeDistance=100, safeVel=100,
+                safetyMargin=[10, 10, 10, 10, 10, 10],
+            )
         )
         static = self._run_with_timeout(
             lambda: robot.SetStaticCollisionOnOff(status=1)
@@ -525,6 +528,7 @@ class WeldFlexRobotService:
         clearance_z_mm: float = 50.0,
         collision_sensitivity: int = 3,
         zerozero_joints: list[float] | None = None,
+        tool_id: int = 0,
     ) -> dict[str, Any]:
         """Start a direct-motion stud cycle in a background thread. Returns immediately."""
         joints = validate_zerozero_joints(zerozero_joints)
@@ -546,7 +550,7 @@ class WeldFlexRobotService:
             robot.RobotEnable(1)
             robot.SetAnticollision(mode=0, level=[float(collision_sensitivity)] * 6, config=0)
             robot.SetCollisionStrategy(
-                strategy=0, safeTime=1000, safeDistance=100,
+                strategy=0, safeTime=1000, safeDistance=100, safeVel=100,
                 safetyMargin=[10, 10, 10, 10, 10, 10],
             )
             robot.SetStaticCollisionOnOff(status=1)
@@ -575,7 +579,7 @@ class WeldFlexRobotService:
 
         thread = threading.Thread(
             target=self._motion_loop,
-            args=(joints, zerozero_clearance, stud_targets, move_vel),
+            args=(joints, zerozero_clearance, stud_targets, move_vel, tool_id),
             daemon=True,
             name="weldflex-motion",
         )
@@ -583,7 +587,7 @@ class WeldFlexRobotService:
             self._motion_thread = thread
         thread.start()
 
-        return {"stud_count": len(studs), "move_vel": move_vel}
+        return {"stud_count": len(studs), "move_vel": move_vel, "tool_id": tool_id}
 
     def _motion_loop(
         self,
@@ -591,6 +595,7 @@ class WeldFlexRobotService:
         zerozero_clearance: list[float],
         stud_targets: list[list[float]],
         move_vel: float,
+        tool_id: int = 0,
     ) -> None:
         motion_robot = Robot.RPC(self.robot_ip)
         self._repair_sdk_connect_gate(motion_robot)
@@ -602,14 +607,14 @@ class WeldFlexRobotService:
             if not self._motion_stop_event.is_set():
                 try:
                     resp = motion_robot.MoveJ(
-                        joint_pos=zerozero_joints, tool=0, user=0,
+                        joint_pos=zerozero_joints, tool=tool_id, user=0,
                         vel=move_vel, acc=100.0, ovl=100.0,
                         exaxis_pos=[0.0, 0.0, 0.0, 0.0],
                         blendT=-1.0, offset_flag=0,
                         offset_pos=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
                     )
                 except TypeError:
-                    resp = motion_robot.MoveJ(zerozero_joints, 0, 0, vel=move_vel)
+                    resp = motion_robot.MoveJ(zerozero_joints, tool_id, 0, vel=move_vel)
                 err, _ = self._split_error_value(resp)
                 if err != 0 and not self._motion_stop_event.is_set():
                     raise RuntimeError(f"MoveJ home (start) failed: code={err}")
@@ -620,13 +625,13 @@ class WeldFlexRobotService:
                 with self._motion_lock:
                     self._motion_current_stud = idx + 1
 
-                resp = motion_robot.MoveL(desc_pos=target, tool=0, user=0, vel=move_vel)
+                resp = motion_robot.MoveL(desc_pos=target, tool=tool_id, user=0, vel=move_vel)
                 err, _ = self._split_error_value(resp)
                 if err != 0 and not self._motion_stop_event.is_set():
                     raise RuntimeError(f"MoveL stud {idx + 1} failed: code={err}")
 
             if not self._motion_stop_event.is_set():
-                motion_robot.MoveL(desc_pos=zerozero_clearance, tool=0, user=0, vel=move_vel)
+                motion_robot.MoveL(desc_pos=zerozero_clearance, tool=tool_id, user=0, vel=move_vel)
 
         except Exception as exc:
             with self._motion_lock:

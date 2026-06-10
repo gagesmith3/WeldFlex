@@ -254,6 +254,13 @@ def create_app() -> Flask:
         except (TypeError, ValueError):
             return 3
 
+    def get_active_tool_id() -> int:
+        config = read_machine_config()
+        try:
+            return int(config.get("active_tool_id", 0))
+        except (TypeError, ValueError):
+            return 0
+
     def get_zerozero_joint_positions() -> list[float] | None:
         config = read_machine_config()
         raw = config.get("zerozero_joint_positions")
@@ -931,7 +938,10 @@ def create_app() -> Flask:
             if len(_tcp_calib_state["points"]) < 4:
                 raise ValueError("All 4 points must be recorded before applying.")
             ordered = [_tcp_calib_state["points"][i] for i in (1, 2, 3, 4)]
-            tcp_offset = robot_service.compute_and_apply_tcp(ordered)
+            tcp_offset = robot_service.compute_and_apply_tcp(ordered, tool_id=1)
+            config = read_machine_config()
+            config["active_tool_id"] = 1
+            write_machine_config(config)
             _tcp_calib_state["points"].clear()
             _tcp_calib_state["drag_point"] = None
             return _tcp_calib_render(applied=True, tcp_offset=tcp_offset)
@@ -1261,12 +1271,15 @@ def create_app() -> Flask:
             clearance_z = get_clearance_z_mm()
             sensitivity = get_collision_sensitivity()
 
+            tool_id = get_active_tool_id()
+
             def _launch_and_log(batch_studs: list[dict[str, float]], _: str) -> Any:
                 result = robot_service.run_direct_cycle(
                     batch_studs,
                     clearance_z_mm=clearance_z,
                     collision_sensitivity=sensitivity,
                     zerozero_joints=get_zerozero_joint_positions(),
+                    tool_id=tool_id,
                 )
                 app.logger.info("Library run started: %s", result)
                 return result
@@ -1342,6 +1355,7 @@ def create_app() -> Flask:
                 clearance_z_mm=get_clearance_z_mm(),
                 collision_sensitivity=get_collision_sensitivity(),
                 zerozero_joints=get_zerozero_joint_positions(),
+                tool_id=get_active_tool_id(),
             )
             run_state_manager.start_designer_cycle()
             stamp_command_state("Run", "ok", "Launched unsaved designer job")
@@ -1422,6 +1436,7 @@ def create_app() -> Flask:
                     clearance_z_mm=clearance_z,
                     collision_sensitivity=sensitivity,
                     zerozero_joints=get_zerozero_joint_positions(),
+                    tool_id=get_active_tool_id(),
                 )
                 app.logger.info("Run-next started: %s", result)
                 return result
@@ -1762,6 +1777,7 @@ def create_app() -> Flask:
                 clearance_z_mm=get_clearance_z_mm(),
                 collision_sensitivity=get_collision_sensitivity(),
                 zerozero_joints=get_zerozero_joint_positions(),
+                tool_id=get_active_tool_id(),
             )
             return jsonify({"ok": True, **result})
         except Exception as exc:

@@ -88,12 +88,13 @@
          {% if not all_recorded %}disabled{% endif %}>
   <span class="calib-clearance-unit">mm</span>
   <button type="button"
-          class="btn calib-btn-test{% if not all_recorded %} is-disabled{% endif %}"
+          class="btn calib-btn-test{% if not all_recorded or not enable_calibrate_test_z %} is-disabled{% endif %}"
           hx-post="/ui/calibrate/goto-clearance"
           hx-include="#calib_clearance_z"
           hx-target="#toast-rack"
           hx-swap="innerHTML"
-          {% if not all_recorded %}disabled{% endif %}>
+          title="{% if not enable_calibrate_test_z %}Disabled for safety{% endif %}"
+          {% if not all_recorded or not enable_calibrate_test_z %}disabled{% endif %}>
     {{ icon_safe('move_3d', fallback='arrow_up', size=13) }} Test Z
   </button>
 </div>

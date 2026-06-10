@@ -20,7 +20,8 @@
 
 <div class="hero-main-controls">
   {{ action_button('Run', variant='run', icon='play', loading_icon='loader_2', hx_post='/ui/home/run-next', hx_target='#toast-rack', hx_sync='#home-current-run:replace', hx_on_click='this.disabled=true;this.classList.add("is-running")', hx_on_after_request='if(event.detail.failed){this.disabled=false;this.classList.remove("is-running")}', class_name='is-running' if summary.cycle_running else '', disabled=not summary.can_run_next) }}
-  {{ action_button('Pause', variant='pause', icon='pause', hx_post='/ui/pause', hx_target='#toast-rack', disabled=not summary.can_pause) }}
+  {{ action_button('Pause', variant='pause', icon='pause', hx_post='/ui/pause', hx_target='#toast-rack', disabled=summary.program_state != 'running') }}
+  {{ action_button('Resume', variant='run', icon='play', hx_post='/ui/resume', hx_target='#toast-rack', disabled=summary.program_state != 'paused') }}
   {{ action_button('Stop', variant='stop', icon='square', hx_post='/ui/stop', hx_target='#toast-rack', disabled=not summary.can_stop) }}
 </div>
 
@@ -37,6 +38,12 @@
     <span>Last Command</span>
     <strong>{{ summary.last_command }}</strong>
   </div>
+  {% if summary.motion_error %}
+  <div class="run-summary-row run-summary-error">
+    <span>Motion Error</span>
+    <strong>{{ summary.motion_error }}</strong>
+  </div>
+  {% endif %}
   {% if summary.fault_brief %}
   <div class="run-summary-row">
     <span>Controller Faults</span>

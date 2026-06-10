@@ -193,6 +193,18 @@ def create_app() -> Flask:
             "WELDFLEX_STUDS_DATA_PATH must be '/fruser/studs_data.lua' to match studCycle.lua include path."
         )
     status_interval_ms = int(os.getenv("WELDFLEX_STATUS_INTERVAL_MS", "1000"))
+    legacy_demo_mode = os.getenv("WELDFLEX_LEGACY_DEMO_MODE", "1").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    enable_calibrate_test_z = os.getenv("WELDFLEX_ENABLE_CALIBRATE_TEST_Z", "0").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
     runtime_settings: dict[str, Any] = {
         "robot_ip": robot_ip,
@@ -200,6 +212,8 @@ def create_app() -> Flask:
         "program_path": default_program_path,
         "studs_data_path": studs_data_path,
         "status_interval_ms": status_interval_ms,
+        "legacy_demo_mode": legacy_demo_mode,
+        "enable_calibrate_test_z": enable_calibrate_test_z,
     }
 
     run_state_manager = RunStateManager()
@@ -555,12 +569,14 @@ def create_app() -> Flask:
             program_state_raw = status.get("program_state_raw")
             current_line = status.get("current_line", "-")
             connected = bool(status.get("connected", False))
+            motion_error = status.get("motion_error")
             fault_snapshot = _fault_snapshot(status)
         except Exception:
             program_state = "unknown"
             program_state_raw = None
             current_line = "-"
             connected = None
+            motion_error = None
             fault_snapshot = {
                 "main_code": None,
                 "sub_code": None,
@@ -581,6 +597,7 @@ def create_app() -> Flask:
         summary["fault_robot_error_response"] = fault_snapshot.get("robot_error_response")
         summary["fault_safety_error"] = fault_snapshot.get("safety_error")
         summary["fault_safety_response"] = fault_snapshot.get("safety_response")
+        summary["motion_error"] = motion_error
 
         fault_brief = _format_fault_brief(fault_snapshot)
         summary["fault_brief"] = fault_brief
@@ -598,6 +615,7 @@ def create_app() -> Flask:
                 f"Robot State: {summary.get('program_state')} (raw {summary.get('program_state_raw')})",
                 f"Connection: {'Online' if summary.get('status_connected') else ('Offline' if summary.get('status_connected') is False else 'Unknown')}",
                 f"Last Command: {summary.get('last_command')}",
+                f"Motion Error: {summary.get('motion_error') or 'none'}",
                 f"Robot Fault Err: {summary.get('fault_robot_error_error')}",
                 f"Safety Err: {summary.get('fault_safety_error')}",
                 f"Robot Fault Raw: {summary.get('fault_robot_error_response')}",
@@ -729,6 +747,7 @@ def create_app() -> Flask:
             drag_error=drag_error,
             clearance_z_mm=get_clearance_z_mm(),
             collision_sensitivity=get_collision_sensitivity(),
+            enable_calibrate_test_z=bool(runtime_settings.get("enable_calibrate_test_z", False)),
         )
 
     @app.get("/operator/calibrate")
@@ -835,6 +854,13 @@ def create_app() -> Flask:
 
     @app.post("/ui/calibrate/goto-clearance")
     def ui_calibrate_goto_clearance() -> Any:
+        if not bool(runtime_settings.get("enable_calibrate_test_z", False)):
+            return render_template(
+                "partials/command_result.html",
+                ok=False,
+                title="Clearance Test",
+                payload={"error": "Test Z is disabled for safety in this build."},
+            )
         try:
             clearance_z_mm = parse_bounded_float(
                 request.form.get("clearance_z_mm", str(get_clearance_z_mm())),
@@ -842,14 +868,14 @@ def create_app() -> Flask:
             )
             robot_service.goto_clearance_z(
                 clearance_z_mm,
-                runtime_settings["program_path"],
                 zerozero_joints=get_zerozero_joint_positions(),
+                tool_id=get_active_tool_id(),
             )
             return render_template(
                 "partials/command_result.html",
                 ok=True,
                 title="Clearance Test",
-                payload={"message": f"Moving to Z={clearance_z_mm:g} mm."},
+                payload={"message": f"Lifting current TCP by +{clearance_z_mm:g} mm in base Z."},
             )
         except Exception as exc:
             return render_template(

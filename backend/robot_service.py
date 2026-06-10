@@ -47,9 +47,9 @@ except ImportError as exc:
     ) from exc
 
 try:
-    from .lua_builder import build_studs_data_lua, validate_zerozero_joints, validate_zerozero_tcp
+    from .lua_builder import build_studs_data_lua, validate_zerozero_joints
 except ImportError:
-    from lua_builder import build_studs_data_lua, validate_zerozero_joints, validate_zerozero_tcp
+    from lua_builder import build_studs_data_lua, validate_zerozero_joints
 
 
 STATE_MAP = {
@@ -374,52 +374,14 @@ class WeldFlexRobotService:
             robot.SetCollisionStrategy(strategy=0, safeTime=1000, safeDistance=100, safetyMargin=[10, 10, 10, 10, 10, 10])
             robot.SetStaticCollisionOnOff(status=1)
 
-            fk_resp = self._sdk_call_with_reconnect_retry(
-                lambda r: r.GetForwardKin(joints)
-            )
-            fk_error, fk_result = self._split_error_value(fk_resp)
-            if fk_error != 0 or not isinstance(fk_result, (list, tuple)) or len(fk_result) < 6:
-                raise RuntimeError(f"GetForwardKin failed: code={fk_error}, result={fk_result!r}")
-            zerozero_tcp = [float(v) for v in fk_result[:6]]
-
-            studs_with_joints: list[dict[str, Any]] = []
-            for index, stud in enumerate(studs, start=1):
-                target_desc = [
-                    zerozero_tcp[0] + float(stud["x"]),
-                    zerozero_tcp[1] + float(stud["y"]),
-                    zerozero_tcp[2] + float(clearance_z_mm),
-                    zerozero_tcp[3],
-                    zerozero_tcp[4],
-                    zerozero_tcp[5],
-                ]
-                ik_resp = self._sdk_call_with_reconnect_retry(
-                    lambda r: r.GetInverseKin(type=0, desc_pos=target_desc, config=-1)
-                )
-                ik_error, ik_joints = self._split_error_value(ik_resp)
-                if ik_error != 0 or not isinstance(ik_joints, (list, tuple)) or len(ik_joints) != 6:
-                    raise RuntimeError(
-                        "GetInverseKin failed for stud target "
-                        f"#{index} ({stud['x']}, {stud['y']}). code={ik_error}, "
-                        f"target={target_desc!r}, result={ik_joints!r}"
-                    )
-                studs_with_joints.append(
-                    {
-                        "x": float(stud["x"]),
-                        "y": float(stud["y"]),
-                        "wf": [float(v) for v in target_desc],
-                        "joints": [float(v) for v in ik_joints],
-                    }
-                )
-
             studs_data_lua = build_studs_data_lua(
-                studs_with_joints,
+                studs,
                 clearance_z_mm,
                 zerozero_joints=joints,
-                zerozero_tcp=zerozero_tcp,
             )
             self.upload_lua(studs_data_lua, self.studs_data_path)
             # Non-fatal: keep static Lua scripts current on the robot.
-            # SDK validator rejects studCycle.lua (zerozeroWF not in DB), so FTP is the real path.
+            # Legacy demo mode relies on the controller-side base recipe and taught points.
             self._upload_static_lua_scripts()
 
             try:
@@ -474,6 +436,12 @@ class WeldFlexRobotService:
             fault_codes = self._get_fault_codes(robot)
 
             # Fall back when ProgramRun was accepted but never transitions into running/paused.
+            legacy_demo_mode = os.getenv("WELDFLEX_LEGACY_DEMO_MODE", "1").strip().lower() in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            }
             direct_fallback_result: dict[str, Any] | None = None
             if (
                 not launch_seen_running
@@ -481,19 +449,25 @@ class WeldFlexRobotService:
                 and line_error == 0
                 and STATE_MAP.get(program_state, "unknown") == "stopped"
             ):
-                enable_direct_fallback = os.getenv("WELDFLEX_ENABLE_DIRECT_MOVE_FALLBACK", "1").strip().lower() in {
+                enable_direct_fallback = (not legacy_demo_mode) and os.getenv(
+                    "WELDFLEX_ENABLE_DIRECT_MOVE_FALLBACK", "1"
+                ).strip().lower() in {
                     "1",
                     "true",
                     "yes",
                     "on",
                 }
                 if enable_direct_fallback:
-                    direct_fallback_result = self._run_direct_joint_cycle(robot, joints, studs_with_joints)
+                    raise RuntimeError(
+                        "Direct move fallback is unavailable in simple stud mode. "
+                        "Use legacy demo mode/controller-driven execution instead."
+                    )
                 else:
                     raise RuntimeError(
                         "ProgramRun accepted but controller remained stopped immediately after launch. "
-                        f"loaded_program={loaded_program!r}, current_line={current_line!r}, "
-                        f"fault_codes={fault_codes!r}, upload_events={self._last_upload_events!r}"
+                        f"legacy_demo_mode={legacy_demo_mode!r}, loaded_program={loaded_program!r}, "
+                        f"current_line={current_line!r}, fault_codes={fault_codes!r}, "
+                        f"upload_events={self._last_upload_events!r}"
                     )
 
         return {
@@ -506,6 +480,7 @@ class WeldFlexRobotService:
             "run_result": run_result,
             "upload_events": list(self._last_upload_events),
             "loaded_program": loaded_program,
+            "legacy_demo_mode": legacy_demo_mode,
             "fault_codes": fault_codes,
             "direct_fallback_result": direct_fallback_result,
             "direct_cycle_completed": direct_fallback_result is not None,
@@ -605,19 +580,74 @@ class WeldFlexRobotService:
                     self._motion_state = "running"
 
             if not self._motion_stop_event.is_set():
-                try:
-                    resp = motion_robot.MoveJ(
-                        joint_pos=zerozero_joints, tool=tool_id, user=0,
-                        vel=move_vel, acc=100.0, ovl=100.0,
-                        exaxis_pos=[0.0, 0.0, 0.0, 0.0],
-                        blendT=-1.0, offset_flag=0,
-                        offset_pos=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                attempts: list[dict[str, Any]] = []
+
+                home_desc: list[float] | None = None
+                fk_resp = motion_robot.GetForwardKin(zerozero_joints)
+                fk_err, fk_value = self._split_error_value(fk_resp)
+                if fk_err == 0 and isinstance(fk_value, (list, tuple)) and len(fk_value) >= 6:
+                    home_desc = [float(v) for v in fk_value[:6]]
+
+                def _try_movej(name: str, invoke: Callable[[], Any]) -> bool:
+                    try:
+                        move_resp = invoke()
+                    except TypeError as exc:
+                        attempts.append({"attempt": name, "error": "TypeError", "detail": str(exc)})
+                        return False
+                    err_code, _ = self._split_error_value(move_resp)
+                    attempts.append({"attempt": name, "result": repr(move_resp), "error_code": err_code})
+                    return err_code == 0
+
+                move_ok = False
+                if home_desc is not None:
+                    move_ok = _try_movej(
+                        "MoveJ_desc_tool",
+                        lambda: motion_robot.MoveJ(
+                            joint_pos=zerozero_joints,
+                            desc_pos=home_desc,
+                            tool=tool_id,
+                            user=0,
+                            vel=move_vel,
+                            acc=100.0,
+                            ovl=100.0,
+                            exaxis_pos=[0.0, 0.0, 0.0, 0.0],
+                            blendT=-1.0,
+                            offset_flag=0,
+                            offset_pos=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                        ),
                     )
-                except TypeError:
-                    resp = motion_robot.MoveJ(zerozero_joints, tool_id, 0, vel=move_vel)
-                err, _ = self._split_error_value(resp)
-                if err != 0 and not self._motion_stop_event.is_set():
-                    raise RuntimeError(f"MoveJ home (start) failed: code={err}")
+
+                if not move_ok:
+                    move_ok = _try_movej(
+                        "MoveJ_full_tool",
+                        lambda: motion_robot.MoveJ(
+                            joint_pos=zerozero_joints,
+                            tool=tool_id,
+                            user=0,
+                            vel=move_vel,
+                            acc=100.0,
+                            ovl=100.0,
+                            exaxis_pos=[0.0, 0.0, 0.0, 0.0],
+                            blendT=-1.0,
+                            offset_flag=0,
+                            offset_pos=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                        ),
+                    )
+
+                if not move_ok:
+                    move_ok = _try_movej(
+                        "MoveJ_simple_tool",
+                        lambda: motion_robot.MoveJ(zerozero_joints, tool_id, 0, vel=move_vel),
+                    )
+
+                if (not move_ok) and int(tool_id) != 0:
+                    move_ok = _try_movej(
+                        "MoveJ_simple_tool0",
+                        lambda: motion_robot.MoveJ(zerozero_joints, 0, 0, vel=move_vel),
+                    )
+
+                if (not move_ok) and (not self._motion_stop_event.is_set()):
+                    raise RuntimeError(f"MoveJ home (start) failed. attempts={attempts!r}")
 
             for idx, target in enumerate(stud_targets):
                 if self._motion_stop_event.is_set():
@@ -652,19 +682,16 @@ class WeldFlexRobotService:
         return f"{float(value):.3f}".rstrip("0").rstrip(".")
 
     def _build_empty_studs_data_lua(
-        self, clearance_z_mm: float, zerozero_joints: list[float], zerozero_tcp: list[float]
+        self, clearance_z_mm: float, zerozero_joints: list[float]
     ) -> str:
         clearance = float(clearance_z_mm)
         if clearance < 0.0 or clearance > 500.0:
             raise ValueError("clearance_z_mm must be between 0 and 500 mm.")
         joints_lua = ", ".join(self._format_lua_number(v) for v in zerozero_joints)
-        tcp_lua = ", ".join(self._format_lua_number(v) for v in zerozero_tcp)
         return f"""-- Auto-generated by WeldFlex.
 -- Empty studs payload for utility motion.
 
 zerozeroJoints = {{{joints_lua}}}
-
-zerozeroWF = {{{tcp_lua}}}
 
 clearance_z_mm = {self._format_lua_number(clearance)}
 
@@ -675,51 +702,91 @@ studs = {{
     def goto_clearance_z(
         self,
         clearance_z_mm: float,
-        program_path: str,
         zerozero_joints: list[float] | None = None,
+        tool_id: int = 0,
     ) -> dict[str, Any]:
-        joints = validate_zerozero_joints(zerozero_joints)
+        # Keep validation for compatibility with existing callers and config checks.
+        validate_zerozero_joints(zerozero_joints)
+        configured_vel = float(os.getenv("WELDFLEX_DIRECT_MOVE_VEL", "50"))
+        # Calibration jog should be slower than production moves.
+        move_vel = min(configured_vel, 20.0)
+        move_timeout = float(os.getenv("WELDFLEX_DIRECT_MOVE_TIMEOUT_S", "45"))
+
         with self._lock:
             robot = self._client()
             robot.Mode(0)
-            fk_resp = robot.GetForwardKin(joints)
-            fk_error, fk_result = self._split_error_value(fk_resp)
-            if fk_error != 0 or not isinstance(fk_result, (list, tuple)) or len(fk_result) < 6:
-                raise RuntimeError(f"GetForwardKin failed: code={fk_error}, result={fk_result!r}")
-            zerozero_tcp = [float(v) for v in fk_result[:6]]
-            studs_data_lua = self._build_empty_studs_data_lua(clearance_z_mm, joints, zerozero_tcp)
-            self.upload_lua(studs_data_lua, self.studs_data_path)
-            self._upload_static_lua_scripts()
-            try:
-                load_result = robot.ProgramLoad(program_name=program_path)
-            except TypeError:
-                load_result = robot.ProgramLoad(program_path)
-            run_result = robot.ProgramRun()
-        return {"load_result": load_result, "run_result": run_result}
+            robot.RobotEnable(1)
+            tcp_resp = self._run_with_timeout(lambda: robot.GetActualTCPPose())
+            tcp_error, tcp_result = self._split_error_value(tcp_resp)
+            if tcp_error != 0 or not isinstance(tcp_result, list) or len(tcp_result) != 6:
+                raise RuntimeError(f"GetActualTCPPose failed: code={tcp_error}, result={tcp_result!r}")
+            current_tcp = [float(v) for v in tcp_result]
+
+        # Safety: lift straight up from current pose only (no XY change).
+        clearance_pos = [
+            current_tcp[0],
+            current_tcp[1],
+            current_tcp[2] + float(clearance_z_mm),
+            current_tcp[3],
+            current_tcp[4],
+            current_tcp[5],
+        ]
+        resp = self._run_with_timeout(
+            lambda: robot.MoveL(desc_pos=clearance_pos, tool=int(tool_id), user=0, vel=move_vel),
+            timeout=move_timeout,
+        )
+        err, _ = self._split_error_value(resp)
+        if err == 14:
+            # Err 14 is a generic controller-side execution failure. Recover once by
+            # clearing resettable errors and re-establishing auto/enabled state.
+            reset_result = self._run_with_timeout(lambda: robot.ResetAllError())
+            mode_result = self._run_with_timeout(lambda: robot.Mode(0))
+            enable_result = self._run_with_timeout(lambda: robot.RobotEnable(1))
+            resp = self._run_with_timeout(
+                lambda: robot.MoveL(desc_pos=clearance_pos, tool=int(tool_id), user=0, vel=move_vel),
+                timeout=move_timeout,
+            )
+            err, _ = self._split_error_value(resp)
+            if err != 0:
+                fault_codes = self._get_fault_codes(robot)
+                raise RuntimeError(
+                    f"MoveL to clearance z={clearance_z_mm:g} mm failed after retry: code={err}, "
+                    f"tool_id={int(tool_id)}, reset_result={reset_result!r}, "
+                    f"mode_result={mode_result!r}, enable_result={enable_result!r}, "
+                    f"fault_codes={fault_codes!r}"
+                )
+        elif err != 0:
+            fault_codes = self._get_fault_codes(robot)
+            raise RuntimeError(
+                f"MoveL to clearance z={clearance_z_mm:g} mm failed: code={err}, "
+                f"tool_id={int(tool_id)}, fault_codes={fault_codes!r}"
+            )
+        return {
+            "clearance_z_mm": clearance_z_mm,
+            "move_result": resp,
+            "tool_id": int(tool_id),
+            "start_tcp": current_tcp,
+            "target_tcp": clearance_pos,
+        }
 
     def goto_zerozero(self, zerozero_joints: list[float] | None = None) -> dict[str, Any]:
         joints = validate_zerozero_joints(zerozero_joints)
-        lua_path = Path(__file__).resolve().parents[1] / "robot" / "lua" / "goto_zerozero.lua"
-        if not lua_path.exists():
-            raise RuntimeError("goto_zerozero.lua not found in robot/lua.")
+        move_vel = float(os.getenv("WELDFLEX_DIRECT_MOVE_VEL", "50"))
+        move_timeout = float(os.getenv("WELDFLEX_DIRECT_MOVE_TIMEOUT_S", "45"))
 
         with self._lock:
             robot = self._client()
             robot.Mode(0)
-            fk_resp = robot.GetForwardKin(joints)
-            fk_error, fk_result = self._split_error_value(fk_resp)
-            if fk_error != 0 or not isinstance(fk_result, (list, tuple)) or len(fk_result) < 6:
-                raise RuntimeError(f"GetForwardKin failed: code={fk_error}, result={fk_result!r}")
-            zerozero_tcp = [float(v) for v in fk_result[:6]]
-            studs_data_lua = self._build_empty_studs_data_lua(50.0, joints, zerozero_tcp)
-            self.upload_lua(studs_data_lua, self.studs_data_path)
-            self.upload_lua(lua_path.read_text(encoding="utf-8"), "/fruser/goto_zerozero.lua")
-            try:
-                load_result = robot.ProgramLoad(program_name="/fruser/goto_zerozero.lua")
-            except TypeError:
-                load_result = robot.ProgramLoad("/fruser/goto_zerozero.lua")
-            run_result = robot.ProgramRun()
-        return {"load_result": load_result, "run_result": run_result}
+            robot.RobotEnable(1)
+
+        resp = self._run_with_timeout(
+            lambda: robot.MoveJ(joint_pos=joints, tool=0, user=0, vel=move_vel),
+            timeout=move_timeout,
+        )
+        err, _ = self._split_error_value(resp)
+        if err != 0:
+            raise RuntimeError(f"MoveJ to zerozero failed: code={err}")
+        return {"move_result": resp}
 
     def _run_with_timeout(self, fn: Callable[[], Any], timeout: float = SDK_CALL_TIMEOUT_S) -> Any:
         future = self._sdk_executor.submit(fn)
@@ -901,10 +968,38 @@ studs = {{
     def enable_drag(self) -> None:
         with self._lock:
             robot = self._client()
+        # FAIRINO examples enter manual mode before enabling drag teach.
+        stop_result: Any = None
+        try:
+            stop_result = self._run_with_timeout(lambda: robot.ProgramStop())
+        except Exception:
+            pass
+
+        mode_result = self._run_with_timeout(lambda: robot.Mode(1))
+        enable_result = self._run_with_timeout(lambda: robot.RobotEnable(1))
         result = self._run_with_timeout(lambda: robot.DragTeachSwitch(1))
         error_code, _ = self._split_error_value(result)
+        if error_code in (-1, 14):
+            reset_result = self._run_with_timeout(lambda: robot.ResetAllError())
+            mode_result = self._run_with_timeout(lambda: robot.Mode(1))
+            enable_result = self._run_with_timeout(lambda: robot.RobotEnable(1))
+            result = self._run_with_timeout(lambda: robot.DragTeachSwitch(1))
+            error_code, _ = self._split_error_value(result)
+            if error_code != 0:
+                fault_codes = self._get_fault_codes(robot)
+                raise RuntimeError(
+                    "DragTeachSwitch(1) failed after retry. "
+                    f"code={error_code}, mode_result={mode_result!r}, "
+                    f"enable_result={enable_result!r}, stop_result={stop_result!r}, "
+                    f"reset_result={reset_result!r}, fault_codes={fault_codes!r}"
+                )
         if error_code != 0:
-            raise RuntimeError(f"DragTeachSwitch(1) failed with error code {error_code}.")
+            fault_codes = self._get_fault_codes(robot)
+            raise RuntimeError(
+                f"DragTeachSwitch(1) failed with error code {error_code}. "
+                f"mode_result={mode_result!r}, enable_result={enable_result!r}, "
+                f"stop_result={stop_result!r}, fault_codes={fault_codes!r}"
+            )
 
     def disable_drag(self) -> None:
         with self._lock:
@@ -912,7 +1007,11 @@ studs = {{
         result = self._run_with_timeout(lambda: robot.DragTeachSwitch(0))
         error_code, _ = self._split_error_value(result)
         if error_code != 0:
-            raise RuntimeError(f"DragTeachSwitch(0) failed with error code {error_code}.")
+            fault_codes = self._get_fault_codes(robot)
+            raise RuntimeError(
+                f"DragTeachSwitch(0) failed with error code {error_code}. "
+                f"fault_codes={fault_codes!r}"
+            )
 
     def record_wobj_point(self, point_num: int) -> None:
         with self._lock:
@@ -937,7 +1036,7 @@ studs = {{
         # SetToolCoord activates the coordinate slot immediately (RAM); SetToolList persists it.
         # Both are required — pattern from FAIRINO SDK example (TestSetCommand.py).
         coord_resp = self._run_with_timeout(
-            lambda: robot.SetToolCoord(tool_id, tcp_floats, 0, 0, 0, 0)
+            lambda: robot.SetToolCoord(tool_id, tcp_floats, 0, 0, tool_id, 0)
         )
         error_code2, _ = self._split_error_value(coord_resp)
         if error_code2 != 0:
@@ -961,6 +1060,15 @@ studs = {{
         if method not in (0, 1):
             raise ValueError("WObj compute method must be 0 (origin-x-z) or 1 (origin-x-xy).")
         ref_frame = int(ref_frame)
+        # Calibration is captured in drag mode, but applying coordinates is more reliable
+        # with drag off and controller in auto/enabled state.
+        try:
+            self._run_with_timeout(lambda: robot.DragTeachSwitch(0))
+        except Exception:
+            pass
+        mode_result = self._run_with_timeout(lambda: robot.Mode(0))
+        enable_result = self._run_with_timeout(lambda: robot.RobotEnable(1))
+
         compute_resp = self._run_with_timeout(lambda: robot.ComputeWObjCoord(method, ref_frame))
         error_code, coord = self._split_error_value(compute_resp)
         if error_code != 0 or not isinstance(coord, list) or len(coord) < 6:
@@ -968,12 +1076,35 @@ studs = {{
         coord_floats = [float(v) for v in coord[:6]]
         set_resp = self._run_with_timeout(lambda: robot.SetWObjCoord(wobj_id, coord_floats, ref_frame))
         error_code2, _ = self._split_error_value(set_resp)
+        if error_code2 == 14:
+            # Err 14 is generic interface execution failure; recover once by clearing
+            # resettable faults and re-applying in auto mode.
+            reset_result = self._run_with_timeout(lambda: robot.ResetAllError())
+            mode_result = self._run_with_timeout(lambda: robot.Mode(0))
+            enable_result = self._run_with_timeout(lambda: robot.RobotEnable(1))
+            set_resp = self._run_with_timeout(lambda: robot.SetWObjCoord(wobj_id, coord_floats, ref_frame))
+            error_code2, _ = self._split_error_value(set_resp)
+            if error_code2 != 0:
+                fault_codes = self._get_fault_codes(robot)
+                raise RuntimeError(
+                    "SetWObjCoord failed after recovery retry. "
+                    f"code={error_code2}, mode_result={mode_result!r}, enable_result={enable_result!r}, "
+                    f"reset_result={reset_result!r}, fault_codes={fault_codes!r}"
+                )
         if error_code2 != 0:
-            raise RuntimeError(f"SetWObjCoord failed with error code {error_code2}.")
+            fault_codes = self._get_fault_codes(robot)
+            raise RuntimeError(
+                f"SetWObjCoord failed with error code {error_code2}. "
+                f"mode_result={mode_result!r}, enable_result={enable_result!r}, fault_codes={fault_codes!r}"
+            )
         list_resp = self._run_with_timeout(lambda: robot.SetWObjList(wobj_id, coord_floats, ref_frame))
         error_code3, _ = self._split_error_value(list_resp)
         if error_code3 != 0:
-            raise RuntimeError(f"SetWObjList failed with error code {error_code3}.")
+            fault_codes = self._get_fault_codes(robot)
+            raise RuntimeError(
+                f"SetWObjList failed with error code {error_code3}. "
+                f"fault_codes={fault_codes!r}"
+            )
         verify_resp = self._run_with_timeout(lambda: robot.GetWObjOffset(0))
         error_code4, wobj_verified = self._split_error_value(verify_resp)
         if error_code4 != 0 or not isinstance(wobj_verified, list) or len(wobj_verified) < 6:
@@ -999,6 +1130,9 @@ studs = {{
         line_error, _ = self._split_error_value(current_line_resp)
         connected = state_error == 0 and line_error == 0
 
+        with self._motion_lock:
+            motion_error = self._motion_error
+
         return {
             "connected": connected,
             "program_state_error": state_error,
@@ -1008,6 +1142,7 @@ studs = {{
             "program_state_raw": None,
             "program_state": motion_state,
             "current_line": motion_current_stud,
+            "motion_error": motion_error,
             "fault_codes": fault_codes,
         }
 

@@ -109,6 +109,13 @@ class WeldFlexRobotService:
 
         state_err, state_raw = self._unpack(state_resp)
         line_err, _ = self._unpack(line_resp)
+
+        # -4 means SDK is_connect=False (CNDE handshake failed). Reset so the
+        # next poll triggers a fresh Robot.RPC() call.
+        if state_err == -4 and line_err == -4:
+            with self._lock:
+                self._robot = None
+
         connected = (state_err == 0) or (line_err == 0)
 
         return {

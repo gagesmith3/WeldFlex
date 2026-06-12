@@ -78,54 +78,24 @@ sed \
 
 # ── 8. LightDM autologin ──────────────────────────────────────────────────────
 echo "==> Configuring LightDM..."
-# Must be in the main lightdm.conf — drop-in conf.d/ files are overridden by it
-LIGHTDM_CONF="/etc/lightdm/lightdm.conf"
+# Replace lightdm.conf entirely — patching is fragile. This is a kiosk, so we
+# own the display manager config completely.
+cat > /etc/lightdm/lightdm.conf << EOF
+[LightDM]
 
-if [ ! -f "$LIGHTDM_CONF" ]; then
-    cat > "$LIGHTDM_CONF" << EOF
 [Seat:*]
 autologin-user=$KIOSK_USER
 autologin-user-timeout=0
-user-session=weldflex-kiosk
 autologin-session=weldflex-kiosk
+user-session=weldflex-kiosk
 EOF
-else
-    # Update existing file — set all four keys under [Seat:*]
-    python3 - "$LIGHTDM_CONF" "$KIOSK_USER" << 'PYEOF'
-import sys, re
 
-conf_path = sys.argv[1]
-user = sys.argv[2]
-
-with open(conf_path) as f:
-    text = f.read()
-
-def set_key(text, key, value):
-    pattern = rf'^[#\s]*{re.escape(key)}\s*=.*$'
-    replacement = f'{key}={value}'
-    new_text, n = re.subn(pattern, replacement, text, flags=re.MULTILINE)
-    if n == 0:
-        # Key not present — append under [Seat:*] or at end
-        if '[Seat:*]' in new_text:
-            new_text = new_text.replace('[Seat:*]', f'[Seat:*]\n{replacement}', 1)
-        else:
-            new_text += f'\n[Seat:*]\n{replacement}\n'
-    return new_text
-
-for key, val in [
-    ('autologin-user', user),
-    ('autologin-user-timeout', '0'),
-    ('user-session', 'weldflex-kiosk'),
-    ('autologin-session', 'weldflex-kiosk'),
-]:
-    text = set_key(text, key, val)
-
-with open(conf_path, 'w') as f:
-    f.write(text)
-
-print(f"  lightdm.conf updated for user={user}, session=weldflex-kiosk")
-PYEOF
-fi
+# Remove the group-membership check from PAM autologin — on some RPi OS builds
+# this blocks autologin even when the user is in the autologin group.
+cat > /etc/pam.d/lightdm-autologin << 'EOF'
+auth    required pam_env.so
+auth    required pam_permit.so
+EOF
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 echo ""

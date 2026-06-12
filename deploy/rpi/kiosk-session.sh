@@ -1,5 +1,10 @@
 #!/bin/bash
-# WeldFlex kiosk X11 session — launched by LightDM
+# WeldFlex kiosk X11 session — launched by startx
+
+# Prevent screen blanking and DPMS power-off
+xset s off
+xset s noblank
+xset -dpms
 
 # Float the ft5x06 touchscreen off the master pointer so touch never shows a cursor
 TOUCH_ID=$(xinput list --id-only "10-0038 generic ft5x06 (00)" 2>/dev/null)

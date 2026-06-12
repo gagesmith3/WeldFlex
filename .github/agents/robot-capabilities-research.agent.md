@@ -1,7 +1,7 @@
 ---
 name: "Robot Capabilities Researcher"
 description: "Use when you need grounded answers about robot capabilities, Fairino SDK behavior, API methods, limits, motion features, welding support, IO, diagnostics, or Lua cycle behavior from local docs/code. Trigger phrases: robot capability, can the robot, Fairino SDK, supported command, robot limit, weld feature, SDK method, grounding from docs."
-tools: [read, search, web, edit, todo]
+tools: [read, search, web, edit, todo, agent, execute]
 argument-hint: "Ask a robot capability question and include any specific subsystem (motion, welding, IO, diagnostics, Lua, SDK API)."
 user-invocable: true
 ---

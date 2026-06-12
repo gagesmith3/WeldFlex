@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 import concurrent.futures
-import hashlib
 import os
 import sys
 import tempfile
 import threading
 import time
 from pathlib import Path
-from ftplib import FTP, all_errors as ftp_errors
 from typing import Any, Callable
 
 SDK_CALL_TIMEOUT_S = 5.0
@@ -47,9 +45,9 @@ except ImportError as exc:
     ) from exc
 
 try:
-    from .lua_builder import build_studs_data_lua, validate_zerozero_joints
+    from .lua_builder import build_studs_data_lua
 except ImportError:
-    from lua_builder import build_studs_data_lua, validate_zerozero_joints
+    from lua_builder import build_studs_data_lua
 
 
 STATE_MAP = {
@@ -74,17 +72,7 @@ class WeldFlexRobotService:
         self._last_jog_safety_sensitivity: int | None = None
         self._last_jog_safety_monotonic = 0.0
         self._jog_safety_refresh_s = 0.75
-        self._static_script_hashes: dict[str, str] = {}
-        self._last_upload_events: list[dict[str, str]] = []
-        self._last_sdk_attempts: list[dict[str, Any]] = []
         self._lock = threading.RLock()
-        self._motion_lock = threading.Lock()
-        self._motion_thread: threading.Thread | None = None
-        self._motion_stop_event = threading.Event()
-        self._motion_state = "stopped"
-        self._motion_current_stud = 0
-        self._motion_total_studs = 0
-        self._motion_error: str | None = None
         self._sdk_executor = concurrent.futures.ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="robot-sdk"
         )
@@ -101,7 +89,6 @@ class WeldFlexRobotService:
                 self._robot = None
                 self._last_jog_safety_sensitivity = None
                 self._last_jog_safety_monotonic = 0.0
-                self._static_script_hashes = {}
 
             if controller_host:
                 self.controller_host = controller_host
@@ -120,151 +107,38 @@ class WeldFlexRobotService:
             )
         return normalized
 
-    @staticmethod
-    def _sha256_text(content: str) -> str:
-        return hashlib.sha256(content.encode("utf-8")).hexdigest()
-
     def _client(self) -> Any:
         if self._robot is None:
             self._robot = Robot.RPC(self.robot_ip)
-            self._repair_sdk_connect_gate(self._robot)
         return self._robot
 
-    def _repair_sdk_connect_gate(self, robot: Any) -> None:
-        """Best-effort compatibility fix for SDK builds that gate XML-RPC on CNDE state.
-
-        Some SDK versions leave RPC.is_connect=False unless both CNDE and XML-RPC
-        initialize cleanly. WeldFlex relies on XML-RPC control paths, so if XML-RPC
-        is actually reachable we flip the gate to prevent false offline (-4) results.
-        """
-        rpc_cls = getattr(Robot, "RPC", None)
-        if rpc_cls is None:
-            return
-
-        if getattr(rpc_cls, "is_connect", True) is not False:
-            return
-
-        proxy = getattr(robot, "robot", None)
-        if proxy is None:
-            return
-
+    def _upload_lua_file(self, robot: Any, local_path: str, remote_name: str) -> Any:
         try:
-            probe = proxy.GetControllerIP()
+            self._run_with_timeout(lambda: robot.LuaDelete(remote_name))
         except Exception:
-            return
+            pass
+        result = self._run_with_timeout(lambda: robot.LuaUpload(local_path), timeout=30.0)
+        if not self._is_success_result(result):
+            raise RuntimeError(f"LuaUpload({remote_name}) failed: {result!r}")
+        return result
 
-        if self._is_success_result(probe):
-            setattr(rpc_cls, "is_connect", True)
+    def upload_program_lua(self, local_lua_path: str) -> dict[str, Any]:
+        """Upload a Lua program file to the controller (one-time setup)."""
+        local_path = Path(local_lua_path)
+        if not local_path.exists():
+            raise FileNotFoundError(f"Local Lua file not found: {local_path}")
+        remote_name = local_path.name
+        lua_text = local_path.read_text(encoding="utf-8")
 
-    def _upload_with_sdk(self, local_file: str, remote_file: str) -> str | None:
-        robot = self._client()
-        self._last_sdk_attempts = []
-
-        for name, args in [
-            ("_RPC__FileUpLoad", (0, local_file)),
-            ("LuaUpload", (local_file,)),
-            ("OpenLuaUpload", (local_file,)),
-            ("AxleLuaUpload", (local_file,)),
-            ("FileUpload", (local_file, remote_file)),
-            ("UploadFile", (local_file, remote_file)),
-            ("ProgramUpload", (local_file, remote_file)),
-            ("UploadProgram", (local_file, remote_file)),
-        ]:
-            method = getattr(robot, name, None)
-            if method is None:
-                self._last_sdk_attempts.append({"method": name, "status": "missing"})
-                continue
-            try:
-                result = method(*args)
-            except Exception as exc:
-                self._last_sdk_attempts.append(
-                    {"method": name, "status": "exception", "detail": f"{type(exc).__name__}: {exc}"}
-                )
-                continue
-            if self._is_success_result(result):
-                self._last_sdk_attempts.append(
-                    {"method": name, "status": "success", "result": repr(result)}
-                )
-                return name
-            self._last_sdk_attempts.append(
-                {"method": name, "status": "failed", "result": repr(result)}
-            )
-
-        return None
-
-    def _upload_with_ftp(self, local_file: str, remote_file: str, sdk_attempts: list | None = None) -> None:
-        user = os.getenv("WELDFLEX_FTP_USER", "anonymous")
-        password = os.getenv("WELDFLEX_FTP_PASS", "")
-        remote_dir, remote_name = remote_file.rsplit("/", 1)
-
-        try:
-            with FTP(self.controller_host, timeout=20) as ftp:
-                ftp.login(user=user, passwd=password)
-                # When logged in as fruser, the FTP root IS /fruser — cwd is a no-op at best
-                # and a 550 error at worst. Try it, but ignore failure.
-                try:
-                    ftp.cwd(remote_dir)
-                except Exception:
-                    pass
-                with open(local_file, "rb") as fp:
-                    ftp.storbinary(f"STOR {remote_name}", fp)
-        except ftp_errors as exc:
-            sdk_detail = f", sdk_attempts={sdk_attempts!r}" if sdk_attempts else ""
-            raise RuntimeError(
-                f"FTP upload failed for {remote_file} via {self.controller_host} "
-                f"as user '{user}': {exc}{sdk_detail}"
-            ) from exc
-
-    def upload_lua(self, lua_text: str, remote_file: str) -> None:
-        remote_name = remote_file.rsplit("/", 1)[1]
-        disable_ftp = os.getenv("WELDFLEX_DISABLE_FTP_FALLBACK", "").strip().lower() in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = os.path.join(tmp_dir, remote_name)
-            with open(tmp_path, "w", encoding="utf-8") as tmp:
-                tmp.write(lua_text)
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                f.write(lua_text)
+            with self._lock:
+                robot = self._client()
+                result = self._upload_lua_file(robot, tmp_path, remote_name)
 
-            sdk_method = self._upload_with_sdk(tmp_path, remote_file)
-            if sdk_method:
-                self._last_upload_events.append(
-                    {"remote_file": remote_file, "transport": f"sdk:{sdk_method}"}
-                )
-                return
-            if disable_ftp:
-                raise RuntimeError(
-                    f"SDK upload failed for {remote_file}; FTP fallback disabled. "
-                    f"sdk_attempts={self._last_sdk_attempts!r}"
-                )
-            self._upload_with_ftp(tmp_path, remote_file, sdk_attempts=self._last_sdk_attempts)
-            self._last_upload_events.append(
-                {"remote_file": remote_file, "transport": "ftp"}
-            )
-
-    def _upload_static_lua_scripts(self) -> None:
-        lua_dir = Path(__file__).resolve().parents[1] / "robot" / "lua"
-        for script_name in ("studCycle.lua", "weld.lua"):
-            script_path = lua_dir / script_name
-            if script_path.exists():
-                content = script_path.read_text(encoding="utf-8")
-                content_hash = self._sha256_text(content)
-                if self._static_script_hashes.get(script_name) == content_hash:
-                    continue
-                try:
-                    self.upload_lua(content, f"/fruser/{script_name}")
-                    self._static_script_hashes[script_name] = content_hash
-                except Exception as exc:
-                    # Upload failed (SDK rejected or FTP timed out). Log and continue — the
-                    # file may already be current on the robot from a prior session. ProgramLoad
-                    # will give a clear error if it really isn't there.
-                    self._last_upload_events.append({
-                        "remote_file": f"/fruser/{script_name}",
-                        "transport": "failed",
-                        "error": str(exc),
-                    })
+        return {"uploaded": f"/fruser/{remote_name}", "result": result}
 
     def configure_safety(self, collision_sensitivity: int = 3) -> dict[str, Any]:
         with self._lock:
@@ -300,404 +174,39 @@ class WeldFlexRobotService:
             self._last_jog_safety_sensitivity = sensitivity
             self._last_jog_safety_monotonic = now
 
-    def _run_direct_joint_cycle(
-        self,
-        robot: Any,
-        zerozero_joints: list[float],
-        studs: list[dict[str, Any]],
-    ) -> dict[str, Any]:
-        move_timeout = float(os.getenv("WELDFLEX_DIRECT_MOVE_TIMEOUT_S", "45"))
-        move_vel = float(os.getenv("WELDFLEX_DIRECT_MOVE_VEL", "50"))
-        exaxis_pos = [0.0, 0.0, 0.0, 0.0]
-        offset_pos = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-
-        def _movej(target_joints: list[float], label: str) -> Any:
-            try:
-                response = self._run_with_timeout(
-                    lambda: robot.MoveJ(
-                        joint_pos=target_joints,
-                        tool=0,
-                        user=0,
-                        vel=move_vel,
-                        acc=100.0,
-                        ovl=100.0,
-                        exaxis_pos=exaxis_pos,
-                        blendT=-1.0,
-                        offset_flag=0,
-                        offset_pos=offset_pos,
-                    ),
-                    timeout=move_timeout,
-                )
-            except TypeError:
-                response = self._run_with_timeout(
-                    lambda: robot.MoveJ(target_joints, 0, 0, vel=move_vel),
-                    timeout=move_timeout,
-                )
-
-            error_code, _ = self._split_error_value(response)
-            if error_code != 0:
-                raise RuntimeError(f"Direct MoveJ failed at {label}: code={error_code}, result={response!r}")
-            return response
-
-        _movej(zerozero_joints, "home-start")
-        for index, stud in enumerate(studs, start=1):
-            stud_joints_raw = stud.get("joints")
-            if not isinstance(stud_joints_raw, list) or len(stud_joints_raw) != 6:
-                raise RuntimeError(f"Stud #{index} missing joint target for direct move fallback.")
-            stud_joints = [float(v) for v in stud_joints_raw]
-            _movej(stud_joints, f"stud-{index}")
-        _movej(zerozero_joints, "home-end")
-
-        return {
-            "mode": "direct_movej_fallback",
-            "stud_count": len(studs),
-            "velocity": move_vel,
-            "move_timeout_s": move_timeout,
-        }
-
     def upload_load_run(
         self,
         studs: list[dict[str, float]],
         remote_file: str,
-        clearance_z_mm: float = 50.0,
-        collision_sensitivity: int = 3,
-        zerozero_joints: list[float] | None = None,
     ) -> dict[str, Any]:
-        joints = validate_zerozero_joints(zerozero_joints)
+        studs_data_lua = build_studs_data_lua(studs)
+        remote_data_name = "studs_data.lua"
 
-        with self._lock:
-            self._last_upload_events = []
-            robot = self._client()
-            mode_result = robot.Mode(0)
-            enable_result = robot.RobotEnable(1)
-            robot.SetAnticollision(mode=0, level=[float(collision_sensitivity)] * 6, config=0)
-            robot.SetCollisionStrategy(strategy=0, safeTime=1000, safeDistance=100, safetyMargin=[10, 10, 10, 10, 10, 10])
-            robot.SetStaticCollisionOnOff(status=1)
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = os.path.join(tmp_dir, remote_data_name)
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                f.write(studs_data_lua)
 
-            studs_data_lua = build_studs_data_lua(
-                studs,
-                clearance_z_mm,
-                zerozero_joints=joints,
-            )
-            self.upload_lua(studs_data_lua, self.studs_data_path)
-            # Non-fatal: keep static Lua scripts current on the robot.
-            # Legacy demo mode relies on the controller-side base recipe and taught points.
-            self._upload_static_lua_scripts()
-
-            try:
-                load_result = robot.ProgramLoad(program_name=remote_file)
-            except TypeError:
-                load_result = robot.ProgramLoad(remote_file)
-
-            load_retry_result: Any = None
-            if not self._is_success_result(load_result):
-                try:
-                    load_retry_result = robot.ProgramLoad(program_name=remote_file)
-                except TypeError:
-                    load_retry_result = robot.ProgramLoad(remote_file)
-                load_result = load_retry_result
-
-            if not self._is_success_result(load_result):
-                raise RuntimeError(
-                    f"ProgramLoad failed for {remote_file}. "
-                    f"load_result={load_result!r}, load_retry_result={load_retry_result!r}, "
-                    f"upload_events={self._last_upload_events!r}"
-                )
-
-            run_result = robot.ProgramRun()
-            if not self._is_success_result(run_result):
-                fault_codes = self._get_fault_codes(robot)
-                raise RuntimeError(
-                    "ProgramRun failed after successful load/mode. "
-                    f"run_result={run_result!r}, fault_codes={fault_codes!r}"
-                )
-
-            # Verify launch over a short window; single-sample checks are too brittle.
-            launch_seen_running = False
-            state_error = -1
-            line_error = -1
-            program_state = None
-            current_line = None
-            program_state_resp: Any = None
-            current_line_resp: Any = None
-            launch_deadline = time.monotonic() + 2.0
-            while time.monotonic() < launch_deadline:
-                program_state_resp = self._run_with_timeout(lambda: robot.GetProgramState())
-                current_line_resp = self._run_with_timeout(lambda: robot.GetCurrentLine())
-                state_error, program_state = self._split_error_value(program_state_resp)
-                line_error, current_line = self._split_error_value(current_line_resp)
-                mapped_state = STATE_MAP.get(program_state, "unknown")
-                if state_error == 0 and mapped_state in {"running", "paused"}:
-                    launch_seen_running = True
-                    break
-                time.sleep(0.2)
-
-            loaded_program = self._get_loaded_program(robot)
-            fault_codes = self._get_fault_codes(robot)
-
-            # Fall back when ProgramRun was accepted but never transitions into running/paused.
-            legacy_demo_mode = os.getenv("WELDFLEX_LEGACY_DEMO_MODE", "1").strip().lower() in {
-                "1",
-                "true",
-                "yes",
-                "on",
-            }
-            direct_fallback_result: dict[str, Any] | None = None
-            if (
-                not launch_seen_running
-                and state_error == 0
-                and line_error == 0
-                and STATE_MAP.get(program_state, "unknown") == "stopped"
-            ):
-                enable_direct_fallback = (not legacy_demo_mode) and os.getenv(
-                    "WELDFLEX_ENABLE_DIRECT_MOVE_FALLBACK", "1"
-                ).strip().lower() in {
-                    "1",
-                    "true",
-                    "yes",
-                    "on",
-                }
-                if enable_direct_fallback:
+            with self._lock:
+                robot = self._client()
+                upload_result = self._upload_lua_file(robot, tmp_path, remote_data_name)
+                self._run_with_timeout(lambda: robot.Mode(0))
+                self._run_with_timeout(lambda: robot.LoadDefaultProgConfig(0, remote_file))
+                self._run_with_timeout(lambda: robot.ProgramLoad(remote_file))
+                run_result = self._run_with_timeout(lambda: robot.ProgramRun())
+                if not self._is_success_result(run_result):
+                    fault_codes = self._get_fault_codes(robot)
                     raise RuntimeError(
-                        "Direct move fallback is unavailable in simple stud mode. "
-                        "Use legacy demo mode/controller-driven execution instead."
-                    )
-                else:
-                    raise RuntimeError(
-                        "ProgramRun accepted but controller remained stopped immediately after launch. "
-                        f"legacy_demo_mode={legacy_demo_mode!r}, loaded_program={loaded_program!r}, "
-                        f"current_line={current_line!r}, fault_codes={fault_codes!r}, "
-                        f"upload_events={self._last_upload_events!r}"
+                        f"ProgramRun failed: {run_result!r}, fault_codes={fault_codes!r}"
                     )
 
         return {
-            "program_path": remote_file,
-            "studs_data_path": self.studs_data_path,
-            "load_result": load_result,
-            "load_retry_result": load_retry_result,
-            "mode_result": mode_result,
-            "enable_result": enable_result,
+            "program": remote_file,
+            "studs_uploaded": len(studs),
+            "upload_result": upload_result,
             "run_result": run_result,
-            "upload_events": list(self._last_upload_events),
-            "loaded_program": loaded_program,
-            "legacy_demo_mode": legacy_demo_mode,
-            "fault_codes": fault_codes,
-            "direct_fallback_result": direct_fallback_result,
-            "direct_cycle_completed": direct_fallback_result is not None,
-            "post_run_status": {
-                "connected": state_error == 0 and line_error == 0,
-                "program_state": STATE_MAP.get(program_state, "unknown"),
-                "program_state_raw": program_state,
-                "program_state_error": state_error,
-                "current_line": current_line,
-                "current_line_error": line_error,
-                "program_state_response": program_state_resp,
-                "current_line_response": current_line_resp,
-            },
         }
 
-
-    def run_direct_cycle(
-        self,
-        studs: list[dict[str, float]],
-        clearance_z_mm: float = 50.0,
-        collision_sensitivity: int = 3,
-        zerozero_joints: list[float] | None = None,
-        tool_id: int = 0,
-    ) -> dict[str, Any]:
-        """Start a direct-motion stud cycle in a background thread. Returns immediately."""
-        joints = validate_zerozero_joints(zerozero_joints)
-
-        with self._motion_lock:
-            if self._motion_thread is not None and self._motion_thread.is_alive():
-                raise RuntimeError("A motion cycle is already running.")
-            self._motion_stop_event.clear()
-            self._motion_state = "starting"
-            self._motion_current_stud = 0
-            self._motion_total_studs = len(studs)
-            self._motion_error = None
-
-        move_vel = float(os.getenv("WELDFLEX_DIRECT_MOVE_VEL", "50"))
-
-        with self._lock:
-            robot = self._client()
-            robot.Mode(0)
-            robot.RobotEnable(1)
-            robot.SetAnticollision(mode=0, level=[float(collision_sensitivity)] * 6, config=0)
-            robot.SetCollisionStrategy(
-                strategy=0, safeTime=1000, safeDistance=100, safeVel=100,
-                safetyMargin=[10, 10, 10, 10, 10, 10],
-            )
-            robot.SetStaticCollisionOnOff(status=1)
-
-            fk_resp = self._run_with_timeout(lambda: robot.GetForwardKin(joints))
-            fk_err, fk_result = self._split_error_value(fk_resp)
-            if fk_err != 0 or not isinstance(fk_result, (list, tuple)) or len(fk_result) < 6:
-                with self._motion_lock:
-                    self._motion_state = "stopped"
-                raise RuntimeError(f"GetForwardKin failed: code={fk_err}, result={fk_result!r}")
-            zerozero_tcp = [float(v) for v in fk_result[:6]]
-
-        zerozero_clearance = [
-            zerozero_tcp[0], zerozero_tcp[1], zerozero_tcp[2] + clearance_z_mm,
-            zerozero_tcp[3], zerozero_tcp[4], zerozero_tcp[5],
-        ]
-        stud_targets = [
-            [
-                zerozero_tcp[0] + float(s["x"]),
-                zerozero_tcp[1] + float(s["y"]),
-                zerozero_tcp[2] + clearance_z_mm,
-                zerozero_tcp[3], zerozero_tcp[4], zerozero_tcp[5],
-            ]
-            for s in studs
-        ]
-
-        thread = threading.Thread(
-            target=self._motion_loop,
-            args=(joints, zerozero_clearance, stud_targets, move_vel, tool_id),
-            daemon=True,
-            name="weldflex-motion",
-        )
-        with self._motion_lock:
-            self._motion_thread = thread
-        thread.start()
-
-        return {"stud_count": len(studs), "move_vel": move_vel, "tool_id": tool_id}
-
-    def _motion_loop(
-        self,
-        zerozero_joints: list[float],
-        zerozero_clearance: list[float],
-        stud_targets: list[list[float]],
-        move_vel: float,
-        tool_id: int = 0,
-    ) -> None:
-        motion_robot = Robot.RPC(self.robot_ip)
-        self._repair_sdk_connect_gate(motion_robot)
-        try:
-            with self._motion_lock:
-                if not self._motion_stop_event.is_set():
-                    self._motion_state = "running"
-
-            if not self._motion_stop_event.is_set():
-                attempts: list[dict[str, Any]] = []
-
-                home_desc: list[float] | None = None
-                fk_resp = motion_robot.GetForwardKin(zerozero_joints)
-                fk_err, fk_value = self._split_error_value(fk_resp)
-                if fk_err == 0 and isinstance(fk_value, (list, tuple)) and len(fk_value) >= 6:
-                    home_desc = [float(v) for v in fk_value[:6]]
-
-                def _try_movej(name: str, invoke: Callable[[], Any]) -> bool:
-                    try:
-                        move_resp = invoke()
-                    except TypeError as exc:
-                        attempts.append({"attempt": name, "error": "TypeError", "detail": str(exc)})
-                        return False
-                    err_code, _ = self._split_error_value(move_resp)
-                    attempts.append({"attempt": name, "result": repr(move_resp), "error_code": err_code})
-                    return err_code == 0
-
-                move_ok = False
-                if home_desc is not None:
-                    move_ok = _try_movej(
-                        "MoveJ_desc_tool",
-                        lambda: motion_robot.MoveJ(
-                            joint_pos=zerozero_joints,
-                            desc_pos=home_desc,
-                            tool=tool_id,
-                            user=0,
-                            vel=move_vel,
-                            acc=100.0,
-                            ovl=100.0,
-                            exaxis_pos=[0.0, 0.0, 0.0, 0.0],
-                            blendT=-1.0,
-                            offset_flag=0,
-                            offset_pos=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-                        ),
-                    )
-
-                if not move_ok:
-                    move_ok = _try_movej(
-                        "MoveJ_full_tool",
-                        lambda: motion_robot.MoveJ(
-                            joint_pos=zerozero_joints,
-                            tool=tool_id,
-                            user=0,
-                            vel=move_vel,
-                            acc=100.0,
-                            ovl=100.0,
-                            exaxis_pos=[0.0, 0.0, 0.0, 0.0],
-                            blendT=-1.0,
-                            offset_flag=0,
-                            offset_pos=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-                        ),
-                    )
-
-                if not move_ok:
-                    move_ok = _try_movej(
-                        "MoveJ_simple_tool",
-                        lambda: motion_robot.MoveJ(zerozero_joints, tool_id, 0, vel=move_vel),
-                    )
-
-                if (not move_ok) and int(tool_id) != 0:
-                    move_ok = _try_movej(
-                        "MoveJ_simple_tool0",
-                        lambda: motion_robot.MoveJ(zerozero_joints, 0, 0, vel=move_vel),
-                    )
-
-                if (not move_ok) and (not self._motion_stop_event.is_set()):
-                    raise RuntimeError(f"MoveJ home (start) failed. attempts={attempts!r}")
-
-            for idx, target in enumerate(stud_targets):
-                if self._motion_stop_event.is_set():
-                    break
-                with self._motion_lock:
-                    self._motion_current_stud = idx + 1
-
-                resp = motion_robot.MoveL(desc_pos=target, tool=tool_id, user=0, vel=move_vel)
-                err, _ = self._split_error_value(resp)
-                if err != 0 and not self._motion_stop_event.is_set():
-                    raise RuntimeError(f"MoveL stud {idx + 1} failed: code={err}")
-
-            if not self._motion_stop_event.is_set():
-                motion_robot.MoveL(desc_pos=zerozero_clearance, tool=tool_id, user=0, vel=move_vel)
-
-        except Exception as exc:
-            with self._motion_lock:
-                self._motion_error = str(exc)
-        finally:
-            with self._motion_lock:
-                self._motion_state = "stopped"
-                self._motion_current_stud = 0
-            try:
-                motion_robot.CloseRPC()
-            except Exception:
-                pass
-
-    @staticmethod
-    def _format_lua_number(value: float) -> str:
-        if float(value).is_integer():
-            return str(int(value))
-        return f"{float(value):.3f}".rstrip("0").rstrip(".")
-
-    def _build_empty_studs_data_lua(
-        self, clearance_z_mm: float, zerozero_joints: list[float]
-    ) -> str:
-        clearance = float(clearance_z_mm)
-        if clearance < 0.0 or clearance > 500.0:
-            raise ValueError("clearance_z_mm must be between 0 and 500 mm.")
-        joints_lua = ", ".join(self._format_lua_number(v) for v in zerozero_joints)
-        return f"""-- Auto-generated by WeldFlex.
--- Empty studs payload for utility motion.
-
-zerozeroJoints = {{{joints_lua}}}
-
-clearance_z_mm = {self._format_lua_number(clearance)}
-
-studs = {{
-}}
-"""
 
     def goto_clearance_z(
         self,
@@ -705,8 +214,6 @@ studs = {{
         zerozero_joints: list[float] | None = None,
         tool_id: int = 0,
     ) -> dict[str, Any]:
-        # Keep validation for compatibility with existing callers and config checks.
-        validate_zerozero_joints(zerozero_joints)
         configured_vel = float(os.getenv("WELDFLEX_DIRECT_MOVE_VEL", "50"))
         # Calibration jog should be slower than production moves.
         move_vel = min(configured_vel, 20.0)
@@ -770,7 +277,9 @@ studs = {{
         }
 
     def goto_zerozero(self, zerozero_joints: list[float] | None = None) -> dict[str, Any]:
-        joints = validate_zerozero_joints(zerozero_joints)
+        if not zerozero_joints or len(zerozero_joints) != 6:
+            raise ValueError("zerozero_joints must be a list of 6 floats.")
+        joints = [float(v) for v in zerozero_joints]
         move_vel = float(os.getenv("WELDFLEX_DIRECT_MOVE_VEL", "50"))
         move_timeout = float(os.getenv("WELDFLEX_DIRECT_MOVE_TIMEOUT_S", "45"))
 
@@ -799,57 +308,31 @@ studs = {{
                 f"Robot did not respond within {int(timeout)} s — connection may be lost."
             )
 
-    def _sdk_call_with_reconnect_retry(
-        self,
-        call_factory: Callable[[Any], Any],
-        *,
-        attempts: int = 2,
-    ) -> Any:
-        """Run an SDK call and retry once after reconnect when errcode is -4."""
-        last_result: Any = None
-        for attempt in range(attempts):
-            with self._lock:
-                robot = self._client()
-
-            result = self._run_with_timeout(lambda: call_factory(robot))
-            errcode, _ = self._split_error_value(result)
-            last_result = result
-            if errcode != -4:
-                return result
-
-            if attempt < attempts - 1:
-                with self._lock:
-                    self._robot = None
-
-        return last_result
-
     def pause(self) -> dict[str, Any]:
         with self._lock:
             robot = self._client()
-        # PauseMotion uses TCP port 8080 (independent of XML-RPC) and works mid-move.
-        pause_result = self._run_with_timeout(lambda: robot.PauseMotion())
-        with self._motion_lock:
-            if self._motion_state == "running":
-                self._motion_state = "paused"
+        pause_api = getattr(robot, "ProgramPause", None)
+        if not callable(pause_api):
+            raise RuntimeError("ProgramPause is not available in this SDK build.")
+        pause_result = self._run_with_timeout(lambda: pause_api())
         return {"pause_result": pause_result}
 
     def resume(self) -> dict[str, Any]:
         with self._lock:
             robot = self._client()
-        resume_result = self._run_with_timeout(lambda: robot.ResumeMotion())
-        with self._motion_lock:
-            if self._motion_state == "paused":
-                self._motion_state = "running"
+        resume_api = getattr(robot, "ProgramResume", None)
+        if not callable(resume_api):
+            raise RuntimeError("ProgramResume is not available in this SDK build.")
+        resume_result = self._run_with_timeout(lambda: resume_api())
         return {"resume_result": resume_result}
 
     def stop(self) -> dict[str, Any]:
-        self._motion_stop_event.set()
         with self._lock:
             robot = self._client()
-        stop_result = self._run_with_timeout(lambda: robot.StopMotion())
-        with self._motion_lock:
-            self._motion_state = "stopped"
-            self._motion_current_stud = 0
+        stop_api = getattr(robot, "ProgramStop", None)
+        if not callable(stop_api):
+            raise RuntimeError("ProgramStop is not available in this SDK build.")
+        stop_result = self._run_with_timeout(lambda: stop_api())
         return {"stop_result": stop_result}
 
     def reset_all_errors(self) -> dict[str, Any]:
@@ -860,21 +343,25 @@ studs = {{
         mode_result = self._run_with_timeout(lambda: robot.Mode(0))
         return {"reset_result": result, "mode_result": mode_result}
 
+    def close(self) -> None:
+        with self._lock:
+            if self._robot is not None:
+                try:
+                    self._robot.CloseRPC()
+                except Exception:
+                    pass
+                self._robot = None
+
     def reconnect(self) -> dict[str, Any]:
         with self._lock:
+            if self._robot is not None:
+                try:
+                    self._robot.CloseRPC()
+                except Exception:
+                    pass
             self._robot = None
             robot = self._client()
         return {"reconnected": True, "robot_ip": self.robot_ip}
-
-    def get_tcp_pose(self) -> list[float]:
-        with self._lock:
-            robot = self._client()
-
-        response = self._run_with_timeout(lambda: robot.GetActualTCPPose())
-        error_code, pose = self._split_error_value(response)
-        if error_code != 0 or not isinstance(pose, list) or len(pose) != 6:
-            raise RuntimeError(f"Read TCP pose failed with error code {error_code}.")
-        return [float(value) for value in pose]
 
     def get_joint_positions(self) -> list[float]:
         with self._lock:
@@ -977,13 +464,13 @@ studs = {{
 
         mode_result = self._run_with_timeout(lambda: robot.Mode(1))
         enable_result = self._run_with_timeout(lambda: robot.RobotEnable(1))
-        result = self._run_with_timeout(lambda: robot.DragTeachSwitch(1))
+        result = self._run_with_timeout(lambda: robot.DragTeachSwitch(state=1))
         error_code, _ = self._split_error_value(result)
         if error_code in (-1, 14):
             reset_result = self._run_with_timeout(lambda: robot.ResetAllError())
             mode_result = self._run_with_timeout(lambda: robot.Mode(1))
             enable_result = self._run_with_timeout(lambda: robot.RobotEnable(1))
-            result = self._run_with_timeout(lambda: robot.DragTeachSwitch(1))
+            result = self._run_with_timeout(lambda: robot.DragTeachSwitch(state=1))
             error_code, _ = self._split_error_value(result)
             if error_code != 0:
                 fault_codes = self._get_fault_codes(robot)
@@ -1004,12 +491,12 @@ studs = {{
     def disable_drag(self) -> None:
         with self._lock:
             robot = self._client()
-        result = self._run_with_timeout(lambda: robot.DragTeachSwitch(0))
+        result = self._run_with_timeout(lambda: robot.DragTeachSwitch(state=0))
         error_code, _ = self._split_error_value(result)
         if error_code != 0:
             fault_codes = self._get_fault_codes(robot)
             raise RuntimeError(
-                f"DragTeachSwitch(0) failed with error code {error_code}. "
+                f"DragTeachSwitch(state=0) failed with error code {error_code}. "
                 f"fault_codes={fault_codes!r}"
             )
 
@@ -1112,10 +599,6 @@ studs = {{
         return [float(v) for v in wobj_verified[:6]]
 
     def status(self) -> dict[str, Any]:
-        with self._motion_lock:
-            motion_state = self._motion_state
-            motion_current_stud = self._motion_current_stud
-
         with self._lock:
             robot = self._client()
 
@@ -1126,12 +609,9 @@ studs = {{
         )
         fault_codes = self._get_fault_codes(robot)
 
-        state_error, _ = self._split_error_value(program_state_resp)
-        line_error, _ = self._split_error_value(current_line_resp)
-        connected = state_error == 0 and line_error == 0
-
-        with self._motion_lock:
-            motion_error = self._motion_error
+        state_error, program_state = self._split_error_value(program_state_resp)
+        line_error, current_line = self._split_error_value(current_line_resp)
+        connected = (state_error == 0) or (line_error == 0)
 
         return {
             "connected": connected,
@@ -1139,10 +619,9 @@ studs = {{
             "current_line_error": line_error,
             "program_state_response": program_state_resp,
             "current_line_response": current_line_resp,
-            "program_state_raw": None,
-            "program_state": motion_state,
-            "current_line": motion_current_stud,
-            "motion_error": motion_error,
+            "program_state_raw": program_state,
+            "program_state": STATE_MAP.get(program_state, "unknown"),
+            "current_line": current_line,
             "fault_codes": fault_codes,
         }
 
@@ -1219,22 +698,3 @@ studs = {{
             return result[0] == 0
         return False
 
-    def _get_loaded_program(self, robot: Any) -> Any:
-        getter = getattr(robot, "GetLoadedProgram", None)
-        if getter is None:
-            return "GetLoadedProgram not supported"
-
-        try:
-            result = getter()
-        except Exception as exc:
-            return f"GetLoadedProgram failed: {exc}"
-
-        if isinstance(result, tuple):
-            if len(result) >= 2 and result[0] == 0:
-                return result[1]
-            return {"raw": result}
-        if isinstance(result, list):
-            if len(result) >= 2 and result[0] == 0:
-                return result[1]
-            return {"raw": result}
-        return result

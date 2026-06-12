@@ -9,7 +9,7 @@ import subprocess
 import sys
 import threading
 import time
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -51,8 +51,6 @@ _mock_system_state: dict[str, Any] = {
     "ip_address": "192.168.1.100",
     "sys_user": "pi",
 }
-_mock_time_delta_seconds = 0.0
-_mock_time_set_at = 0.0
 
 COMMON_TIMEZONES = [
     "UTC",
@@ -75,13 +73,7 @@ COMMON_TIMEZONES = [
 def _get_system_info() -> dict:
     """Gather live system info for the General Settings page."""
     is_linux = sys.platform == "linux"
-
-    # Calculate current time (handling mock time override if on dev platform)
-    if not is_linux and not _mock_system_state["ntp_enabled"] and _mock_time_set_at > 0:
-        elapsed = time.time() - _mock_time_set_at
-        now = datetime.now() + timedelta(seconds=_mock_time_delta_seconds + elapsed)
-    else:
-        now = datetime.now()
+    now = datetime.now()
 
     info = {
         "datetime": now.strftime("%Y-%m-%d %H:%M"),
@@ -186,19 +178,13 @@ def create_app() -> Flask:
 
     robot_ip = os.getenv("WELDFLEX_ROBOT_IP", "192.168.58.2")
     controller_host = os.getenv("WELDFLEX_CONTROLLER_HOST", robot_ip)
-    default_program_path = os.getenv("WELDFLEX_PROGRAM_PATH", "/fruser/studCycle.lua")
+    default_program_path = os.getenv("WELDFLEX_PROGRAM_PATH", "studCycle.lua")
     studs_data_path = os.getenv("WELDFLEX_STUDS_DATA_PATH", "/fruser/studs_data.lua").strip()
     if studs_data_path != "/fruser/studs_data.lua":
         raise ValueError(
             "WELDFLEX_STUDS_DATA_PATH must be '/fruser/studs_data.lua' to match studCycle.lua include path."
         )
     status_interval_ms = int(os.getenv("WELDFLEX_STATUS_INTERVAL_MS", "1000"))
-    legacy_demo_mode = os.getenv("WELDFLEX_LEGACY_DEMO_MODE", "1").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
     enable_calibrate_test_z = os.getenv("WELDFLEX_ENABLE_CALIBRATE_TEST_Z", "0").strip().lower() in {
         "1",
         "true",
@@ -212,7 +198,6 @@ def create_app() -> Flask:
         "program_path": default_program_path,
         "studs_data_path": studs_data_path,
         "status_interval_ms": status_interval_ms,
-        "legacy_demo_mode": legacy_demo_mode,
         "enable_calibrate_test_z": enable_calibrate_test_z,
     }
 
@@ -569,14 +554,12 @@ def create_app() -> Flask:
             program_state_raw = status.get("program_state_raw")
             current_line = status.get("current_line", "-")
             connected = bool(status.get("connected", False))
-            motion_error = status.get("motion_error")
             fault_snapshot = _fault_snapshot(status)
         except Exception:
             program_state = "unknown"
             program_state_raw = None
             current_line = "-"
             connected = None
-            motion_error = None
             fault_snapshot = {
                 "main_code": None,
                 "sub_code": None,
@@ -597,7 +580,6 @@ def create_app() -> Flask:
         summary["fault_robot_error_response"] = fault_snapshot.get("robot_error_response")
         summary["fault_safety_error"] = fault_snapshot.get("safety_error")
         summary["fault_safety_response"] = fault_snapshot.get("safety_response")
-        summary["motion_error"] = motion_error
 
         fault_brief = _format_fault_brief(fault_snapshot)
         summary["fault_brief"] = fault_brief
@@ -615,7 +597,6 @@ def create_app() -> Flask:
                 f"Robot State: {summary.get('program_state')} (raw {summary.get('program_state_raw')})",
                 f"Connection: {'Online' if summary.get('status_connected') else ('Offline' if summary.get('status_connected') is False else 'Unknown')}",
                 f"Last Command: {summary.get('last_command')}",
-                f"Motion Error: {summary.get('motion_error') or 'none'}",
                 f"Robot Fault Err: {summary.get('fault_robot_error_error')}",
                 f"Safety Err: {summary.get('fault_safety_error')}",
                 f"Robot Fault Raw: {summary.get('fault_robot_error_response')}",
@@ -1293,34 +1274,13 @@ def create_app() -> Flask:
                 raise ValueError("Another production run is already active. Stop it before starting a new run.")
 
             run_state_manager.stage_batch(recipe_name, run_count, studs)
-
-            clearance_z = get_clearance_z_mm()
-            sensitivity = get_collision_sensitivity()
-
-            tool_id = get_active_tool_id()
-
-            def _launch_and_log(batch_studs: list[dict[str, float]], _: str) -> Any:
-                result = robot_service.run_direct_cycle(
-                    batch_studs,
-                    clearance_z_mm=clearance_z,
-                    collision_sensitivity=sensitivity,
-                    zerozero_joints=get_zerozero_joint_positions(),
-                    tool_id=tool_id,
-                )
-                app.logger.info("Library run started: %s", result)
-                return result
-
-            run_state_manager.start_next_batch_cycle(
-                launch_cycle=_launch_and_log,
-                program_path=runtime_settings["program_path"],
-            )
-            stamp_command_state("Run", "ok", f"Started {recipe_name} cycle 1/{run_count}")
+            stamp_command_state("Load", "ok", f"Loaded {recipe_name} — press Run to start")
 
             if request.headers.get("HX-Request") == "true":
                 return "", 204, {"HX-Redirect": "/operator"}
             return redirect("/operator")
         except Exception as exc:
-            stamp_command_state("Run", "error", str(exc))
+            stamp_command_state("Load", "error", str(exc))
             return render_template(
                 "partials/command_result.html",
                 ok=False,
@@ -1376,15 +1336,9 @@ def create_app() -> Flask:
 
         try:
             studs = parse_studs_text(studs_text)
-            result = robot_service.run_direct_cycle(
-                studs,
-                clearance_z_mm=get_clearance_z_mm(),
-                collision_sensitivity=get_collision_sensitivity(),
-                zerozero_joints=get_zerozero_joint_positions(),
-                tool_id=get_active_tool_id(),
-            )
-            run_state_manager.start_designer_cycle()
-            stamp_command_state("Run", "ok", "Launched unsaved designer job")
+            program_path = runtime_settings["program_path"]
+            result = robot_service.upload_load_run(studs, program_path)
+            stamp_command_state("Run", "ok", "Run command sent to controller")
             return render_template("partials/command_result.html", ok=True, title="Run", payload=result)
         except Exception as exc:
             stamp_command_state("Run", "error", str(exc))
@@ -1453,18 +1407,9 @@ def create_app() -> Flask:
     @app.post("/ui/home/run-next")
     def ui_home_run_next() -> Any:
         try:
-            clearance_z = get_clearance_z_mm()
-            sensitivity = get_collision_sensitivity()
-
-            def _launch_and_log(studs: list[dict[str, float]], _: str) -> Any:
-                result = robot_service.run_direct_cycle(
-                    studs,
-                    clearance_z_mm=clearance_z,
-                    collision_sensitivity=sensitivity,
-                    zerozero_joints=get_zerozero_joint_positions(),
-                    tool_id=get_active_tool_id(),
-                )
-                app.logger.info("Run-next started: %s", result)
+            def _launch_and_log(studs: list[dict[str, float]], path: str) -> Any:
+                result = robot_service.upload_load_run(studs, path)
+                app.logger.info("Run-next robot result: %s", result)
                 return result
 
             run_state_manager.start_next_batch_cycle(
@@ -1505,6 +1450,25 @@ def create_app() -> Flask:
             return render_template("partials/diagnostics_readout.html", snapshot=snapshot, ok=False, status=status, uptime=uptime)
 
         return render_template("partials/diagnostics_readout.html", snapshot=snapshot, ok=True, status=status, uptime=uptime)
+
+    @app.post("/ui/diagnostics/upload-studcycle")
+    def ui_diagnostics_upload_studcycle() -> Any:
+        try:
+            lua_path = workspace_root / "robot" / "lua" / "studCycle.lua"
+            result = robot_service.upload_program_lua(str(lua_path))
+            return render_template(
+                "partials/command_result.html",
+                ok=True,
+                title="Upload studCycle.lua",
+                payload=result,
+            )
+        except Exception as exc:
+            return render_template(
+                "partials/command_result.html",
+                ok=False,
+                title="Upload studCycle.lua",
+                payload={"error": str(exc)},
+            )
 
     @app.post("/ui/diagnostics/reset-errors")
     def ui_diagnostics_reset_errors() -> Any:
@@ -1773,9 +1737,6 @@ def create_app() -> Flask:
 
 
 
-    def health() -> Any:
-        return jsonify({"ok": True})
-
     @app.post("/api/run")
     def run_program() -> Any:
         payload = request.get_json(silent=True) or {}
@@ -1798,13 +1759,8 @@ def create_app() -> Flask:
             normalized_studs.append({"x": x, "y": y})
 
         try:
-            result = robot_service.run_direct_cycle(
-                normalized_studs,
-                clearance_z_mm=get_clearance_z_mm(),
-                collision_sensitivity=get_collision_sensitivity(),
-                zerozero_joints=get_zerozero_joint_positions(),
-                tool_id=get_active_tool_id(),
-            )
+            program_path = payload.get("program_path", runtime_settings["program_path"])
+            result = robot_service.upload_load_run(normalized_studs, program_path)
             return jsonify({"ok": True, **result})
         except Exception as exc:
             return jsonify({"ok": False, "error": str(exc)}), 500

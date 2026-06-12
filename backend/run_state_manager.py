@@ -6,10 +6,6 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 
-CYCLE_LOST_TIMEOUT_S = 30.0
-CYCLE_UNKNOWN_ONLINE_TIMEOUT_S = 6.0
-
-
 class RunStateManager:
     def __init__(self) -> None:
         self._state: dict[str, Any] = {
@@ -64,22 +60,6 @@ class RunStateManager:
             )
             self._studs = list(studs)
 
-    def start_designer_cycle(self) -> None:
-        with self._lock:
-            self._state.update(
-                {
-                    "part_name": "Unsaved Designer Job",
-                    "requested_run_count": 1,
-                    "completed_runs": 0,
-                    "active": True,
-                    "cycle_running": True,
-                    "cycle_seen_running": False,
-                    "cycle_stopped_since": 0.0,
-                    "cycle_unknown_since": 0.0,
-                    "started_at": self._utc_now_str(),
-                }
-            )
-
     def stop_batch(self) -> None:
         with self._lock:
             self._studs = []
@@ -133,24 +113,6 @@ class RunStateManager:
                 self._state["cycle_stopped_since"] = 0.0
             raise
 
-        if isinstance(launch_result, dict) and launch_result.get("direct_cycle_completed"):
-            with self._lock:
-                completed = int(self._state.get("completed_runs", 0) or 0) + 1
-                requested = int(self._state.get("requested_run_count", 0) or 0)
-                self._state["completed_runs"] = completed
-                self._state["cycle_running"] = False
-                self._state["cycle_seen_running"] = False
-                self._state["cycle_stopped_since"] = 0.0
-                self._state["cycle_unknown_since"] = 0.0
-                if completed >= requested:
-                    self._state["active"] = False
-                    self._state["last_command"] = f"Run: Batch complete ({completed}/{requested})"
-                else:
-                    self._state["last_command"] = f"Run: Cycle complete ({completed}/{requested})"
-                self._state["last_command_status"] = "ok"
-                self._state["last_command_at"] = self._utc_now_str()
-            return
-
         with self._lock:
             self._state["last_command"] = f"Run: Cycle {cycle_number}/{requested} started for {part_name}"
             self._state["last_command_status"] = "ok"
@@ -185,7 +147,7 @@ class RunStateManager:
 
             unknown_duration = now - unknown_since
             if status_connected is False:
-                if unknown_duration > CYCLE_LOST_TIMEOUT_S:
+                if unknown_duration > 30.0:
                     self._state["cycle_running"] = False
                     self._state["cycle_seen_running"] = False
                     self._state["cycle_stopped_since"] = 0.0
@@ -196,14 +158,13 @@ class RunStateManager:
                     self._state["last_command_at"] = self._utc_now_str()
             elif status_connected is True:
                 # Controller is reachable but state is not running/paused/stopped.
-                # If this persists right after launch, treat as failed start instead of hanging forever.
-                if (not self._state.get("cycle_seen_running", False)) and unknown_duration > CYCLE_UNKNOWN_ONLINE_TIMEOUT_S:
+                # If this persists right after launch, release the cycle for retry.
+                if (not self._state.get("cycle_seen_running", False)) and unknown_duration > 6.0:
                     self._state["cycle_running"] = False
                     self._state["cycle_seen_running"] = False
                     self._state["cycle_stopped_since"] = 0.0
                     self._state["cycle_unknown_since"] = 0.0
-                    self._state["active"] = False
-                    self._state["last_command"] = "Run: Failed to start - controller state unknown while online"
+                    self._state["last_command"] = "Run: Controller state stayed unknown - retry run"
                     self._state["last_command_status"] = "error"
                     self._state["last_command_at"] = self._utc_now_str()
             else:
@@ -219,14 +180,13 @@ class RunStateManager:
             if stopped_since <= 0.0:
                 self._state["cycle_stopped_since"] = now
                 return
-            # If program never leaves "stopped" shortly after launch, mark the cycle as failed to start.
+            # If program never leaves "stopped" shortly after launch, release cycle for retry.
             if now - stopped_since > 4.0:
                 self._state["cycle_running"] = False
                 self._state["cycle_seen_running"] = False
                 self._state["cycle_stopped_since"] = 0.0
                 self._state["cycle_unknown_since"] = 0.0
-                self._state["active"] = False
-                self._state["last_command"] = "Run: Failed to start - program remained stopped"
+                self._state["last_command"] = "Run: Controller stayed stopped - retry run"
                 self._state["last_command_status"] = "error"
                 self._state["last_command_at"] = self._utc_now_str()
             return

@@ -20,7 +20,7 @@ done
 
 # Loop so the kiosk restarts if Chromium ever exits
 while true; do
-    chromium-browser \
+    chromium \
         --kiosk \
         --noerrdialogs \
         --disable-infobars \

@@ -34,7 +34,7 @@ apt-get update -qq
 apt-get install -y \
     xserver-xorg \
     xinit \
-    chromium-browser \
+    chromium \
     matchbox-window-manager \
     xinput \
     curl \

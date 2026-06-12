@@ -1,0 +1,5 @@
+[Desktop Entry]
+Name=WeldFlex Kiosk
+Comment=WeldFlex operator kiosk session
+Exec=/home/pi/WeldFlex/deploy/rpi/kiosk-session.sh
+Type=Application

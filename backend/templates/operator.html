@@ -4,12 +4,12 @@
 {% block body %}
 <div class="operator-run-grid">
   <form hx-post="/ui/run" hx-target="#toast-rack">
-    <input type="hidden" name="program" value="feedCycle.lua">
-    {{ action_button('RUN TOP', variant='run', button_type='submit') }}
-  </form>
-  <form hx-post="/ui/run" hx-target="#toast-rack">
     <input type="hidden" name="program" value="studCycle.lua">
     {{ action_button('RUN BOTTOM', variant='run', button_type='submit') }}
+  </form>
+  <form hx-post="/ui/run" hx-target="#toast-rack">
+    <input type="hidden" name="program" value="feedCycle.lua">
+    {{ action_button('RUN TOP', variant='run', button_type='submit') }}
   </form>
 </div>
 {% endblock %}

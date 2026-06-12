@@ -37,6 +37,7 @@ apt-get install -y \
     chromium \
     matchbox-window-manager \
     xinput \
+    x11-xserver-utils \
     curl \
     python3 \
     python3-pip \

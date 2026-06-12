@@ -46,12 +46,17 @@ if [ ! -f "$PROJECT_DIR/.env" ]; then
     echo ""
 fi
 
-# ── 4. Make scripts executable ────────────────────────────────────────────────
+# ── 4. Autologin group ────────────────────────────────────────────────────────
+echo "==> Adding $KIOSK_USER to autologin group..."
+groupadd -f autologin
+usermod -aG autologin "$KIOSK_USER"
+
+# ── 5. Make scripts executable ────────────────────────────────────────────────
 echo "==> Setting permissions..."
 chmod +x "$DEPLOY_DIR/kiosk-session.sh"
 chown "$KIOSK_USER:$KIOSK_USER" "$DEPLOY_DIR/kiosk-session.sh"
 
-# ── 5. Systemd backend service ────────────────────────────────────────────────
+# ── 6. Systemd backend service ────────────────────────────────────────────────
 echo "==> Installing weldflex-backend.service..."
 # Patch the service file with the actual project path and user
 sed \
@@ -63,7 +68,7 @@ sed \
 systemctl daemon-reload
 systemctl enable weldflex-backend.service
 
-# ── 6. Kiosk X session ────────────────────────────────────────────────────────
+# ── 7. Kiosk X session ────────────────────────────────────────────────────────
 echo "==> Installing kiosk X session..."
 # Patch desktop file with actual path
 sed \
@@ -71,7 +76,7 @@ sed \
     "$DEPLOY_DIR/weldflex-kiosk.desktop" \
     > /usr/share/xsessions/weldflex-kiosk.desktop
 
-# ── 7. LightDM autologin ──────────────────────────────────────────────────────
+# ── 8. LightDM autologin ──────────────────────────────────────────────────────
 echo "==> Configuring LightDM..."
 # Must be in the main lightdm.conf — drop-in conf.d/ files are overridden by it
 LIGHTDM_CONF="/etc/lightdm/lightdm.conf"

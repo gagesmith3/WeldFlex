@@ -8,7 +8,7 @@ from robot_service import WeldFlexRobotService
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 
-ROBOT_IP = os.getenv("ROBOT_IP", "192.168.58.2")
+ROBOT_IP = os.getenv("WELDFLEX_ROBOT_IP", "192.168.58.2")
 robot = WeldFlexRobotService(robot_ip=ROBOT_IP)
 
 _ICONS = {

@@ -9,6 +9,7 @@ from robot_service import WeldFlexRobotService
 app = Flask(__name__, template_folder="templates", static_folder="static")
 
 ROBOT_IP = os.getenv("WELDFLEX_ROBOT_IP", "192.168.58.2")
+KIOSK_MODE = os.getenv("WELDFLEX_KIOSK", "0") == "1"
 robot = WeldFlexRobotService(robot_ip=ROBOT_IP)
 
 _ICONS = {
@@ -45,6 +46,7 @@ def operator():
 @app.context_processor
 def inject_defaults():
     return {
+        "kiosk_mode": KIOSK_MODE,
         "init_connection_snapshot": {
             "online": False,
             "program_state": "connecting...",

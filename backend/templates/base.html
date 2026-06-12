@@ -9,7 +9,7 @@
   <script defer src="{{ url_for('static', filename='js/operator_fallback.js') }}"></script>
   {% block head_extra %}{% endblock %}
 </head>
-<body>
+<body{% if kiosk_mode %} class="kiosk"{% endif %}>
   {% from "components/ui.html" import action_button, htmx_mount, icon_link, result_mount with context %}
   <main class="app-shell">
     <header class="app-header universal-navbar">

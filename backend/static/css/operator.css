@@ -1361,6 +1361,17 @@ textarea {
   font-weight: 700;
   cursor: pointer;
   text-decoration: none;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none;
+  user-select: none;
+  transition: transform 0.18s ease, filter 0.18s ease;
+}
+
+.btn:active {
+  transform: scale(0.95);
+  filter: brightness(0.78);
+  transition: transform 0.06s ease, filter 0.06s ease;
 }
 
 .btn:disabled,
@@ -2845,6 +2856,12 @@ pre {
 .mgr-menu-btn:hover {
   background: rgba(255, 255, 255, 0.12);
   color: #ffffff;
+}
+
+/* Kiosk mode — hide mouse cursor */
+.kiosk,
+.kiosk * {
+  cursor: none !important;
 }
 
 /* Operator simple run page */

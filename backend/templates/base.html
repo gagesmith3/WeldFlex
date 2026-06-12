@@ -20,9 +20,12 @@
           <span class="title-version">BETA {{ git_sha }}</span>
         </div>
       </div>
-      <div class="app-header-right nav-status-wrap">
-        {{ htmx_mount('connection-chips', '/ui/connection', 'load, every 1000ms', 'innerHTML', 'nav-chips') }}
-        {{ action_button('STOP', variant='estop-btn', hx_post='/ui/stop', hx_target='#toast-rack') }}
+      <div class="app-header-right">
+        <div id="connection-chips" hx-get="/ui/connection" hx-trigger="load, every 1000ms" hx-swap="innerHTML">
+          {% with snapshot = init_connection_snapshot %}
+            {% include "partials/connection_chips.html" %}
+          {% endwith %}
+        </div>
       </div>
     </header>
 

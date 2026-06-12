@@ -2847,6 +2847,30 @@ pre {
   color: #ffffff;
 }
 
+/* Operator simple run page */
+.operator-run-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+  flex: 1;
+}
+
+.operator-run-grid form {
+  flex: 1;
+  display: flex;
+}
+
+.operator-run-grid .btn {
+  flex: 1;
+  font-size: 3rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  border-radius: 16px;
+  min-height: 0;
+  justify-content: center;
+}
+
 .mgr-topbar-left {
   display: flex;
   align-items: baseline;

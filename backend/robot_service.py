@@ -136,12 +136,12 @@ class WeldFlexRobotService:
             f.write(patched)
         with self._lock:
             robot = self._client()
+        self._call(lambda: robot.Mode(0))
+        time.sleep(2)
         upload_resp = self._call(lambda: robot.LuaUpload(run_path), timeout=15.0)
         err_code, _ = self._unpack(upload_resp)
         if err_code != 0:
             raise RuntimeError(f"Upload failed (code {err_code})")
-        self._call(lambda: robot.Mode(0))
-        time.sleep(2)
         self._call(lambda: robot.ProgramLoad("/fruser/_liberty_run.lua"))
         self._call(lambda: robot.ProgramRun())
 

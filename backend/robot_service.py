@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import concurrent.futures
 import os
-import re
 import sys
 import threading
 import time
@@ -125,25 +124,8 @@ class WeldFlexRobotService:
             raise RuntimeError(f"ProgramStop failed (code {err_code})")
 
     def run_liberty(self, cycles: int, program_name: str = "libertytest.lua") -> None:
-        """Patch cycleCount in the source Lua file, upload it, and run it."""
-        programs_dir = Path(__file__).resolve().parents[1] / "programs"
-        source_path = programs_dir / program_name
-        with open(source_path) as f:
-            source = f.read()
-        patched = re.sub(r'cycleCount\s*=\s*\d+', f'cycleCount = {cycles}', source, count=1)
-        run_path = os.path.join(os.path.dirname(__file__), "_liberty_run.lua")
-        with open(run_path, "w") as f:
-            f.write(patched)
-        with self._lock:
-            robot = self._client()
-        self._call(lambda: robot.Mode(0))
-        time.sleep(2)
-        upload_resp = self._call(lambda: robot.LuaUpload(run_path), timeout=15.0)
-        err_code, _ = self._unpack(upload_resp)
-        if err_code != 0:
-            raise RuntimeError(f"Upload failed (code {err_code})")
-        self._call(lambda: robot.ProgramLoad("/fruser/_liberty_run.lua"))
-        self._call(lambda: robot.ProgramRun())
+        """Load and run a Lua program already on the robot."""
+        self.run_program(program_name)
 
     def upload_program(self, local_path: str) -> None:
         with self._lock:

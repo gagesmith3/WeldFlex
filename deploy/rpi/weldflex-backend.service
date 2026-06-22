@@ -6,6 +6,7 @@ After=network.target
 Type=simple
 User=pi
 WorkingDirectory=/home/pi/WeldFlex/backend
+ExecStartPre=/bin/sed -i 's/if cnde_ok and xmlrpc_ok:/if xmlrpc_ok:/' /home/pi/WeldFlex/fairino-python-sdk-main/linux/fairino/Robot.py
 ExecStart=/home/pi/WeldFlex/venv/bin/python app.py
 Restart=on-failure
 RestartSec=5

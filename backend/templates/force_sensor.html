@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% from "components/ui.html" import action_button, htmx_mount, panel_shell with context %}
+
+{% block body %}
+<div class="page-body">
+  <div class="settings-sections">
+
+    {% call panel_shell('Force Sensor Control', 'XJC X-6A-XD80-H28 · 200 N / 5 N·m', class_name='settings-shell') %}
+      <div class="btn-row">
+        {{ action_button('Activate', variant='run', icon='activity',
+            hx_post='/ui/ft/activate', hx_target='#ft-action-result', hx_swap='innerHTML') }}
+        {{ action_button('Deactivate', variant='stop', icon='square',
+            hx_post='/ui/ft/deactivate', hx_target='#ft-action-result', hx_swap='innerHTML') }}
+        {{ action_button('Zero Sensor', variant='primary', icon='crosshair',
+            hx_post='/ui/ft/zero', hx_target='#ft-action-result', hx_swap='innerHTML') }}
+      </div>
+      <div id="ft-action-result" class="command-result"></div>
+    {% endcall %}
+
+    {% call panel_shell('Live Readings', 'Force (N) and torque (N·m) in robot coordinate frame', class_name='settings-shell') %}
+      {{ htmx_mount('ft-readout', '/ui/ft/reading', 'load, every 300ms', 'innerHTML') }}
+    {% endcall %}
+
+  </div>
+</div>
+{% endblock %}

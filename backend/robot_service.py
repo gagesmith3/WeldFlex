@@ -2,11 +2,20 @@ from __future__ import annotations
 
 import concurrent.futures
 import os
+import re
 import sys
 import threading
 import time
 from pathlib import Path
 from typing import Any, Callable
+
+# The FAIRINO SDK prints Chinese debug text to stdout/stderr. On Windows the
+# default console codec (cp1252) can't encode it, which raises UnicodeEncodeError
+# and gets mistaken for a connection failure. Force UTF-8 stdio regardless of how
+# the process was launched.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
 
 
 def _bootstrap_sdk() -> None:
@@ -91,6 +100,59 @@ class WeldFlexRobotService:
             return int(response), None
         return -1, response
 
+    def pause_program(self) -> None:
+        with self._lock:
+            robot = self._client()
+        err = self._call(lambda: robot.ProgramPause())
+        err_code, _ = self._unpack(err)
+        if err_code != 0:
+            raise RuntimeError(f"ProgramPause failed (code {err_code})")
+
+    def resume_program(self) -> None:
+        with self._lock:
+            robot = self._client()
+        err = self._call(lambda: robot.ProgramResume())
+        err_code, _ = self._unpack(err)
+        if err_code != 0:
+            raise RuntimeError(f"ProgramResume failed (code {err_code})")
+
+    def stop_program(self) -> None:
+        with self._lock:
+            robot = self._client()
+        err = self._call(lambda: robot.ProgramStop())
+        err_code, _ = self._unpack(err)
+        if err_code != 0:
+            raise RuntimeError(f"ProgramStop failed (code {err_code})")
+
+    def run_liberty(self, cycles: int, program_name: str = "libertytest.lua") -> None:
+        """Patch cycleCount in the source Lua file, upload it, and run it."""
+        programs_dir = Path(__file__).resolve().parents[1] / "programs"
+        source_path = programs_dir / program_name
+        with open(source_path) as f:
+            source = f.read()
+        patched = re.sub(r'cycleCount\s*=\s*\d+', f'cycleCount = {cycles}', source, count=1)
+        run_path = os.path.join(os.path.dirname(__file__), "_liberty_run.lua")
+        with open(run_path, "w") as f:
+            f.write(patched)
+        with self._lock:
+            robot = self._client()
+        upload_resp = self._call(lambda: robot.LuaUpload(run_path), timeout=15.0)
+        err_code, _ = self._unpack(upload_resp)
+        if err_code != 0:
+            raise RuntimeError(f"Upload failed (code {err_code})")
+        self._call(lambda: robot.Mode(0))
+        time.sleep(2)
+        self._call(lambda: robot.ProgramLoad("/fruser/_liberty_run.lua"))
+        self._call(lambda: robot.ProgramRun())
+
+    def upload_program(self, local_path: str) -> None:
+        with self._lock:
+            robot = self._client()
+        error = self._call(lambda: robot.LuaUpload(local_path), timeout=30.0)
+        err_code, _ = self._unpack(error)
+        if err_code != 0:
+            raise RuntimeError(f"LuaUpload failed with error code {err_code}")
+
     def run_program(self, program_name: str) -> None:
         with self._lock:
             robot = self._client()
@@ -98,6 +160,34 @@ class WeldFlexRobotService:
         time.sleep(2)
         self._call(lambda: robot.ProgramLoad(f"/fruser/{program_name}"))
         self._call(lambda: robot.ProgramRun())
+
+    def ft_activate(self, state: int) -> None:
+        with self._lock:
+            robot = self._client()
+        err = self._call(lambda: robot.FT_Activate(state))
+        err_code, _ = self._unpack(err)
+        if err_code != 0:
+            raise RuntimeError(f"FT_Activate failed (code {err_code})")
+
+    def ft_zero(self) -> None:
+        with self._lock:
+            robot = self._client()
+        err = self._call(lambda: robot.FT_SetZero(1))
+        err_code, _ = self._unpack(err)
+        if err_code != 0:
+            raise RuntimeError(f"FT_SetZero failed (code {err_code})")
+
+    def ft_read(self) -> dict[str, float]:
+        with self._lock:
+            robot = self._client()
+        resp = self._call(lambda: robot.FT_GetForceTorqueRCS())
+        err_code, values = self._unpack(resp)
+        if err_code != 0:
+            raise RuntimeError(f"FT_GetForceTorqueRCS failed (code {err_code})")
+        return {
+            "fx": float(values[0]), "fy": float(values[1]), "fz": float(values[2]),
+            "mx": float(values[3]), "my": float(values[4]), "mz": float(values[5]),
+        }
 
     def status(self) -> dict[str, Any]:
         with self._lock:

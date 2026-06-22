@@ -1,4 +1,4 @@
-# WeldFlex 3500 Software
+# WeldFlex Operator Software
 
 
 

@@ -38,6 +38,7 @@ apt-get install -y \
     matchbox-window-manager \
     xinput \
     x11-xserver-utils \
+    unclutter \
     curl \
     python3 \
     python3-pip \

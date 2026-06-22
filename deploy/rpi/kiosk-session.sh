@@ -6,8 +6,8 @@ xset s off
 xset s noblank
 xset -dpms
 
-# Hide the X11 root cursor (covers anything outside Chromium's content area too)
-xsetroot -cursor_name none
+# Hide the mouse cursor immediately (unclutter with 0s idle threshold)
+unclutter -idle 0 -root &
 
 # Float the ft5x06 touchscreen off the master pointer so touch never shows a cursor
 TOUCH_ID=$(xinput list --id-only "10-0038 generic ft5x06 (00)" 2>/dev/null)

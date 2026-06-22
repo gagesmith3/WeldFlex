@@ -1,15 +1,25 @@
 {% extends "base.html" %}
-{% from "components/ui.html" import action_button with context %}
+{% from "components/ui.html" import action_button, nav_card, panel_shell with context %}
 
 {% block body %}
-<div class="operator-run-grid">
-  <form hx-post="/ui/run" hx-target="#toast-rack">
-    <input type="hidden" name="program" value="runBottom.lua">
-    {{ action_button('RUN BOTTOM', variant='run', button_type='submit') }}
-  </form>
-  <form hx-post="/ui/run" hx-target="#toast-rack">
-    <input type="hidden" name="program" value="runTop.lua">
-    {{ action_button('RUN TOP', variant='run', button_type='submit') }}
-  </form>
+<div class="operator-main-body">
+  {% call panel_shell('Control Panel', class_name='operator-control-panel') %}
+    <div class="hero-main-controls">
+      {{ action_button('Run', variant='run', icon='play') }}
+      {{ action_button('Pause', variant='pause', icon='pause') }}
+      {{ action_button('Resume', variant='run', icon='play') }}
+      {{ action_button('Stop', variant='stop', icon='square') }}
+    </div>
+  {% endcall %}
+
+  {% call panel_shell('Navigation', class_name='operator-links-panel') %}
+    <section class="home-nav-grid">
+      {{ nav_card('/operator/parts', 'pen_tool', 'Parts', 'Create, edit, and run stud welding programs.') }}
+      {{ nav_card('/operator/calibration', 'crosshair', 'Calibration', 'Jog robot, capture origin, and dry-run positions.') }}
+      {{ nav_card('/operator/robot-diagnostics', 'activity', 'Robot Diagnostics', 'Inspect connection, runtime state, and faults.') }}
+      {{ nav_card('/operator/settings', 'settings', 'Settings', 'Configure application and robot integration.') }}
+      {{ nav_card('/operator/liberty', 'activity', 'Liberty', 'Run and manage Liberty test sequences.') }}
+    </section>
+  {% endcall %}
 </div>
 {% endblock %}

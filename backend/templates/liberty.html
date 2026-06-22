@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+
+{% block body %}
+<div class="liberty-body">
+
+  <div id="liberty-ctrl"
+       hx-get="/ui/liberty/status"
+       hx-trigger="load, every 2000ms"
+       hx-swap="innerHTML">
+    {% include "partials/liberty_status.html" %}
+  </div>
+
+  <section class="panel">
+    <h2>Session Log</h2>
+    <div id="liberty-log"
+         hx-get="/ui/liberty/log"
+         hx-trigger="load, every 5000ms"
+         hx-swap="innerHTML">
+      {% include "partials/liberty_log.html" %}
+    </div>
+  </section>
+
+</div>
+{% endblock %}

@@ -1,0 +1,20 @@
+{% if ok %}
+<div class="ft-reading-grid">
+  {% for label, val, unit in [
+    ('Fx', reading.fx, 'N'),
+    ('Fy', reading.fy, 'N'),
+    ('Fz', reading.fz, 'N'),
+    ('Mx', reading.mx, 'N·m'),
+    ('My', reading.my, 'N·m'),
+    ('Mz', reading.mz, 'N·m'),
+  ] %}
+  <div class="ft-axis-card">
+    <div class="ft-axis-label">{{ label }}</div>
+    <div class="ft-axis-value">{{ "%+.2f" % val }}</div>
+    <div class="ft-axis-unit">{{ unit }}</div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="ft-reading-error">{{ error }}</div>
+{% endif %}

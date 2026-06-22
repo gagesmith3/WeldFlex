@@ -1,0 +1,79 @@
+{% set state = session.get('state', '') if session else '' %}
+<section class="panel liberty-ctrl-panel">
+  <div class="liberty-ctrl-header">
+    <h2>Liberty Test</h2>
+    {% if state %}
+    <span class="liberty-state-badge liberty-state-{{ state }}">{{ state | upper }}</span>
+    {% endif %}
+  </div>
+
+  {% if error %}
+  <p class="liberty-error-note">{{ error }}</p>
+  {% endif %}
+
+  {% if state in ('running', 'paused') %}
+
+  <div class="liberty-info-grid">
+    <div class="liberty-info-row">
+      <span>Program</span>
+      <strong>{{ session.get('program', '—') }}</strong>
+    </div>
+    <div class="liberty-info-row">
+      <span>Target Cycles</span>
+      <strong>{{ session.get('cycles_target', '—') }}</strong>
+    </div>
+    <div class="liberty-info-row">
+      <span>Started</span>
+      <strong>{{ session.get('started_at', '—').replace('T', ' ') }}</strong>
+    </div>
+  </div>
+
+  <div class="liberty-btn-row">
+    {% if state == 'running' %}
+    <button type="button" class="btn pause"
+            hx-post="/ui/liberty/pause"
+            hx-target="#liberty-ctrl"
+            hx-swap="innerHTML">
+      {{ icon_safe('pause', width=16, height=16) }}
+      <span>Pause</span>
+    </button>
+    {% else %}
+    <button type="button" class="btn run"
+            hx-post="/ui/liberty/resume"
+            hx-target="#liberty-ctrl"
+            hx-swap="innerHTML">
+      {{ icon_safe('play', width=16, height=16) }}
+      <span>Resume</span>
+    </button>
+    {% endif %}
+    <button type="button" class="btn stop"
+            hx-post="/ui/liberty/stop"
+            hx-target="#liberty-ctrl"
+            hx-swap="innerHTML">
+      {{ icon_safe('square', width=16, height=16) }}
+      <span>Stop</span>
+    </button>
+  </div>
+
+  {% else %}
+
+  <p class="panel-note">Configure and launch a Liberty weld test sequence.</p>
+  <form hx-post="/ui/liberty/launch"
+        hx-target="#liberty-ctrl"
+        hx-swap="innerHTML">
+    <label for="liberty-cycles">Weld Cycles</label>
+    <input type="number" id="liberty-cycles" name="cycles"
+           value="50" min="1" max="9999" required>
+    <label for="liberty-program">Program File</label>
+    <input type="text" id="liberty-program" name="program"
+           value="libertytest.lua" placeholder="libertytest.lua">
+    <div class="actions">
+      <button type="submit" class="btn run">
+        {{ icon_safe('play', width=16, height=16) }}
+        <span>Launch Test</span>
+      </button>
+    </div>
+  </form>
+
+  {% endif %}
+</section>

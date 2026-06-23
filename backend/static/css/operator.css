@@ -2884,24 +2884,73 @@ pre {
 /* Operator main page — sized for 800×480 production touchscreen */
 .operator-main-body {
   display: grid;
-  grid-template-columns: 7fr 3fr;
+  grid-template-columns: 4fr 1fr;
   gap: 10px;
   padding: 10px;
   flex: 1;
-  align-items: start;
+  min-height: 0;
+  align-items: stretch;
 }
 
 .operator-left-col {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  min-height: 0;
+}
+
+/* Nav panel stretches to fill the right column */
+.operator-links-panel {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
 }
 
 .operator-links-panel .home-nav-grid {
   grid-template-columns: 1fr;
+  flex: 1;
+  grid-template-rows: repeat(4, 1fr);
+  align-content: stretch;
 }
 
-@media (max-width: 800px) {
+/* Compact nav cards for 800×480: icon + label row, hide description */
+.operator-links-panel .home-nav-card {
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 100%;
+}
+
+.operator-links-panel .home-nav-card p {
+  display: none;
+}
+
+.operator-links-panel .home-nav-card h3 {
+  font-size: 0.72rem;
+  margin: 0;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  width: 100%;
+}
+
+.operator-links-panel .home-nav-icon {
+  width: 32px;
+  height: 32px;
+  margin-bottom: 0;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+.operator-links-panel .nav-card-cta {
+  display: none;
+}
+
+@media (max-width: 540px) {
   .operator-main-body {
     grid-template-columns: 1fr;
   }

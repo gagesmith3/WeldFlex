@@ -1,31 +1,39 @@
 {% extends "base.html" %}
-{% from "components/ui.html" import action_button, panel_shell with context %}
 
 {% block body %}
 <div class="parts-body">
-  {% call panel_shell('Parts') %}
-    <div class="table-shell">
-      <table class="library-table">
-        <thead>
-          <tr>
-            <th>Part</th>
-            <th>Last Run</th>
-            <th>Edit</th>
-            <th>Run</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for part in parts %}
-          <tr>
-            <td class="parts-library-name-cell">{{ part.name }}</td>
-            <td><span class="last-run-tag {{ 'last-run-tag-never' if part.last_run == 'Never' }}">{{ part.last_run }}</span></td>
-            <td class="parts-library-action-cell">{{ action_button('Edit', variant='recipe-load', icon='pen_tool') }}</td>
-            <td class="parts-library-action-cell">{{ action_button('Run', variant='run', icon='play') }}</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
+
+  {% if recipe_name is not none %}
+    <div class="parts-back-bar">
+      <a href="/operator/parts" class="btn parts-back-btn">← Parts</a>
     </div>
-  {% endcall %}
+    {% include "partials/parts_editor.html" %}
+
+  {% else %}
+    <div class="parts-library-view">
+      <div class="parts-library-panel">
+        <div class="parts-library-table-wrap">
+          {% include "partials/parts_recipe_list.html" %}
+        </div>
+      </div>
+    </div>
+  {% endif %}
+
 </div>
+
+{% endblock %}
+
+{% block scripts %}
+<script defer src="{{ url_for('static', filename='js/coordinate_table.js') }}"></script>
+{% if recipe_name is not none %}
+<script>
+function syncPartsEditorUrl() {
+  var el = document.getElementById('recipe_name');
+  if (!el) return;
+  var url = new URL(window.location.href);
+  url.searchParams.set('recipe_name', el.value.trim());
+  history.replaceState({}, '', url.toString());
+}
+</script>
+{% endif %}
 {% endblock %}

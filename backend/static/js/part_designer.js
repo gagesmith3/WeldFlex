@@ -1,48 +1,15 @@
 const NS = 'http://www.w3.org/2000/svg';
 
-// Fake run data pool — each part gets one dataset assigned deterministically by name length.
-const DEMO_RUN_POOL = [
-  {
-    runs: [
-      {date:'Jan 15', total:46.8, travel:9.8,  weld:32.1, other:4.9},
-      {date:'Jan 15', total:47.2, travel:10.1, weld:32.2, other:4.9},
-      {date:'Jan 16', total:45.9, travel:9.5,  weld:31.8, other:4.6},
-    ],
-    tips: [
-      'Longest travel segment covers ~390 mm. A snake-order pattern could save ~0.9s per cycle.',
-      'Two points show slightly longer weld times — verify gun height at those positions.',
-    ],
-  },
-  {
-    runs: [
-      {date:'Jan 14', total:68.3, travel:14.2, weld:48.0, other:6.1},
-      {date:'Jan 14', total:67.8, travel:13.9, weld:48.1, other:5.8},
-    ],
-    tips: [
-      'Travel between point clusters is high relative to weld time. Consider grouping nearby studs into sequential runs.',
-    ],
-  },
-  {
-    runs: [
-      {date:'Jan 17', total:35.2, travel:6.8, weld:24.0, other:4.4},
-      {date:'Jan 17', total:34.9, travel:6.5, weld:24.3, other:4.1},
-      {date:'Jan 18', total:35.6, travel:7.0, weld:24.1, other:4.5},
-    ],
-    tips: [
-      'Cycle time is consistent within ±0.4s — path order looks optimal.',
-    ],
-  },
-];
-
 let _state = {
-  activePart: null,   // name string of the currently selected part
-  mode: 'select',
+  activeId:     null,  // UUID — primary key for all backend ops
+  activePart:   null,  // display name
   selectedPoint: null,
   points: [],
-  partIndex: 0,       // position in the fetched list, used to pick demo run data
+  isDirty: false,
 };
 
-let _pdMouseMove = null;
+let _pdMouseMove  = null;
+let _deletePending = null;
 
 function pdInit() {
   if (_pdMouseMove) document.removeEventListener('mousemove', _pdMouseMove);
@@ -57,10 +24,35 @@ function pdInit() {
 
   buildGrid();
   fetchParts();
-  setupImageUpload();
-  setupBedClick();
-  document.getElementById('pd-opacity-slider').addEventListener('input', e => {
-    document.getElementById('pd-overlay').setAttribute('opacity', e.target.value / 100);
+
+  const nameInput = document.getElementById('pd-create-name');
+  if (nameInput) {
+    nameInput.addEventListener('keydown', e => {
+      if (e.key === 'Enter')  pdConfirmCreate();
+      if (e.key === 'Escape') pdCancelCreate();
+    });
+  }
+
+  const createModal = document.getElementById('pd-create-modal');
+  if (createModal) createModal.addEventListener('click', e => {
+    if (e.target === createModal) pdCancelCreate();
+  });
+
+  const deleteInput = document.getElementById('pd-delete-confirm-input');
+  if (deleteInput) {
+    deleteInput.addEventListener('input', e => {
+      const btn = document.getElementById('pd-delete-confirm-btn');
+      if (btn) btn.disabled = e.target.value.trim() !== 'DELETE';
+    });
+    deleteInput.addEventListener('keydown', e => {
+      if (e.key === 'Enter')  pdConfirmDelete();
+      if (e.key === 'Escape') pdCancelDelete();
+    });
+  }
+
+  const deleteModal = document.getElementById('pd-delete-modal');
+  if (deleteModal) deleteModal.addEventListener('click', e => {
+    if (e.target === deleteModal) pdCancelDelete();
   });
 }
 
@@ -130,52 +122,74 @@ function fetchParts() {
     .then(parts => {
       el.innerHTML = '';
       if (!parts.length) {
-        el.innerHTML = '<span class="pd-list-empty">No parts found. Create parts in Operator.</span>';
+        el.innerHTML = '<span class="pd-list-empty">No parts yet. Click + to create one.</span>';
         return;
       }
       parts.forEach((part, idx) => {
         const item = document.createElement('div');
-        item.className = 'pd-part-item' + (part.name === _state.activePart ? ' active' : '');
+        item.className = 'pd-part-item' + (part.id === _state.activeId ? ' active' : '');
         item.dataset.partName = part.name;
+        item.dataset.partId   = part.id;
         item.dataset.partIdx  = idx;
-        item.innerHTML = `
+
+        const body = document.createElement('div');
+        body.className = 'pd-part-item-body';
+        body.innerHTML = `
           <span class="pd-part-name">${part.name}</span>
           <span class="pd-part-desc">${part.studs_count} stud${part.studs_count !== 1 ? 's' : ''} · ${part.updated_label}</span>
         `;
-        item.addEventListener('click', () => loadPart(part.name, idx));
+        item.appendChild(body);
+
+        const delBtn = document.createElement('button');
+        delBtn.type = 'button';
+        delBtn.className = 'pd-part-delete-btn';
+        delBtn.title = 'Delete part';
+        delBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="m19 6-.867 12.142A2 2 0 0 1 16.138 20H7.862a2 2 0 0 1-1.995-1.858L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>`;
+        delBtn.addEventListener('click', e => {
+          e.stopPropagation();
+          pdDeletePart(part.id, part.name);
+        });
+        item.appendChild(delBtn);
+
+        item.addEventListener('click', () => loadPart(part.id, part.name, idx));
         el.appendChild(item);
       });
-      // Auto-select first part
-      if (parts.length) loadPart(parts[0].name, 0);
+      // Re-select the active part by UUID, fall back to name for newly created parts
+      const targetIdx = _state.activeId
+        ? parts.findIndex(p => p.id === _state.activeId)
+        : _state.activePart
+          ? parts.findIndex(p => p.name === _state.activePart)
+          : -1;
+      if (targetIdx >= 0) loadPart(parts[targetIdx].id, parts[targetIdx].name, targetIdx);
+      else if (parts.length) loadPart(parts[0].id, parts[0].name, 0);
     })
     .catch(() => {
       el.innerHTML = '<span class="pd-list-empty">Failed to load parts.</span>';
     });
 }
 
-function loadPart(name, idx) {
+function loadPart(id, name, idx) {
+  _state.activeId   = id;
   _state.activePart = name;
-  _state.partIndex  = idx ?? 0;
   _state.selectedPoint = null;
 
   document.querySelectorAll('.pd-part-item').forEach(el => {
-    el.classList.toggle('active', el.dataset.partName === name);
+    el.classList.toggle('active', el.dataset.partId === id);
   });
 
-  // Show fake run data immediately while points load
-  renderAnalysis(DEMO_RUN_POOL[_state.partIndex % DEMO_RUN_POOL.length]);
-
-  fetch(`/ui/manager/part-points?name=${encodeURIComponent(name)}`)
+  fetch(`/ui/manager/part-points?id=${encodeURIComponent(id)}`)
     .then(r => r.json())
     .then(data => {
       if (!data.ok) { _state.points = []; }
-      else          { _state.points = data.points; }
+      else          { _state.points = data.points.map((p, i) => ({ ...p, id: i + 1 })); }
       renderPoints();
+      renderStudList();
       setCoords(null);
     })
     .catch(() => {
       _state.points = [];
       renderPoints();
+      renderStudList();
     });
 }
 
@@ -245,41 +259,15 @@ function renderPoints() {
 // ── Tooltip ──────────────────────────────────────────────────────────────────
 
 function showTooltip(p) {
-  const tip  = document.getElementById('pd-tooltip');
+  const tip = document.getElementById('pd-tooltip');
   if (!tip) return;
-  const demo = DEMO_RUN_POOL[_state.partIndex % DEMO_RUN_POOL.length];
-  const runs = demo ? demo.runs : [];
-  const perPt = runs.length && _state.points.length
-    ? (runs.reduce((s,r) => s + r.weld, 0) / runs.length / _state.points.length).toFixed(1)
-    : null;
-
-  tip.innerHTML = `<strong>Point ${p.id}</strong><br>X: ${p.x} mm &nbsp; Y: ${p.y} mm${perPt ? `<br>Avg weld: ~${perPt}s` : ''}`;
+  tip.innerHTML = `<strong>Point ${p.id}</strong><br>X: ${p.x} mm &nbsp; Y: ${p.y} mm`;
   tip.classList.remove('pd-hidden');
 }
 
 function hideTooltip() {
   const tip = document.getElementById('pd-tooltip');
   if (tip) tip.classList.add('pd-hidden');
-}
-
-// ── Bed click ────────────────────────────────────────────────────────────────
-
-function setupBedClick() {
-  const bed = document.getElementById('pd-bed');
-  if (!bed) return;
-  bed.addEventListener('click', e => {
-    if (_state.mode !== 'add') return;
-    const sv  = svgPoint(e, bed);
-    const raw = toPhys(sv.x, sv.y);
-    const p = {
-      x: Math.round(Math.max(0, Math.min(BED, raw.x))),
-      y: Math.round(Math.max(0, Math.min(BED, raw.y))),
-      id: (_state.points.length ? Math.max(..._state.points.map(p => p.id)) : 0) + 1,
-    };
-    _state.points.push(p);
-    renderPoints();
-    setCoords(p);
-  });
 }
 
 function svgPoint(e, svg) {
@@ -289,41 +277,144 @@ function svgPoint(e, svg) {
   return pt.matrixTransform(svg.getScreenCTM().inverse());
 }
 
-// ── Mode / actions ────────────────────────────────────────────────────────────
+// ── Dirty / save state ────────────────────────────────────────────────────────
 
-function pdSetMode(mode) {
-  _state.mode = mode;
-  document.getElementById('pd-tool-select').classList.toggle('active', mode === 'select');
-  document.getElementById('pd-tool-add').classList.toggle('active', mode === 'add');
-  const bed = document.getElementById('pd-bed');
-  if (bed) bed.style.cursor = mode === 'add' ? 'crosshair' : 'default';
+function pdSetDirty(dirty) {
+  _state.isDirty = dirty;
+  const btn = document.getElementById('pd-save-btn');
+  if (!btn) return;
+  if (dirty && (_state.activeId || _state.activePart)) btn.classList.remove('pd-hidden');
+  else btn.classList.add('pd-hidden');
 }
 
-function pdClearPoints() {
-  if (!confirm('Clear all points from this part?')) return;
-  _state.points = [];
+// ── New part ──────────────────────────────────────────────────────────────────
+
+function pdNewPart() {
+  const modal = document.getElementById('pd-create-modal');
+  const input = document.getElementById('pd-create-name');
+  if (!modal || !input) return;
+  modal.removeAttribute('hidden');
+  input.value = '';
+  input.focus();
+}
+
+function pdCancelCreate() {
+  const modal = document.getElementById('pd-create-modal');
+  if (modal) modal.setAttribute('hidden', '');
+}
+
+function pdConfirmCreate() {
+  const input = document.getElementById('pd-create-name');
+  const name  = (input ? input.value : '').trim();
+  if (!name) { if (input) input.focus(); return; }
+  pdCancelCreate();
+  pdStartNewPart(name);
+  pdSave();
+}
+
+function pdStartNewPart(name) {
+  _state.activeId      = null;
+  _state.activePart    = name;
+  _state.points        = [];
   _state.selectedPoint = null;
+
+  document.querySelectorAll('.pd-part-item').forEach(el => el.classList.remove('active'));
   renderPoints();
+  renderStudList();
   setCoords(null);
+  pdSetDirty(true);
+
+  const coords = document.getElementById('pd-coords');
+  if (coords) coords.textContent = `New: ${name}  ·  click bed to place studs`;
 }
 
-// ── Image upload ──────────────────────────────────────────────────────────────
+// ── Add point ─────────────────────────────────────────────────────────────────
 
-function setupImageUpload() {
-  const input = document.getElementById('pd-img-upload');
-  if (!input) return;
-  input.addEventListener('change', e => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = ev => {
-      const img = document.getElementById('pd-overlay');
-      img.setAttribute('href', ev.target.result);
-      img.classList.remove('pd-hidden');
-      document.getElementById('pd-opacity-wrap').classList.remove('pd-hidden');
-    };
-    reader.readAsDataURL(file);
-  });
+function pdAddPoint() {
+  if (!_state.activeId && !_state.activePart) return;
+  const nextId = _state.points.length ? Math.max(..._state.points.map(p => p.id)) + 1 : 1;
+  _state.points.push({ id: nextId, x: 0, y: 0 });
+  renderPoints();
+  renderStudList();
+  pdSetDirty(true);
+  const el = document.getElementById('pd-stud-list');
+  if (el) {
+    const xInput = el.querySelector(`.pd-stud-input[data-pid="${nextId}"][data-axis="x"]`);
+    if (xInput) { xInput.focus(); xInput.select(); }
+  }
+}
+
+// ── Save ──────────────────────────────────────────────────────────────────────
+
+function pdSave() {
+  const name = _state.activePart;
+  if (!name) return;
+
+  const studs_json = JSON.stringify(_state.points.map(p => ({ x: p.x, y: p.y })));
+  const body = new URLSearchParams({ recipe_name: name, studs_json });
+  if (_state.activeId) body.set('recipe_id', _state.activeId);
+
+  const saveBtn = document.getElementById('pd-save-btn');
+  if (saveBtn) saveBtn.disabled = true;
+
+  fetch('/ui/recipes/save', { method: 'POST', body })
+    .then(r => {
+      const rid = r.headers.get('X-Recipe-Id');
+      if (rid) _state.activeId = rid;
+      pdSetDirty(false);
+      if (saveBtn) saveBtn.disabled = false;
+      fetchParts();
+    })
+    .catch(() => {
+      if (saveBtn) saveBtn.disabled = false;
+    });
+}
+
+// ── Delete part ───────────────────────────────────────────────────────────────
+
+function pdDeletePart(id, name) {
+  _deletePending = { id, name };
+  const nameEl = document.getElementById('pd-delete-part-name');
+  const input  = document.getElementById('pd-delete-confirm-input');
+  const btn    = document.getElementById('pd-delete-confirm-btn');
+  const modal  = document.getElementById('pd-delete-modal');
+  if (!modal) return;
+  if (nameEl) nameEl.textContent = name;
+  if (input)  input.value = '';
+  if (btn)    btn.disabled = true;
+  modal.removeAttribute('hidden');
+  if (input)  input.focus();
+}
+
+function pdCancelDelete() {
+  const modal = document.getElementById('pd-delete-modal');
+  const input = document.getElementById('pd-delete-confirm-input');
+  if (modal) modal.setAttribute('hidden', '');
+  if (input) input.value = '';
+  _deletePending = null;
+}
+
+function pdConfirmDelete() {
+  const input = document.getElementById('pd-delete-confirm-input');
+  if (!_deletePending || !input || input.value.trim() !== 'DELETE') return;
+  const { id, name } = _deletePending;
+  pdCancelDelete();
+  fetch('/ui/parts/delete', { method: 'POST', body: new URLSearchParams({ recipe_id: id }) })
+    .then(() => {
+      if (_state.activeId === id) {
+        _state.activeId      = null;
+        _state.activePart    = null;
+        _state.points        = [];
+        _state.selectedPoint = null;
+        renderPoints();
+        renderStudList();
+        setCoords(null);
+        pdSetDirty(false);
+        const coords = document.getElementById('pd-coords');
+        if (coords) coords.textContent = '508 × 508 mm bed';
+      }
+      fetchParts();
+    });
 }
 
 // ── Coords bar ────────────────────────────────────────────────────────────────
@@ -336,61 +427,76 @@ function setCoords(p) {
     : '508 × 508 mm bed';
 }
 
-// ── Analysis ──────────────────────────────────────────────────────────────────
+// ── Stud list ─────────────────────────────────────────────────────────────────
 
-function renderAnalysis(part) {
-  const el = document.getElementById('pd-analysis');
+function renderStudList() {
+  const el    = document.getElementById('pd-stud-list');
+  const badge = document.getElementById('pd-stud-count');
   if (!el) return;
 
-  if (!part.runs || part.runs.length === 0) {
-    el.innerHTML = '<p style="color:var(--muted);font-size:0.82rem;padding:8px 0">No run data yet.</p>';
+  if (badge) badge.textContent = _state.points.length ? String(_state.points.length) : '';
+
+  if (!_state.points.length) {
+    el.innerHTML = '<span class="pd-list-empty">No studs yet.</span>';
     return;
   }
 
-  const avg = key => part.runs.reduce((s,r) => s + r[key], 0) / part.runs.length;
-  const T = avg('total'), tv = avg('travel'), wl = avg('weld'), ot = avg('other');
-  const pct = v => ((v / T) * 100).toFixed(0);
-
-  const dot = color => `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${color};margin-right:6px;flex-shrink:0"></span>`;
-
-  const runsHtml = part.runs.map(r =>
-    `<div class="pd-run-row"><span class="pd-run-date">${r.date}</span><span class="pd-run-time">${r.total.toFixed(1)}s</span></div>`
-  ).join('');
-
-  const tipsHtml = (part.tips || []).map(t =>
-    `<div class="pd-tip"><span class="pd-tip-icon">⚡</span><span>${t}</span></div>`
-  ).join('');
-
-  el.innerHTML = `
-    <div class="pd-stat-card">
-      <div class="pd-stat-big">${T.toFixed(1)}s</div>
-      <div class="pd-stat-sublabel">avg cycle · ${part.runs.length} run${part.runs.length > 1 ? 's' : ''}</div>
+  el.innerHTML = _state.points.map(p => `
+    <div class="pd-stud-row${_state.selectedPoint === p.id ? ' selected' : ''}" data-pid="${p.id}">
+      <span class="pd-stud-num">${p.id}</span>
+      <span class="pd-stud-label">X</span>
+      <input class="pd-stud-input" type="number" step="1" value="${p.x}" data-pid="${p.id}" data-axis="x">
+      <span class="pd-stud-label">Y</span>
+      <input class="pd-stud-input" type="number" step="1" value="${p.y}" data-pid="${p.id}" data-axis="y">
+      <button class="pd-stud-delete-btn" data-pid="${p.id}" title="Remove stud">×</button>
     </div>
+  `).join('');
 
-    <div class="pd-section-label">Time Breakdown</div>
-    <div class="pd-timing-bar">
-      <div class="pd-timing-seg travel" style="flex:${pct(tv)}"></div>
-      <div class="pd-timing-seg weld"   style="flex:${pct(wl)}"></div>
-      <div class="pd-timing-seg other"  style="flex:${pct(ot)}"></div>
-    </div>
-    <div class="pd-stat-row">
-      <span class="pd-stat-label">${dot('#275f84')}Travel</span>
-      <span class="pd-stat-value">${tv.toFixed(1)}s <small style="color:var(--muted);font-weight:400">(${pct(tv)}%)</small></span>
-    </div>
-    <div class="pd-stat-row">
-      <span class="pd-stat-label">${dot('#12744a')}Weld</span>
-      <span class="pd-stat-value">${wl.toFixed(1)}s <small style="color:var(--muted);font-weight:400">(${pct(wl)}%)</small></span>
-    </div>
-    <div class="pd-stat-row">
-      <span class="pd-stat-label">${dot('#c97a00')}Load / Unload</span>
-      <span class="pd-stat-value">${ot.toFixed(1)}s <small style="color:var(--muted);font-weight:400">(${pct(ot)}%)</small></span>
-    </div>
+  el.querySelectorAll('.pd-stud-row').forEach(row => {
+    row.addEventListener('click', () => {
+      const pid = parseInt(row.dataset.pid);
+      const p   = _state.points.find(pt => pt.id === pid);
+      if (!p) return;
+      _state.selectedPoint = _state.selectedPoint === pid ? null : pid;
+      renderPoints();
+      renderStudList();
+      setCoords(_state.selectedPoint ? p : null);
+    });
+  });
 
-    <div class="pd-section-label" style="margin-top:16px">Recent Runs</div>
-    <div class="pd-run-list">${runsHtml}</div>
+  el.querySelectorAll('.pd-stud-input').forEach(input => {
+    input.addEventListener('click', e => e.stopPropagation());
+    input.addEventListener('change', () => {
+      const pid  = parseInt(input.dataset.pid);
+      const axis = input.dataset.axis;
+      const val  = Math.round(Math.max(0, Math.min(BED, parseFloat(input.value) || 0)));
+      input.value = val;
+      const p = _state.points.find(pt => pt.id === pid);
+      if (!p) return;
+      p[axis] = val;
+      renderPoints();
+      pdSetDirty(true);
+      if (_state.selectedPoint === pid) setCoords(p);
+    });
+  });
 
-    ${tipsHtml ? `<div class="pd-section-label" style="margin-top:16px">Potential Savings</div><div style="display:flex;flex-direction:column;gap:8px">${tipsHtml}</div>` : ''}
-  `;
+  el.querySelectorAll('.pd-stud-delete-btn').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const pid = parseInt(btn.dataset.pid);
+      const idx = _state.points.findIndex(pt => pt.id === pid);
+      if (idx === -1) return;
+      _state.points.splice(idx, 1);
+      _state.points.forEach((pt, i) => { pt.id = i + 1; });
+      if (_state.selectedPoint === pid) {
+        _state.selectedPoint = null;
+        setCoords(null);
+      }
+      renderPoints();
+      renderStudList();
+      pdSetDirty(true);
+    });
+  });
 }
 
 // ── SVG helper ────────────────────────────────────────────────────────────────

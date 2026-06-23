@@ -5,11 +5,12 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
-from flask import Flask, render_template, request
+from flask import Flask, make_response, render_template, request, jsonify
 from markupsafe import Markup
 from robot_service import WeldFlexRobotService
 
@@ -49,6 +50,67 @@ _tcp_calib: dict = {
 }
 _tcp_lock = threading.Lock()
 
+_RECIPES_PATH = os.path.join(os.path.dirname(__file__), 'recipes.json')
+_rec_lock = threading.Lock()
+
+def _recipes_load():
+    try:
+        with open(_RECIPES_PATH) as f:
+            recipes = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+    migrated = False
+    for r in recipes:
+        if not r.get('id'):
+            r['id'] = str(uuid.uuid4())
+            migrated = True
+    if migrated:
+        _recipes_save(recipes)
+    return recipes
+
+def _recipes_save(recipes):
+    with open(_RECIPES_PATH, 'w') as f:
+        json.dump(recipes, f, indent=2)
+
+def _recipes_enrich(recipes):
+    result = []
+    for r in recipes:
+        studs = r.get('studs', [])
+        ts = r.get('updated_at') or r.get('created_at', '')
+        try:
+            label = datetime.fromisoformat(ts).strftime('%b %d, %Y')
+        except Exception:
+            label = 'Never'
+        result.append({**r, 'studs_count': len(studs), 'updated_label': label})
+    return result
+
+def _parse_studs(text):
+    """Parse 'x,y\\nx,y' text → list of {x, y} dicts. Returns (list, error|None)."""
+    studs = []
+    for line in (text or '').splitlines():
+        line = line.strip().rstrip(',')
+        if not line:
+            continue
+        vals = line.split(',', 1)
+        if len(vals) != 2:
+            return [], f'Invalid line: {line!r}'
+        try:
+            studs.append({'x': float(vals[0]), 'y': float(vals[1])})
+        except ValueError:
+            return [], f'Non-numeric value: {line!r}'
+    return studs, None
+
+def _preview_data(studs):
+    BED = 508.0
+    return {
+        'graph_points': [
+            {'x_plot': round((BED - s['x']) / BED * 200, 2),
+             'y_plot': round((BED - s['y']) / BED * 200, 2),
+             'index': i + 1}
+            for i, s in enumerate(studs)
+        ]
+    }
+
 def _lbt_load() -> None:
     global _lbt_log
     try:
@@ -79,8 +141,13 @@ _ICONS = {
     "crosshair":   '<circle cx="12" cy="12" r="10"/><line x1="22" y1="12" x2="18" y2="12"/><line x1="6" y1="12" x2="2" y2="12"/><line x1="12" y1="6" x2="12" y2="2"/><line x1="12" y1="22" x2="12" y2="18"/>',
     "activity":    '<path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.48 12H2"/>',
     "settings":    '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
-    "bot":         '<path d="M12 8V4H8"/><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/>',
+    "bot":              '<path d="M12 8V4H8"/><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/>',
     "layout_dashboard": '<rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/>',
+    "menu":             '<line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/>',
+    "plus":             '<path d="M5 12h14"/><path d="M12 5v14"/>',
+    "plus_circle":      '<circle cx="12" cy="12" r="10"/><path d="M8 12h8"/><path d="M12 8v8"/>',
+    "image":            '<rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>',
+    "mouse_pointer_2":  '<path d="M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z"/>',
 }
 
 def icon_safe(name, fallback="circle", width=14, height=14, class_=""):
@@ -150,12 +217,123 @@ def ui_settings_save():
 
 @app.route("/operator/parts")
 def parts():
-    sample_parts = [
-        {"name": "Bracket A", "last_run": "Jun 12, 2026"},
-        {"name": "Bracket B", "last_run": "Jun 14, 2026"},
-        {"name": "Mounting Plate", "last_run": "Never"},
-    ]
-    return render_template("parts.html", page_title="Parts", parts=sample_parts)
+    recipe_name = request.args.get('recipe_name', None)
+    with _rec_lock:
+        all_recipes = _recipes_load()
+    studs_text = ''
+    if recipe_name is not None:
+        match = next((r for r in all_recipes if r['name'] == recipe_name), None)
+        if match:
+            raw = match.get('studs', '')
+            if isinstance(raw, list):
+                studs_text = '\n'.join(f"{s['x']},{s['y']}" for s in raw)
+            else:
+                studs_text = raw
+    return render_template('parts.html',
+                           page_title='Parts',
+                           recipes=_recipes_enrich(all_recipes),
+                           recipe_name=recipe_name,
+                           studs_text=studs_text)
+
+@app.route('/ui/recipes/save', methods=['POST'])
+def ui_recipes_save():
+    name      = (request.form.get('recipe_name') or '').strip()
+    recipe_id = (request.form.get('recipe_id')   or '').strip()
+    if not name:
+        return render_template('partials/command_result.html', ok=False,
+                               title='Save Recipe', payload={'error': 'Recipe name is required'})
+    studs_json = (request.form.get('studs_json') or '').strip()
+    studs_text = (request.form.get('studs_text') or '').strip()
+    if studs_json:
+        try:
+            studs = json.loads(studs_json)
+        except (json.JSONDecodeError, ValueError):
+            studs = []
+    elif studs_text:
+        studs, _ = _parse_studs(studs_text)
+    else:
+        studs = []
+    with _rec_lock:
+        recipes = _recipes_load()
+        if recipe_id:
+            existing = next((r for r in recipes if r.get('id') == recipe_id), None)
+        else:
+            existing = next((r for r in recipes if r['name'] == name), None)
+        now = datetime.now(timezone.utc).isoformat()
+        if existing:
+            existing['name']       = name
+            existing['studs']      = studs
+            existing['updated_at'] = now
+            saved_id = existing['id']
+        else:
+            saved_id = str(uuid.uuid4())
+            recipes.append({
+                'id': saved_id,
+                'name': name,
+                'studs': studs,
+                'created_at': now,
+                'updated_at': now,
+                'times_ran': 0,
+                'avg_cycle_time': None,
+                'last_run': None,
+                'pause_points': [],
+            })
+        _recipes_save(recipes)
+    resp = make_response(render_template('partials/command_result.html', ok=True,
+                                         title='Save Recipe', payload={'name': name}))
+    resp.headers['X-Recipe-Id'] = saved_id
+    return resp
+
+@app.route('/ui/parts/delete', methods=['POST'])
+def ui_parts_delete():
+    recipe_id = (request.form.get('recipe_id')   or '').strip()
+    name      = (request.form.get('recipe_name') or '').strip()
+    if not recipe_id and not name:
+        return render_template('partials/command_result.html', ok=False,
+                               title='Delete Recipe', payload={'error': 'No recipe identifier'})
+    with _rec_lock:
+        recipes = _recipes_load()
+        before = len(recipes)
+        if recipe_id:
+            recipes = [r for r in recipes if r.get('id') != recipe_id]
+        else:
+            recipes = [r for r in recipes if r['name'] != name]
+        _recipes_save(recipes)
+    deleted = len(recipes) < before
+    resp = make_response(render_template(
+        'partials/command_result.html', ok=deleted, title='Delete Recipe',
+        payload={} if deleted else {'error': 'Recipe not found'}))
+    if deleted:
+        resp.headers['HX-Redirect'] = '/operator/parts'
+    return resp
+
+@app.route('/ui/studs-preview')
+def ui_studs_preview():
+    text = request.args.get('studs_text', '')
+    studs, err = _parse_studs(text)
+    if err:
+        return render_template('partials/studs_preview.html', ok=False, preview={'error': err})
+    return render_template('partials/studs_preview.html', ok=True, preview=_preview_data(studs))
+
+@app.route('/ui/manager/parts-list')
+def ui_manager_parts_list():
+    with _rec_lock:
+        recipes = _recipes_load()
+    return jsonify(_recipes_enrich(recipes))
+
+@app.route('/ui/manager/part-points')
+def ui_manager_part_points():
+    recipe_id = request.args.get('id',   '').strip()
+    name      = request.args.get('name', '').strip()
+    with _rec_lock:
+        recipes = _recipes_load()
+    if recipe_id:
+        recipe = next((r for r in recipes if r.get('id') == recipe_id), None)
+    else:
+        recipe = next((r for r in recipes if r['name'] == name), None)
+    if not recipe:
+        return jsonify({'ok': False, 'error': 'Not found'}), 404
+    return jsonify({'ok': True, 'points': recipe.get('studs', [])})
 
 @app.context_processor
 def inject_defaults():

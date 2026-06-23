@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "components/ui.html" import action_button, nav_card, panel_shell with context %}
+{% from "components/ui.html" import action_button, nav_card, panel_shell, metric_card with context %}
 
 {% block body %}
 <div class="operator-main-body">
@@ -14,6 +14,12 @@
     {% endcall %}
 
     {% call panel_shell('Current Job', class_name='operator-current-job') %}
+      <div class="current-job-grid">
+        {{ metric_card('Part Name', '—') }}
+        {{ metric_card('Part Number', '—') }}
+        {{ metric_card('Job Cycles', '—') }}
+        {{ metric_card('Current Cycle', '—') }}
+      </div>
     {% endcall %}
   </div>
 

@@ -3,14 +3,19 @@
 
 {% block body %}
 <div class="operator-main-body">
-  {% call panel_shell('Control Panel', class_name='operator-control-panel') %}
-    <div class="hero-main-controls">
-      {{ action_button('Run', variant='run', icon='play') }}
-      {{ action_button('Pause', variant='pause', icon='pause') }}
-      {{ action_button('Resume', variant='run', icon='play') }}
-      {{ action_button('Stop', variant='stop', icon='square') }}
-    </div>
-  {% endcall %}
+  <div class="operator-left-col">
+    {% call panel_shell('Control Panel', class_name='operator-control-panel') %}
+      <div class="hero-main-controls">
+        {{ action_button('Run', variant='run', icon='play') }}
+        {{ action_button('Pause', variant='pause', icon='pause') }}
+        {{ action_button('Resume', variant='run', icon='play') }}
+        {{ action_button('Stop', variant='stop', icon='square') }}
+      </div>
+    {% endcall %}
+
+    {% call panel_shell('Current Job', class_name='operator-current-job') %}
+    {% endcall %}
+  </div>
 
   {% call panel_shell('Navigation', class_name='operator-links-panel') %}
     <section class="home-nav-grid">
@@ -18,7 +23,6 @@
       {{ nav_card('/operator/calibration', 'crosshair', 'Calibration', 'Jog robot, capture origin, and dry-run positions.') }}
       {{ nav_card('/operator/robot-diagnostics', 'activity', 'Robot Diagnostics', 'Inspect connection, runtime state, and faults.') }}
       {{ nav_card('/operator/settings', 'settings', 'Settings', 'Configure application and robot integration.') }}
-      {{ nav_card('/operator/liberty', 'activity', 'Liberty', 'Run and manage Liberty test sequences.') }}
     </section>
   {% endcall %}
 </div>

@@ -2881,21 +2881,27 @@ pre {
   cursor: none !important;
 }
 
-/* Operator main page: control panel (left) + quick links (right) */
+/* Operator main page — sized for 800×480 production touchscreen */
 .operator-main-body {
   display: grid;
   grid-template-columns: 7fr 3fr;
-  gap: 16px;
-  padding: 16px;
+  gap: 10px;
+  padding: 10px;
   flex: 1;
   align-items: start;
+}
+
+.operator-left-col {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .operator-links-panel .home-nav-grid {
   grid-template-columns: 1fr;
 }
 
-@media (max-width: 900px) {
+@media (max-width: 800px) {
   .operator-main-body {
     grid-template-columns: 1fr;
   }
@@ -3360,6 +3366,29 @@ pre {
 }
 
 /* ── Force/Torque sensor readout ── */
+.ft-status-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin-bottom: 12px;
+  border: 1px solid transparent;
+}
+.ft-active  { background: var(--ok-bg);  border-color: var(--ok-line);  color: var(--run); }
+.ft-inactive { background: var(--err-bg); border-color: var(--err-line); color: var(--stop); }
+
+.ft-status-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.ft-active  .ft-status-dot { background: var(--run); }
+.ft-inactive .ft-status-dot { background: var(--stop); }
+
 .ft-reading-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

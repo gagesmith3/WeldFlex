@@ -5,7 +5,7 @@
     <div class="pd-panel-header">
       <span class="pd-panel-title">Parts</span>
       <button type="button" class="pd-icon-btn" title="New part (demo)">
-        {{ icon_safe('plus', size=13) }}
+        {{ icon_safe('plus', width=13, height=13) }}
       </button>
     </div>
     <div class="pd-panel-body">
@@ -17,16 +17,16 @@
   <div class="pd-canvas-area">
     <div class="pd-canvas-toolbar">
       <button type="button" class="pd-tool-btn active" id="pd-tool-select" onclick="pdSetMode('select')">
-        {{ icon_safe('mouse_pointer_2', size=13) }}
+        {{ icon_safe('mouse_pointer_2', width=13, height=13) }}
         Select
       </button>
       <button type="button" class="pd-tool-btn" id="pd-tool-add" onclick="pdSetMode('add')">
-        {{ icon_safe('plus_circle', size=13) }}
+        {{ icon_safe('plus_circle', width=13, height=13) }}
         Add Point
       </button>
       <div class="pd-toolbar-sep"></div>
       <label class="pd-tool-btn" title="Upload bed image overlay">
-        {{ icon_safe('image', size=13) }}
+        {{ icon_safe('image', width=13, height=13) }}
         Image
         <input type="file" id="pd-img-upload" accept="image/*" class="pd-file-input">
       </label>
@@ -35,7 +35,7 @@
       </div>
       <div class="pd-flex-spacer"></div>
       <button type="button" class="pd-tool-btn danger" onclick="pdClearPoints()">
-        {{ icon_safe('trash_2', size=13) }}
+        {{ icon_safe('trash_2', width=13, height=13) }}
         Clear
       </button>
     </div>

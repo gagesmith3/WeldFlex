@@ -1,9 +1,14 @@
 {% extends "base.html" %}
-{% from "components/ui.html" import action_button, panel_shell with context %}
+{% from "components/ui.html" import action_button, nav_card, panel_shell with context %}
 
 {% block body %}
 <div class="page-body">
   <div class="settings-sections">
+    {% call panel_shell('Tools', class_name='settings-shell') %}
+      <section class="home-nav-grid">
+        {{ nav_card('/operator/liberty', 'activity', 'Liberty', 'Run and manage Liberty test sequences.') }}
+      </section>
+    {% endcall %}
     {% call panel_shell('Connection Settings', 'Runtime robot connection and polling configuration.', class_name='settings-shell') %}
       <form class="settings-grid" hx-post="/ui/settings/save" hx-target="#toast-rack" hx-swap="innerHTML">
         <div>

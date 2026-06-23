@@ -7,11 +7,11 @@
     <h2>Jog</h2>
     <p>Jog the robot in set increments</p>
   </a>
-  <div class="calib-menu-card calib-menu-card-soon">
-    <div class="calib-menu-icon">{{ icon_safe('sliders_horizontal', fallback='settings', width=48, height=48) }}</div>
-    <h2>Set</h2>
-    <p>Coming soon</p>
-  </div>
+  <a class="calib-menu-card" href="/operator/calibration/force-sensor">
+    <div class="calib-menu-icon">{{ icon_safe('activity', fallback='activity', width=48, height=48) }}</div>
+    <h2>Force Sensor</h2>
+    <p>Activate sensor and view live force/torque readings</p>
+  </a>
   <a class="calib-menu-card" href="/operator/tcp-calibrate">
     <div class="calib-menu-icon">{{ icon_safe('wrench', fallback='tool', width=48, height=48) }}</div>
     <h2>Tool Calibration</h2>
@@ -21,11 +21,6 @@
     <div class="calib-menu-icon">{{ icon_safe('crosshair', fallback='target', width=48, height=48) }}</div>
     <h2>Work Area Calibration</h2>
     <p>Recalibrate robot to align zerozero point</p>
-  </a>
-  <a class="calib-menu-card" href="/operator/calibration/force-sensor">
-    <div class="calib-menu-icon">{{ icon_safe('activity', fallback='activity', width=48, height=48) }}</div>
-    <h2>Force Sensor</h2>
-    <p>Activate sensor and view live force/torque readings</p>
   </a>
 </div>
 {% endblock %}

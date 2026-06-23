@@ -1,4 +1,8 @@
 {% if ok %}
+<div class="ft-status-bar {% if reading.active %}ft-active{% else %}ft-inactive{% endif %}">
+  <div class="ft-status-dot"></div>
+  <span>Sensor {% if reading.active %}Active{% else %}Inactive — press Initialize{% endif %}</span>
+</div>
 <div class="ft-reading-grid">
   {% for label, val, unit in [
     ('Fx', reading.fx, 'N'),

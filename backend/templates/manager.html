@@ -11,7 +11,7 @@
   <div class="mgr-shell">
     <div class="mgr-topbar">
       <button type="button" class="mgr-menu-btn" onclick="toggleMgrDrawer()">
-        {{ icon_safe('menu', size=20) }}
+        {{ icon_safe('menu', width=20, height=20) }}
       </button>
       <div class="mgr-topbar-left">
         <span class="mgr-topbar-title">WeldFlex Manager</span>
@@ -26,7 +26,7 @@
                 hx-target="#mgr-content"
                 hx-swap="innerHTML"
                 onclick="setMgrTab(this)">
-          {{ icon_safe('pen_tool', size=16) }}
+          {{ icon_safe('pen_tool', width=16, height=16) }}
           Part Designer
         </button>
         <button type="button" class="mgr-nav-btn"
@@ -34,12 +34,12 @@
                 hx-target="#mgr-content"
                 hx-swap="innerHTML"
                 onclick="setMgrTab(this)">
-          {{ icon_safe('settings', size=16) }}
+          {{ icon_safe('settings', width=16, height=16) }}
           Settings
         </button>
         <div class="mgr-sidebar-spacer"></div>
         <a class="mgr-nav-btn mgr-nav-operator" href="/operator">
-          {{ icon_safe('bot', size=16) }}
+          {{ icon_safe('bot', width=16, height=16) }}
           Operator
         </a>
       </nav>

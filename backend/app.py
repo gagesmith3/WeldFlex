@@ -1,6 +1,8 @@
 import json
 import os
+import socket
 import subprocess
+import sys
 import threading
 import time
 from datetime import datetime, timezone
@@ -33,6 +35,19 @@ _LIBERTY_LOG_PATH = os.path.join(os.path.dirname(__file__), "liberty_log.json")
 _lbt_lock = threading.Lock()
 _lbt_session: dict = {}
 _lbt_log: list = []
+
+_current_job: dict = {"name": None, "started_at": None}
+
+_tcp_calib: dict = {
+    "points_recorded": set(),
+    "drag_point": None,
+    "drag_error": None,
+    "record_error": None,
+    "apply_error": None,
+    "applied": False,
+    "tcp_offset": None,
+}
+_tcp_lock = threading.Lock()
 
 def _lbt_load() -> None:
     global _lbt_log
@@ -81,9 +96,57 @@ def icon_safe(name, fallback="circle", width=14, height=14, class_=""):
 app.jinja_env.globals["icon_safe"] = icon_safe
 
 @app.route("/")
+def landing():
+    return render_template("landing.html")
+
 @app.route("/operator")
 def operator():
     return render_template("operator.html", page_title="Operator")
+
+@app.route("/operator/admin")
+def admin():
+    settings = {
+        "robot_ip": os.getenv("WELDFLEX_ROBOT_IP", "192.168.58.2"),
+        "controller_host": os.getenv("WELDFLEX_CONTROLLER_HOST", "192.168.58.2"),
+        "program_path": os.getenv("WELDFLEX_PROGRAM_PATH", "/fruser/"),
+        "studs_data_path": os.getenv("WELDFLEX_STUDS_DATA_PATH", "/fruser/studs/"),
+        "status_interval_ms": os.getenv("WELDFLEX_STATUS_INTERVAL_MS", "1000"),
+    }
+    return render_template("admin.html", page_title="Admin", settings=settings)
+
+@app.route("/ui/settings/save", methods=["POST"])
+def ui_settings_save():
+    fields = ["robot_ip", "controller_host", "program_path", "studs_data_path", "status_interval_ms"]
+    env_keys = {
+        "robot_ip": "WELDFLEX_ROBOT_IP",
+        "controller_host": "WELDFLEX_CONTROLLER_HOST",
+        "program_path": "WELDFLEX_PROGRAM_PATH",
+        "studs_data_path": "WELDFLEX_STUDS_DATA_PATH",
+        "status_interval_ms": "WELDFLEX_STATUS_INTERVAL_MS",
+    }
+    env_path = os.path.join(os.path.dirname(__file__), '..', '.env')
+    try:
+        try:
+            with open(env_path) as f:
+                lines = f.readlines()
+        except FileNotFoundError:
+            lines = []
+        existing = {}
+        for line in lines:
+            if "=" in line and not line.strip().startswith("#"):
+                k, _, v = line.partition("=")
+                existing[k.strip()] = v.rstrip("\n")
+        for field in fields:
+            val = request.form.get(field, "").strip()
+            if val:
+                existing[env_keys[field]] = val
+        with open(env_path, "w") as f:
+            for k, v in existing.items():
+                f.write(f"{k}={v}\n")
+        ok, payload = True, {}
+    except Exception as e:
+        ok, payload = False, {"error": str(e)}
+    return render_template("partials/command_result.html", ok=ok, title="Save Settings", payload=payload)
 
 @app.route("/operator/parts")
 def parts():
@@ -111,10 +174,26 @@ def ui_run():
     program = request.form.get("program", "feedCycle.lua")
     try:
         robot.run_program(program)
+        _current_job["name"] = program
+        _current_job["started_at"] = datetime.now(timezone.utc).isoformat()
         ok, payload = True, {}
     except Exception as e:
         ok, payload = False, {"error": str(e)}
     return render_template("partials/command_result.html", ok=ok, title="Run", payload=payload)
+
+@app.route("/ui/operator/current-job")
+def ui_operator_current_job():
+    try:
+        status = robot.status()
+    except Exception:
+        status = {"connected": False, "program_state": "error", "program_state_raw": None}
+    return render_template(
+        "partials/current_job.html",
+        job_name=_current_job.get("name"),
+        started_at=_current_job.get("started_at"),
+        program_state=status.get("program_state", "unknown"),
+        connected=status.get("connected", False),
+    )
 
 @app.route("/operator/liberty")
 def liberty():
@@ -243,19 +322,99 @@ def calibration():
 def force_sensor():
     return render_template("force_sensor.html", page_title="Force Sensor")
 
-@app.route("/ui/ft/activate", methods=["POST"])
-def ui_ft_activate():
+@app.route("/operator/tcp-calibrate")
+def tcp_calibrate_page():
+    return render_template("tcp_calibrate.html", page_title="Tool Calibration")
+
+def _tcp_render():
+    with _tcp_lock:
+        pts = set(_tcp_calib["points_recorded"])
+        state = dict(_tcp_calib)
+    return render_template(
+        "partials/tcp_calibrate_steps.html",
+        points_recorded=pts,
+        drag_point=state["drag_point"],
+        all_recorded=len(pts) == 4,
+        drag_error=state["drag_error"],
+        record_error=state["record_error"],
+        apply_error=state["apply_error"],
+        applied=state["applied"],
+        tcp_offset=state["tcp_offset"] or [0.0] * 6,
+    )
+
+@app.route("/ui/tcp-calibrate/status")
+def ui_tcp_calibrate_status():
+    return _tcp_render()
+
+@app.route("/ui/tcp-calibrate/enable-drag", methods=["POST"])
+def ui_tcp_calibrate_enable_drag():
+    point = int(request.form.get("point", 0))
     try:
-        robot.ft_activate(1)
+        robot.tcp_enable_drag()
+        with _tcp_lock:
+            _tcp_calib["drag_point"] = point
+            _tcp_calib["drag_error"] = None
+    except Exception as e:
+        with _tcp_lock:
+            _tcp_calib["drag_point"] = None
+            _tcp_calib["drag_error"] = str(e)
+    return _tcp_render()
+
+@app.route("/ui/tcp-calibrate/record-point", methods=["POST"])
+def ui_tcp_calibrate_record_point():
+    point = int(request.form.get("point", 0))
+    try:
+        robot.tcp_record_point(point)
+        with _tcp_lock:
+            _tcp_calib["points_recorded"].add(point)
+            _tcp_calib["drag_point"] = None
+            _tcp_calib["record_error"] = None
+    except Exception as e:
+        with _tcp_lock:
+            _tcp_calib["drag_point"] = None
+            _tcp_calib["record_error"] = str(e)
+    return _tcp_render()
+
+@app.route("/ui/tcp-calibrate/apply", methods=["POST"])
+def ui_tcp_calibrate_apply():
+    try:
+        tcp_offset = robot.tcp_compute_and_apply()
+        with _tcp_lock:
+            _tcp_calib["applied"] = True
+            _tcp_calib["tcp_offset"] = tcp_offset
+            _tcp_calib["apply_error"] = None
+    except Exception as e:
+        with _tcp_lock:
+            _tcp_calib["apply_error"] = str(e)
+    return _tcp_render()
+
+@app.route("/ui/tcp-calibrate/reset", methods=["POST"])
+def ui_tcp_calibrate_reset():
+    with _tcp_lock:
+        _tcp_calib.update({
+            "points_recorded": set(),
+            "drag_point": None,
+            "drag_error": None,
+            "record_error": None,
+            "apply_error": None,
+            "applied": False,
+            "tcp_offset": None,
+        })
+    return _tcp_render()
+
+@app.route("/ui/ft/setup", methods=["POST"])
+def ui_ft_setup():
+    try:
+        robot.ft_setup()
         ok, payload = True, {}
     except Exception as e:
         ok, payload = False, {"error": str(e)}
-    return render_template("partials/command_result.html", ok=ok, title="Activate", payload=payload)
+    return render_template("partials/command_result.html", ok=ok, title="Initialize", payload=payload)
 
 @app.route("/ui/ft/deactivate", methods=["POST"])
 def ui_ft_deactivate():
     try:
-        robot.ft_activate(0)
+        robot.ft_deactivate()
         ok, payload = True, {}
     except Exception as e:
         ok, payload = False, {"error": str(e)}
@@ -290,6 +449,225 @@ def ui_connection():
     except Exception as e:
         snapshot = {"online": False, "program_state": "stopped", "error": str(e)}
     return render_template("partials/connection_chips.html", snapshot=snapshot)
+
+@app.route("/operator/robot-diagnostics")
+def robot_diagnostics_page():
+    return render_template("robot_diagnostics.html", page_title="Robot Diagnostics",
+                           status_interval_ms=int(os.getenv("WELDFLEX_STATUS_INTERVAL_MS", "1000")))
+
+@app.route("/ui/diagnostics")
+def ui_diagnostics():
+    robot_ip = os.getenv("WELDFLEX_ROBOT_IP", "192.168.58.2")
+    controller_host = os.getenv("WELDFLEX_CONTROLLER_HOST", "192.168.58.2")
+    program_path = os.getenv("WELDFLEX_PROGRAM_PATH", "/fruser/")
+    try:
+        status = robot.diagnostics()
+        snapshot = {
+            "online": status["connected"],
+            "robot_ip": robot_ip,
+            "controller_host": controller_host,
+            "program_path": program_path,
+            "error": None,
+        }
+        ok = True
+    except Exception as e:
+        status = {
+            "connected": False,
+            "program_state": "unknown",
+            "program_state_error": -1,
+            "current_line": None,
+            "current_line_error": -1,
+            "fault_codes": {
+                "main_code": None, "sub_code": None,
+                "safety_code": None, "safety_error": -1,
+                "robot_error_error": -1,
+            },
+        }
+        snapshot = {
+            "online": False,
+            "robot_ip": robot_ip,
+            "controller_host": controller_host,
+            "program_path": program_path,
+            "error": str(e),
+        }
+        ok = False
+    return render_template("partials/diagnostics_readout.html",
+                           ok=ok, status=status, snapshot=snapshot,
+                           uptime=robot.uptime())
+
+@app.route("/ui/diagnostics/reset-errors", methods=["POST"])
+def ui_diagnostics_reset_errors():
+    try:
+        robot.reset_errors()
+        ok, payload = True, {}
+    except Exception as e:
+        ok, payload = False, {"error": str(e)}
+    return render_template("partials/command_result.html", ok=ok, title="Reset Errors", payload=payload)
+
+@app.route("/ui/diagnostics/reconnect", methods=["POST"])
+def ui_diagnostics_reconnect():
+    try:
+        robot.reconnect()
+        ok, payload = True, {}
+    except Exception as e:
+        ok, payload = False, {"error": str(e)}
+    return render_template("partials/command_result.html", ok=ok, title="Reconnect", payload=payload)
+
+@app.route("/ui/stop", methods=["POST"])
+def ui_stop():
+    try:
+        robot.stop_program()
+        ok, payload = True, {}
+    except Exception as e:
+        ok, payload = False, {"error": str(e)}
+    return render_template("partials/command_result.html", ok=ok, title="Stop", payload=payload)
+
+
+_COMMON_TIMEZONES = [
+    "UTC",
+    "America/New_York", "America/Chicago", "America/Denver",
+    "America/Los_Angeles", "America/Anchorage", "America/Honolulu", "America/Phoenix",
+    "Europe/London", "Europe/Paris", "Europe/Berlin",
+    "Asia/Tokyo", "Asia/Shanghai", "Asia/Kolkata",
+    "Australia/Sydney",
+]
+
+def _get_sys_info() -> dict:
+    info = {
+        "datetime": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "timezone": "UTC",
+        "ntp_enabled": False,
+        "ntp_synced": False,
+        "ssid": "—",
+        "ip_address": "—",
+    }
+    try:
+        info["ip_address"] = socket.gethostbyname(socket.gethostname())
+    except Exception:
+        pass
+    if sys.platform != "win32":
+        try:
+            td_out = subprocess.check_output(
+                ["timedatectl", "show", "--no-pager"], stderr=subprocess.DEVNULL
+            ).decode()
+            for line in td_out.splitlines():
+                k, _, v = line.partition("=")
+                if k == "Timezone":
+                    info["timezone"] = v.strip()
+                elif k == "NTP" and v.strip() == "yes":
+                    info["ntp_enabled"] = True
+                elif k == "NTPSynchronized" and v.strip() == "yes":
+                    info["ntp_synced"] = True
+        except Exception:
+            pass
+        try:
+            ssid = subprocess.check_output(
+                ["iwgetid", "-r"], stderr=subprocess.DEVNULL
+            ).decode().strip()
+            if ssid:
+                info["ssid"] = ssid
+        except Exception:
+            pass
+    return info
+
+@app.route("/operator/settings")
+def settings():
+    return render_template("settings.html", page_title="Settings",
+                           sys_info=_get_sys_info(),
+                           common_timezones=_COMMON_TIMEZONES)
+
+@app.route("/manager")
+def manager():
+    return render_template("manager.html", page_title="Manager")
+
+@app.route("/ui/manager/part-designer")
+def ui_manager_part_designer():
+    return render_template("partials/mgr_part_designer.html")
+
+@app.route("/ui/manager/settings")
+def ui_manager_settings():
+    return render_template("partials/mgr_settings.html")
+
+@app.route("/ui/settings/ntp", methods=["POST"])
+def ui_settings_ntp():
+    try:
+        if sys.platform != "win32":
+            subprocess.check_call(["timedatectl", "set-ntp", "true"])
+        ok, payload = True, {}
+    except Exception as e:
+        ok, payload = False, {"error": str(e)}
+    return render_template("partials/command_result.html", ok=ok, title="Enable NTP", payload=payload)
+
+@app.route("/ui/settings/timezone", methods=["POST"])
+def ui_settings_timezone():
+    tz = request.form.get("timezone", "").strip()
+    try:
+        if sys.platform != "win32" and tz:
+            subprocess.check_call(["timedatectl", "set-timezone", tz])
+        ok, payload = True, {}
+    except Exception as e:
+        ok, payload = False, {"error": str(e)}
+    return render_template("partials/command_result.html", ok=ok, title="Set Timezone", payload=payload)
+
+@app.route("/ui/settings/wifi/scan")
+def ui_settings_wifi_scan():
+    networks = []
+    if sys.platform != "win32":
+        try:
+            out = subprocess.check_output(
+                ["nmcli", "-t", "-f", "SSID,SIGNAL,SECURITY", "dev", "wifi", "list"],
+                stderr=subprocess.DEVNULL
+            ).decode()
+            seen: set = set()
+            for line in out.splitlines():
+                parts = line.split(":")
+                ssid = parts[0].strip()
+                if ssid and ssid not in seen:
+                    seen.add(ssid)
+                    networks.append({
+                        "ssid": ssid,
+                        "signal": parts[1].strip() if len(parts) > 1 else "?",
+                        "security": parts[2].strip() if len(parts) > 2 else "?",
+                    })
+        except Exception:
+            pass
+    return render_template("partials/wifi_scan.html", networks=networks)
+
+@app.route("/ui/settings/wifi", methods=["POST"])
+def ui_settings_wifi():
+    ssid = (request.form.get("ssid_manual") or request.form.get("ssid", "")).strip()
+    password = request.form.get("wifi_password", "").strip()
+    try:
+        if sys.platform != "win32" and ssid:
+            cmd = ["nmcli", "dev", "wifi", "connect", ssid]
+            if password:
+                cmd += ["password", password]
+            subprocess.check_call(cmd)
+        ok, payload = True, {}
+    except Exception as e:
+        ok, payload = False, {"error": str(e)}
+    return render_template("partials/command_result.html", ok=ok, title="Connect WiFi", payload=payload)
+
+@app.route("/ui/settings/system/reboot", methods=["POST"])
+def ui_settings_reboot():
+    try:
+        if sys.platform != "win32":
+            subprocess.Popen(["sudo", "reboot"])
+        ok, payload = True, {}
+    except Exception as e:
+        ok, payload = False, {"error": str(e)}
+    return render_template("partials/command_result.html", ok=ok, title="Reboot", payload=payload)
+
+@app.route("/ui/settings/system/shutdown", methods=["POST"])
+def ui_settings_shutdown():
+    try:
+        if sys.platform != "win32":
+            subprocess.Popen(["sudo", "shutdown", "-h", "now"])
+        ok, payload = True, {}
+    except Exception as e:
+        ok, payload = False, {"error": str(e)}
+    return render_template("partials/command_result.html", ok=ok, title="Shutdown", payload=payload)
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)

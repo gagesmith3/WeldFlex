@@ -7,20 +7,48 @@
 
     {% call panel_shell('Force Sensor Control', 'XJC X-6A-XD80-H28 · 200 N / 5 N·m', class_name='settings-shell') %}
       <div class="btn-row">
-        {{ action_button('Activate', variant='run', icon='activity',
-            hx_post='/ui/ft/activate', hx_target='#ft-action-result', hx_swap='innerHTML') }}
+        <button class="btn run"
+          hx-post="/ui/ft/setup"
+          hx-target="#ft-action-result"
+          hx-swap="innerHTML"
+          hx-disabled-elt="this">
+          <span class="btn-icon">{{ icon_safe('activity', fallback='circle', width=14, height=14) }}</span>
+          <span class="btn-label-idle">Initialize</span>
+          <span class="btn-label-busy" style="display:none">Initializing (~10s)…</span>
+        </button>
         {{ action_button('Deactivate', variant='stop', icon='square',
             hx_post='/ui/ft/deactivate', hx_target='#ft-action-result', hx_swap='innerHTML') }}
-        {{ action_button('Zero Sensor', variant='primary', icon='crosshair',
+        {{ action_button('Re-Zero', variant='primary', icon='crosshair',
             hx_post='/ui/ft/zero', hx_target='#ft-action-result', hx_swap='innerHTML') }}
       </div>
+      <p class="panel-note" style="margin-top:10px">
+        <strong>Initialize</strong> configures the XJC sensor, resets, activates, and zeros it (~10 s).
+        Use <strong>Re-Zero</strong> to null the resting load after the sensor is already active.
+      </p>
       <div id="ft-action-result" class="command-result"></div>
     {% endcall %}
 
-    {% call panel_shell('Live Readings', 'Force (N) and torque (N·m) in robot coordinate frame', class_name='settings-shell') %}
+    {% call panel_shell('Live Readings', 'Force (N) and torque (N·m) in robot coordinate frame · 300 ms refresh', class_name='settings-shell') %}
       {{ htmx_mount('ft-readout', '/ui/ft/reading', 'load, every 300ms', 'innerHTML') }}
     {% endcall %}
 
   </div>
 </div>
+
+{% block scripts %}
+<script>
+  document.body.addEventListener('htmx:beforeRequest', function(e) {
+    if (e.detail.elt.matches('[hx-post="/ui/ft/setup"]')) {
+      e.detail.elt.querySelector('.btn-label-idle').style.display = 'none';
+      e.detail.elt.querySelector('.btn-label-busy').style.display = '';
+    }
+  });
+  document.body.addEventListener('htmx:afterRequest', function(e) {
+    if (e.detail.elt.matches('[hx-post="/ui/ft/setup"]')) {
+      e.detail.elt.querySelector('.btn-label-idle').style.display = '';
+      e.detail.elt.querySelector('.btn-label-busy').style.display = 'none';
+    }
+  });
+</script>
+{% endblock %}
 {% endblock %}

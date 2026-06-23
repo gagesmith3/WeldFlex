@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import io
 import os
 import sys
 import threading
@@ -13,7 +14,7 @@ from typing import Any, Callable
 # and gets mistaken for a connection failure. Force UTF-8 stdio regardless of how
 # the process was launched.
 for _stream in (sys.stdout, sys.stderr):
-    if hasattr(_stream, "reconfigure"):
+    if isinstance(_stream, io.TextIOWrapper):
         _stream.reconfigure(encoding="utf-8", errors="replace")
 
 
@@ -44,7 +45,7 @@ def _bootstrap_sdk() -> None:
 _bootstrap_sdk()
 
 try:
-    from fairino import Robot
+    from fairino import Robot  # type: ignore[import]
 except ImportError as exc:
     raise ImportError(
         "Cannot import FAIRINO SDK. Set WELDFLEX_FAIRINO_PATH to the SDK platform folder."
@@ -65,6 +66,7 @@ class WeldFlexRobotService:
         self.robot_ip = robot_ip
         self._robot: Any | None = None
         self._lock = threading.RLock()
+        self._start_time = time.time()
         self._executor = concurrent.futures.ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="robot-sdk"
         )
@@ -127,29 +129,102 @@ class WeldFlexRobotService:
         """Load and run a Lua program already on the robot."""
         self.run_program(program_name)
 
-    def upload_program(self, local_path: str) -> None:
+    def upload_program(self, local_path: str) -> str:
+        """Upload a Lua file to the robot. Returns the program name as stored on the robot."""
+        path = Path(local_path).resolve()
+        if not path.is_file():
+            raise FileNotFoundError(f"Program file not found: {path}")
         with self._lock:
             robot = self._client()
-        error = self._call(lambda: robot.LuaUpload(local_path), timeout=30.0)
+        error = self._call(lambda: robot.LuaUpload(str(path)), timeout=30.0)
         err_code, _ = self._unpack(error)
         if err_code != 0:
-            raise RuntimeError(f"LuaUpload failed with error code {err_code}")
+            raise RuntimeError(f"LuaUpload failed (code {err_code}): {path.name}")
+        return path.name
 
     def run_program(self, program_name: str) -> None:
+        """Run a Lua program already stored on the robot under /fruser/."""
         with self._lock:
             robot = self._client()
         self._call(lambda: robot.Mode(0))
         time.sleep(2)
-        self._call(lambda: robot.ProgramLoad(f"/fruser/{program_name}"))
-        self._call(lambda: robot.ProgramRun())
+        load_resp = self._call(lambda: robot.ProgramLoad(f"/fruser/{program_name}"))
+        load_err, _ = self._unpack(load_resp)
+        if load_err != 0:
+            raise RuntimeError(f"ProgramLoad failed (code {load_err}): {program_name}")
+        run_resp = self._call(lambda: robot.ProgramRun())
+        run_err, _ = self._unpack(run_resp)
+        if run_err != 0:
+            raise RuntimeError(f"ProgramRun failed (code {run_err}): {program_name}")
 
-    def ft_activate(self, state: int) -> None:
+    def upload_and_run(self, local_path: str) -> None:
+        """Upload a Lua file then immediately run it."""
+        program_name = self.upload_program(local_path)
+        self.run_program(program_name)
+
+    def tcp_enable_drag(self) -> None:
+        """Enter drag teach mode so the operator can physically position the robot."""
         with self._lock:
             robot = self._client()
-        err = self._call(lambda: robot.FT_Activate(state))
+        err = self._call(lambda: robot.DragTeachSwitch(1))
         err_code, _ = self._unpack(err)
         if err_code != 0:
-            raise RuntimeError(f"FT_Activate failed (code {err_code})")
+            raise RuntimeError(f"DragTeachSwitch(1) failed (code {err_code})")
+
+    def tcp_record_point(self, point_num: int) -> None:
+        """Exit drag mode and record current pose as TCP reference point N (1-4)."""
+        with self._lock:
+            robot = self._client()
+        def _seq():
+            robot.DragTeachSwitch(0)
+            return robot.SetTcp4RefPoint(point_num)
+        err = self._call(_seq)
+        err_code, _ = self._unpack(err)
+        if err_code != 0:
+            raise RuntimeError(f"SetTcp4RefPoint({point_num}) failed (code {err_code})")
+
+    def tcp_compute_and_apply(self, tool_id: int = 1) -> list:
+        """Compute TCP from 4 recorded points and save to tool slot via SetToolCoord."""
+        with self._lock:
+            robot = self._client()
+        resp = self._call(lambda: robot.ComputeTcp4(), timeout=10.0)
+        err_code, tcp_pose = self._unpack(resp)
+        if err_code != 0:
+            raise RuntimeError(f"ComputeTcp4 failed (code {err_code})")
+        apply_resp = self._call(lambda: robot.SetToolCoord(tool_id, tcp_pose, 0, 0, 0, 0))
+        apply_code, _ = self._unpack(apply_resp)
+        if apply_code != 0:
+            raise RuntimeError(f"SetToolCoord failed (code {apply_code})")
+        return list(tcp_pose)
+
+    def ft_setup(self) -> None:
+        """Full init sequence per SDK example: configure → reset → activate → zero.
+        Takes ~10 s due to required waits between commands."""
+        with self._lock:
+            robot = self._client()
+
+        def _sequence():
+            robot.FT_SetConfig(24, 0)   # company 24 = XJC (鑫精诚), device 0
+            time.sleep(1)
+            robot.FT_Activate(0)        # reset first
+            time.sleep(2)
+            err = robot.FT_Activate(1)  # activate
+            if isinstance(err, int) and err != 0:
+                raise RuntimeError(f"FT_Activate(1) failed (code {err})")
+            time.sleep(2)
+            robot.FT_SetZero(0)         # clear old zero
+            time.sleep(2)
+            robot.FT_SetZero(1)         # apply new zero
+
+        self._call(_sequence, timeout=30.0)
+
+    def ft_deactivate(self) -> None:
+        with self._lock:
+            robot = self._client()
+        err = self._call(lambda: robot.FT_Activate(0))
+        err_code, _ = self._unpack(err)
+        if err_code != 0:
+            raise RuntimeError(f"FT_Activate(0) failed (code {err_code})")
 
     def ft_zero(self) -> None:
         with self._lock:
@@ -159,16 +234,23 @@ class WeldFlexRobotService:
         if err_code != 0:
             raise RuntimeError(f"FT_SetZero failed (code {err_code})")
 
-    def ft_read(self) -> dict[str, float]:
+    def ft_read(self) -> dict:
         with self._lock:
             robot = self._client()
-        resp = self._call(lambda: robot.FT_GetForceTorqueRCS())
+
+        def _read():
+            resp = robot.FT_GetForceTorqueRCS()
+            active = bool(robot.robot_state_pkg.ft_sensor_active)
+            return resp, active
+
+        resp, active = self._call(_read)
         err_code, values = self._unpack(resp)
         if err_code != 0:
             raise RuntimeError(f"FT_GetForceTorqueRCS failed (code {err_code})")
         return {
             "fx": float(values[0]), "fy": float(values[1]), "fz": float(values[2]),
             "mx": float(values[3]), "my": float(values[4]), "mz": float(values[5]),
+            "active": active,
         }
 
     def status(self) -> dict[str, Any]:
@@ -195,3 +277,75 @@ class WeldFlexRobotService:
             "program_state": STATE_MAP.get(state_raw, "unknown"),
             "program_state_raw": state_raw,
         }
+
+    def diagnostics(self) -> dict[str, Any]:
+        with self._lock:
+            robot = self._client()
+
+        def _gather():
+            state_resp = robot.GetProgramState()
+            line_resp = robot.GetCurrentLine()
+            try:
+                err_resp = robot.GetRobotErrCode()
+            except Exception:
+                err_resp = None
+            return state_resp, line_resp, err_resp
+
+        state_resp, line_resp, err_resp = self._call(_gather)
+
+        state_err, state_raw = self._unpack(state_resp)
+        line_err, line_val = self._unpack(line_resp)
+
+        if state_err == -4 and line_err == -4:
+            with self._lock:
+                self._robot = None
+
+        connected = (state_err == 0) or (line_err == 0)
+
+        if err_resp is not None and isinstance(err_resp, (tuple, list)) and len(err_resp) >= 3:
+            robot_error_error = int(err_resp[0])
+            main_code = err_resp[1] if err_resp[1] != 0 else None
+            sub_code = err_resp[2] if len(err_resp) > 2 and err_resp[2] != 0 else None
+        else:
+            robot_error_error = -1
+            main_code = None
+            sub_code = None
+
+        return {
+            "connected": connected,
+            "program_state": STATE_MAP.get(state_raw, "unknown"),
+            "program_state_error": state_err,
+            "current_line": line_val,
+            "current_line_error": line_err,
+            "fault_codes": {
+                "main_code": main_code,
+                "sub_code": sub_code,
+                "safety_code": None,
+                "safety_error": 0,
+                "robot_error_error": robot_error_error,
+            },
+        }
+
+    def reset_errors(self) -> None:
+        with self._lock:
+            robot = self._client()
+        err = self._call(lambda: robot.ResetAllError())
+        err_code, _ = self._unpack(err)
+        if err_code != 0:
+            raise RuntimeError(f"ResetAllError failed (code {err_code})")
+
+    def reconnect(self) -> None:
+        with self._lock:
+            self._robot = None
+        with self._lock:
+            self._client()
+
+    def uptime(self) -> str:
+        elapsed = int(time.time() - self._start_time)
+        h, rem = divmod(elapsed, 3600)
+        m, s = divmod(rem, 60)
+        if h:
+            return f"{h}h {m}m"
+        if m:
+            return f"{m}m {s}s"
+        return f"{s}s"

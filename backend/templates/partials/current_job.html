@@ -1,0 +1,20 @@
+{% from "components/ui.html" import metric_card with context %}
+<div class="current-job-metrics">
+  <div class="metric-card">
+    <div class="metric-icon">{{ icon_safe('clipboard', fallback='circle', width=14, height=14) }}</div>
+    <span class="metric-label">Current Job</span>
+    <strong class="metric-value">{{ job_name or '—' }}</strong>
+  </div>
+  <div class="metric-card">
+    <div class="metric-icon">{{ icon_safe('activity', fallback='circle', width=14, height=14) }}</div>
+    <span class="metric-label">State</span>
+    <strong class="metric-value">
+      <span class="state-badge state-badge--{{ program_state }}">{{ program_state }}</span>
+    </strong>
+  </div>
+  <div class="metric-card">
+    <div class="metric-icon">{{ icon_safe('wifi', fallback='circle', width=14, height=14) }}</div>
+    <span class="metric-label">Connection</span>
+    <strong class="metric-value">{{ 'Online' if connected else 'Offline' }}</strong>
+  </div>
+</div>

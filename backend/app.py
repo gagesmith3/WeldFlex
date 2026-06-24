@@ -394,7 +394,7 @@ def ui_parts_run():
     if not recipe:
         from flask import jsonify
         return jsonify({"ok": False, "error": "Part not found"}), 404
-    program = recipe.get("program", "feedCycle.lua")
+    program = recipe.get("program", "WeldFlex.lua")
     now = datetime.now(timezone.utc).isoformat()
     with _run_lock:
         _run_session.clear()
@@ -419,16 +419,21 @@ def ui_operator_run():
         session = dict(_run_session)
     if not session or session.get("state") not in ("queued", "error"):
         return _render_current_job()
-    error = None
     try:
+        # Upload the generated studs data file before running the base program
+        with _rec_lock:
+            recipes = _recipes_load()
+        recipe = next((r for r in recipes if r.get("id") == session.get("recipe_id")), None)
+        studs = recipe.get("studs", []) if recipe else []
+        robot.upload_studs_data(studs)
         robot.run_program(session["program"])
         with _run_lock:
             _run_session["state"] = "running"
             _run_session["launched_ts"] = time.time()
     except Exception as exc:
-        error = str(exc)
         with _run_lock:
             _run_session["state"] = "error"
+            _run_session["error_msg"] = str(exc)
     return _render_current_job()
 
 @app.route("/ui/pause", methods=["POST"])
@@ -471,6 +476,11 @@ def ui_operator_current_job():
                     _run_session["cycles_done"] = cycles_done
             else:
                 try:
+                    with _rec_lock:
+                        recipes = _recipes_load()
+                    recipe = next((r for r in recipes if r.get("id") == session.get("recipe_id")), None)
+                    studs = recipe.get("studs", []) if recipe else []
+                    robot.upload_studs_data(studs)
                     robot.run_program(session["program"])
                     with _run_lock:
                         _run_session["cycles_done"] = cycles_done

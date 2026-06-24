@@ -16,7 +16,9 @@
         <td class="parts-library-studs-cell">{{ recipe.studs_count }}</td>
         <td class="parts-library-date-cell">{{ recipe.updated_label }}</td>
         <td class="parts-library-action-cell">
-          <button type="button" class="btn run js-table-run parts-run-btn" data-recipe="{{ recipe.name }}">Run</button>
+          <button type="button" class="btn run js-table-run parts-run-btn"
+                  data-recipe-id="{{ recipe.id }}"
+                  data-recipe-name="{{ recipe.name }}">Run</button>
         </td>
       </tr>
       {% endfor %}

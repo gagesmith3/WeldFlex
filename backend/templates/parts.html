@@ -21,6 +21,20 @@
 
 </div>
 
+<!-- Run Part modal -->
+<div id="run-modal" class="wf-modal-overlay" hidden>
+  <div class="wf-modal">
+    <p class="wf-modal-msg">Run "<span id="run-modal-part-name"></span>"</p>
+    <label class="run-modal-label" for="run-modal-cycles">Number of cycles</label>
+    <input type="number" id="run-modal-cycles" class="pd-create-input run-modal-cycles-input"
+           value="1" min="1" max="999" autocomplete="off">
+    <div class="wf-modal-actions">
+      <button type="button" class="btn wf-cancel" onclick="runModalCancel()">Cancel</button>
+      <button type="button" class="btn run" onclick="runModalConfirm()">Run</button>
+    </div>
+  </div>
+</div>
+
 {% endblock %}
 
 {% block scripts %}
@@ -33,6 +47,38 @@ function syncPartsEditorUrl() {
   var url = new URL(window.location.href);
   url.searchParams.set('recipe_name', el.value.trim());
   history.replaceState({}, '', url.toString());
+}
+</script>
+{% else %}
+<script>
+let _runRecipeId = null;
+document.querySelectorAll('.js-table-run').forEach(function(btn) {
+  btn.addEventListener('click', function() {
+    _runRecipeId = btn.dataset.recipeId;
+    document.getElementById('run-modal-part-name').textContent = btn.dataset.recipeName;
+    document.getElementById('run-modal-cycles').value = '1';
+    document.getElementById('run-modal').removeAttribute('hidden');
+    document.getElementById('run-modal-cycles').focus();
+    document.getElementById('run-modal-cycles').select();
+  });
+});
+function runModalCancel() {
+  document.getElementById('run-modal').setAttribute('hidden', '');
+}
+async function runModalConfirm() {
+  const cycles = Math.max(1, parseInt(document.getElementById('run-modal-cycles').value, 10) || 1);
+  runModalCancel();
+  const fd = new FormData();
+  fd.append('recipe_id', _runRecipeId);
+  fd.append('cycles', cycles);
+  const resp = await fetch('/ui/parts/run', { method: 'POST', body: fd });
+  const data = await resp.json();
+  if (data.ok) {
+    window.location.href = '/operator';
+  } else {
+    const rack = document.getElementById('toast-rack');
+    if (rack) rack.innerHTML = '<div class="result error"><div class="result-header">Run Failed</div><pre>' + (data.error || 'Unknown error') + '</pre></div>';
+  }
 }
 </script>
 {% endif %}

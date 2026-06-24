@@ -39,6 +39,11 @@ _lbt_log: list = []
 
 _current_job: dict = {"name": None, "started_at": None}
 
+_run_lock = threading.Lock()
+_run_session: dict = {}
+# Keys when active: state, recipe_id, recipe_name, cycles_target, cycles_done,
+#                   program, started_at (ISO), launched_ts (epoch float)
+
 _tcp_calib: dict = {
     "points_recorded": set(),
     "drag_point": None,
@@ -359,17 +364,127 @@ def ui_run():
         ok, payload = False, {"error": str(e)}
     return render_template("partials/command_result.html", ok=ok, title="Run", payload=payload)
 
-@app.route("/ui/operator/current-job")
-def ui_operator_current_job():
+def _robot_status_safe():
     try:
-        status = robot.status()
+        return robot.status()
     except Exception:
-        status = {"connected": False, "program_state": "error", "program_state_raw": None}
+        return {"connected": False, "program_state": "unknown", "program_state_raw": None}
+
+def _render_current_job():
+    status = _robot_status_safe()
+    with _run_lock:
+        session = dict(_run_session)
     return render_template(
         "partials/current_job.html",
-        job_name=_current_job.get("name"),
-        started_at=_current_job.get("started_at"),
-        program_state=status.get("program_state", "unknown"),
+        session=session,
+        robot_state=status.get("program_state", "unknown"),
+        connected=status.get("connected", False),
+    )
+
+@app.route("/ui/parts/run", methods=["POST"])
+def ui_parts_run():
+    recipe_id = (request.form.get("recipe_id") or "").strip()
+    try:
+        cycles = max(1, int(request.form.get("cycles", "1")))
+    except ValueError:
+        cycles = 1
+    with _rec_lock:
+        recipes = _recipes_load()
+    recipe = next((r for r in recipes if r.get("id") == recipe_id), None)
+    if not recipe:
+        from flask import jsonify
+        return jsonify({"ok": False, "error": "Part not found"}), 404
+    program = recipe.get("program", "feedCycle.lua")
+    now = datetime.now(timezone.utc).isoformat()
+    with _run_lock:
+        _run_session.clear()
+        _run_session.update({
+            "state": "queued",
+            "recipe_id": recipe_id,
+            "recipe_name": recipe["name"],
+            "cycles_target": cycles,
+            "cycles_done": 0,
+            "program": program,
+            "started_at": now,
+            "launched_ts": 0,
+        })
+    _current_job["name"] = recipe["name"]
+    _current_job["started_at"] = now
+    from flask import jsonify
+    return jsonify({"ok": True})
+
+@app.route("/ui/operator/run", methods=["POST"])
+def ui_operator_run():
+    with _run_lock:
+        session = dict(_run_session)
+    if not session or session.get("state") not in ("queued", "error"):
+        return _render_current_job()
+    error = None
+    try:
+        robot.run_program(session["program"])
+        with _run_lock:
+            _run_session["state"] = "running"
+            _run_session["launched_ts"] = time.time()
+    except Exception as exc:
+        error = str(exc)
+        with _run_lock:
+            _run_session["state"] = "error"
+    return _render_current_job()
+
+@app.route("/ui/pause", methods=["POST"])
+def ui_pause():
+    try:
+        robot.pause_program()
+        with _run_lock:
+            if _run_session.get("state") == "running":
+                _run_session["state"] = "paused"
+    except Exception:
+        pass
+    return _render_current_job()
+
+@app.route("/ui/resume", methods=["POST"])
+def ui_resume():
+    try:
+        robot.resume_program()
+        with _run_lock:
+            if _run_session.get("state") == "paused":
+                _run_session["state"] = "running"
+    except Exception:
+        pass
+    return _render_current_job()
+
+@app.route("/ui/operator/current-job")
+def ui_operator_current_job():
+    status = _robot_status_safe()
+    robot_state = status.get("program_state", "unknown")
+    with _run_lock:
+        session = dict(_run_session)
+    # Cycle advancement — piggybacks on polling
+    if session.get("state") == "running" and robot_state == "stopped":
+        age = time.time() - session.get("launched_ts", 0)
+        if age > 10:
+            cycles_done = session.get("cycles_done", 0) + 1
+            cycles_target = session.get("cycles_target", 1)
+            if cycles_done >= cycles_target:
+                with _run_lock:
+                    _run_session["state"] = "completed"
+                    _run_session["cycles_done"] = cycles_done
+            else:
+                try:
+                    robot.run_program(session["program"])
+                    with _run_lock:
+                        _run_session["cycles_done"] = cycles_done
+                        _run_session["launched_ts"] = time.time()
+                except Exception:
+                    with _run_lock:
+                        _run_session["state"] = "error"
+                        _run_session["cycles_done"] = cycles_done
+            with _run_lock:
+                session = dict(_run_session)
+    return render_template(
+        "partials/current_job.html",
+        session=session,
+        robot_state=robot_state,
         connected=status.get("connected", False),
     )
 
@@ -695,10 +810,12 @@ def ui_diagnostics_reconnect():
 def ui_stop():
     try:
         robot.stop_program()
-        ok, payload = True, {}
-    except Exception as e:
-        ok, payload = False, {"error": str(e)}
-    return render_template("partials/command_result.html", ok=ok, title="Stop", payload=payload)
+    except Exception:
+        pass
+    with _run_lock:
+        if _run_session.get("state") in ("running", "paused"):
+            _run_session["state"] = "stopped"
+    return _render_current_job()
 
 
 _COMMON_TIMEZONES = [

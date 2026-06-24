@@ -2945,8 +2945,81 @@ pre {
 .current-job-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  margin-top: 8px;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.state-badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  background: var(--line);
+  color: var(--muted);
+  border: 1px solid var(--line);
+}
+
+.state-badge--running {
+  background: #d1fae5;
+  color: #065f46;
+  border-color: #6ee7b7;
+}
+
+.state-badge--paused {
+  background: #fef3c7;
+  color: #78350f;
+  border-color: #fcd34d;
+}
+
+.state-badge--stopped,
+.state-badge--idle {
+  background: var(--bg-bottom);
+  color: var(--muted);
+  border-color: var(--line);
+}
+
+.state-badge--queued {
+  background: #f0fdf4;
+  color: #14532d;
+  border-color: #86efac;
+}
+
+.current-job-ready-hint {
+  font-size: 0.82rem;
+  color: var(--run);
+  font-weight: 500;
+  margin: 0 0 8px;
+  text-align: center;
+}
+
+.state-badge--completed {
+  background: #dbeafe;
+  color: #1e40af;
+  border-color: #93c5fd;
+}
+
+.state-badge--error {
+  background: var(--err-bg);
+  color: var(--stop);
+  border-color: var(--err-line);
+}
+
+.run-modal-label {
+  display: block;
+  font-size: 0.82rem;
+  color: var(--muted);
+  margin-bottom: 6px;
+  text-align: left;
+}
+
+.run-modal-cycles-input {
+  text-align: center;
+  font-size: 1.4rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
 }
 
 /* Nav panel stretches to fill the right column */

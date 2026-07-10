@@ -3828,6 +3828,49 @@ pre {
   color: var(--muted);
 }
 
+.liberty-progress-wrap {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: #ffffff;
+}
+
+.liberty-progress-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.88rem;
+  margin-bottom: 8px;
+}
+
+.liberty-progress-meta span {
+  color: var(--muted);
+}
+
+.liberty-progress-track {
+  width: 100%;
+  height: 12px;
+  border: none;
+  border-radius: 999px;
+  overflow: hidden;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.liberty-progress-track::-webkit-progress-bar {
+  background: #e5eef7;
+  border-radius: 999px;
+}
+
+.liberty-progress-track::-webkit-progress-value {
+  background: linear-gradient(90deg, #0ea5e9, #22c55e);
+  border-radius: 999px;
+}
+
+.liberty-progress-track::-moz-progress-bar {
+  background: linear-gradient(90deg, #0ea5e9, #22c55e);
+  border-radius: 999px;
+}
+
 .liberty-btn-row {
   display: flex;
   gap: 10px;

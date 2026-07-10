@@ -36,6 +36,9 @@ _LIBERTY_LOG_PATH = os.path.join(os.path.dirname(__file__), "liberty_log.json")
 _lbt_lock = threading.Lock()
 _lbt_session: dict = {}
 _lbt_log: list = []
+_lbt_monitor_thread: threading.Thread | None = None
+_lbt_monitor_stop = threading.Event()
+_LBT_MONITOR_INTERVAL_S = 0.25
 
 _current_job: dict = {"name": None, "started_at": None}
 
@@ -127,6 +130,72 @@ def _lbt_load() -> None:
 def _lbt_save() -> None:
     with open(_LIBERTY_LOG_PATH, "w") as f:
         json.dump(_lbt_log, f, indent=2)
+
+def _lbt_finalize_locked(status: str) -> None:
+    if not _lbt_session:
+        return
+    _lbt_log.insert(0, {
+        "timestamp": _lbt_session.get("started_at", ""),
+        "program": _lbt_session.get("program", ""),
+        "cycles_target": _lbt_session.get("cycles_target", 0),
+        "cycles_done": _lbt_session.get("cycles_done", 0),
+        "status": status,
+        "ended_at": datetime.now().isoformat(timespec="seconds"),
+    })
+    _lbt_save()
+    _lbt_session.clear()
+
+def _lbt_monitor_loop(run_id: str) -> None:
+    while not _lbt_monitor_stop.is_set():
+        try:
+            diag = robot.diagnostics()
+            robot_state = diag.get("program_state")
+            current_line = diag.get("current_line")
+        except Exception:
+            robot_state = None
+            current_line = None
+
+        with _lbt_lock:
+            if _lbt_session.get("run_id") != run_id:
+                break
+            if _lbt_session.get("state") not in ("running", "paused"):
+                break
+
+            progress_line = int(_lbt_session.get("progress_line", 0) or 0)
+            last_line = _lbt_session.get("last_line")
+            if (
+                progress_line > 0
+                and isinstance(current_line, int)
+                and current_line == progress_line
+                and last_line != progress_line
+            ):
+                cycles_done = int(_lbt_session.get("cycles_done", 0) or 0) + 1
+                cycles_target = int(_lbt_session.get("cycles_target", 0) or 0)
+                _lbt_session["cycles_done"] = min(cycles_done, cycles_target) if cycles_target > 0 else cycles_done
+
+            _lbt_session["last_line"] = current_line
+
+            age = time.time() - _lbt_session.get("launched_ts", 0)
+            if robot_state == "stopped" and age > 10:
+                _lbt_finalize_locked("completed")
+                break
+
+        _lbt_monitor_stop.wait(_LBT_MONITOR_INTERVAL_S)
+
+def _lbt_start_monitor(run_id: str) -> None:
+    global _lbt_monitor_thread
+    _lbt_monitor_stop.set()
+    _lbt_monitor_stop.clear()
+    _lbt_monitor_thread = threading.Thread(
+        target=_lbt_monitor_loop,
+        args=(run_id,),
+        daemon=True,
+        name="liberty-monitor",
+    )
+    _lbt_monitor_thread.start()
+
+def _lbt_stop_monitor() -> None:
+    _lbt_monitor_stop.set()
 
 _lbt_load()
 
@@ -512,19 +581,25 @@ def ui_liberty_launch():
         cycles = max(1, int(request.form.get("cycles", "1")))
     except ValueError:
         cycles = 1
-    program = request.form.get("program", "libertyTest.lua").strip() or "libertyTest.lua"
+    program = "libertytest.lua"
     error = None
     try:
-        robot.run_liberty(cycles, program)
+        launch_info = robot.run_liberty(cycles, program)
+        run_id = str(uuid.uuid4())
         with _lbt_lock:
             _lbt_session.clear()
             _lbt_session.update({
+                "run_id": run_id,
                 "state": "running",
                 "cycles_target": cycles,
+                "cycles_done": 0,
                 "program": program,
+                "progress_line": int((launch_info or {}).get("progress_line", 0) or 0),
+                "last_line": None,
                 "started_at": datetime.now().isoformat(timespec="seconds"),
                 "launched_ts": time.time(),
             })
+        _lbt_start_monitor(run_id)
     except Exception as exc:
         error = str(exc)
     with _lbt_lock:
@@ -559,45 +634,21 @@ def ui_liberty_resume():
 
 @app.route("/ui/liberty/stop", methods=["POST"])
 def ui_liberty_stop():
+    _lbt_stop_monitor()
     try:
         robot.stop_program()
     except Exception:
         pass
     with _lbt_lock:
         if _lbt_session:
-            _lbt_log.insert(0, {
-                "timestamp": _lbt_session.get("started_at", ""),
-                "program": _lbt_session.get("program", ""),
-                "cycles_target": _lbt_session.get("cycles_target", 0),
-                "cycles_done": _lbt_session.get("cycles_done", 0),
-                "status": "aborted",
-                "ended_at": datetime.now().isoformat(timespec="seconds"),
-            })
-            _lbt_save()
-            _lbt_session.clear()
+            _lbt_finalize_locked("aborted")
     with _lbt_lock:
         session = dict(_lbt_session)
     return render_template("partials/liberty_status.html", session=session, error=None)
 
 @app.route("/ui/liberty/status")
 def ui_liberty_status():
-    try:
-        robot_state = robot.status()["program_state"]
-    except Exception:
-        robot_state = None
     with _lbt_lock:
-        age = time.time() - _lbt_session.get("launched_ts", 0)
-        if _lbt_session.get("state") in ("running", "paused") and robot_state == "stopped" and age > 10:
-            _lbt_log.insert(0, {
-                "timestamp": _lbt_session.get("started_at", ""),
-                "program": _lbt_session.get("program", ""),
-                "cycles_target": _lbt_session.get("cycles_target", 0),
-                "cycles_done": _lbt_session.get("cycles_target", 0),
-                "status": "completed",
-                "ended_at": datetime.now().isoformat(timespec="seconds"),
-            })
-            _lbt_save()
-            _lbt_session.clear()
         session = dict(_lbt_session)
     return render_template("partials/liberty_status.html", session=session, error=None)
 

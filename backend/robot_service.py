@@ -3,6 +3,7 @@ from __future__ import annotations
 import concurrent.futures
 import io
 import os
+import re
 import sys
 import tempfile
 import threading
@@ -126,17 +127,56 @@ class WeldFlexRobotService:
         if err_code != 0:
             raise RuntimeError(f"ProgramStop failed (code {err_code})")
 
-    def run_liberty(self, cycles: int, program_name: str = "libertytest.lua") -> None:
-        """Load and run a Lua program already on the robot."""
-        self.run_program(program_name)
+    def run_liberty(self, cycles: int, program_name: str = "libertytest.lua") -> dict[str, int | str]:
+        """Upload/run canonical Liberty script and return launch metadata for progress tracking."""
+        workspace_root = Path(__file__).resolve().parents[1]
+        source_path = workspace_root / "programs" / program_name
+        if not source_path.is_file():
+            raise FileNotFoundError(f"Liberty program file not found: {source_path}")
 
-    def upload_program(self, local_path: str) -> str:
+        raw_lua = source_path.read_text(encoding="utf-8")
+        patched_lua, replaced = re.subn(
+            r"(?m)^\s*cycleCount\s*=\s*\d+\s*$",
+            f"cycleCount = {int(cycles)}",
+            raw_lua,
+            count=1,
+        )
+        if replaced == 0:
+            raise RuntimeError(
+                f"Missing 'cycleCount = <number>' in {source_path.name}; cannot inject cycles."
+            )
+
+        progress_line = 0
+        for idx, line in enumerate(patched_lua.splitlines(), start=1):
+            if "[LIBERTY] Cycle %d/%d complete" in line:
+                progress_line = idx
+                break
+
+        tmp_dir = tempfile.mkdtemp()
+        tmp_path = os.path.join(tmp_dir, program_name)
+        try:
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                f.write(patched_lua)
+            uploaded_name = self.upload_program(tmp_path, replace=True)
+            self.run_program(uploaded_name)
+            return {"program": uploaded_name, "progress_line": progress_line}
+        finally:
+            try:
+                os.remove(tmp_path)
+                os.rmdir(tmp_dir)
+            except OSError:
+                pass
+
+    def upload_program(self, local_path: str, replace: bool = False) -> str:
         """Upload a Lua file to the robot. Returns the program name as stored on the robot."""
         path = Path(local_path).resolve()
         if not path.is_file():
             raise FileNotFoundError(f"Program file not found: {path}")
         with self._lock:
             robot = self._client()
+        if replace:
+            # Ignore delete errors; file may not already exist.
+            self._call(lambda: robot.LuaDelete(path.name))
         error = self._call(lambda: robot.LuaUpload(str(path)), timeout=30.0)
         err_code, _ = self._unpack(error)
         if err_code != 0:

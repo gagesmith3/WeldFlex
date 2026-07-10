@@ -5,7 +5,7 @@
 
   <div id="liberty-ctrl"
        hx-get="/ui/liberty/status"
-       hx-trigger="load, every 2000ms"
+      hx-trigger="load, every 750ms"
        hx-swap="innerHTML">
     {% include "partials/liberty_status.html" %}
   </div>

@@ -1,4 +1,7 @@
 {% set state = session.get('state', '') if session else '' %}
+{% set cycles_done = session.get('cycles_done', 0) if session else 0 %}
+{% set cycles_target = session.get('cycles_target', 0) if session else 0 %}
+{% set progress_pct = ((cycles_done / cycles_target) * 100) if cycles_target else 0 %}
 <section class="panel liberty-ctrl-panel">
   <div class="liberty-ctrl-header">
     <h2>Liberty Test</h2>
@@ -23,9 +26,24 @@
       <strong>{{ session.get('cycles_target', '—') }}</strong>
     </div>
     <div class="liberty-info-row">
+      <span>Completed</span>
+      <strong>{{ cycles_done }} / {{ cycles_target }}</strong>
+    </div>
+    <div class="liberty-info-row">
       <span>Started</span>
       <strong>{{ session.get('started_at', '—').replace('T', ' ') }}</strong>
     </div>
+  </div>
+
+  <div class="liberty-progress-wrap" aria-label="Cycle completion progress">
+    <div class="liberty-progress-meta">
+      <span id="liberty-progress-label">Cycle Progress</span>
+      <strong>{{ "%.0f"|format(progress_pct) }}%</strong>
+    </div>
+    <progress class="liberty-progress-track"
+              value="{{ cycles_done|int }}"
+              max="{{ (cycles_target if cycles_target else 1)|int }}"
+              aria-labelledby="liberty-progress-label"></progress>
   </div>
 
   <div class="liberty-btn-row">
@@ -64,9 +82,7 @@
     <label for="liberty-cycles">Weld Cycles</label>
     <input type="number" id="liberty-cycles" name="cycles"
            value="50" min="1" max="9999" required>
-    <label for="liberty-program">Program File</label>
-    <input type="text" id="liberty-program" name="program"
-           value="libertytest.lua" placeholder="libertytest.lua">
+    <p class="panel-note">Program: libertytest.lua</p>
     <div class="actions">
       <button type="submit" class="btn run">
         {{ icon_safe('play', width=16, height=16) }}

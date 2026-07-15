@@ -18,7 +18,7 @@
         <th>Program</th>
         <th>Cycles</th>
         <th>Result</th>
-        <th class="sr-only">Actions</th>
+        <th class="sr-only">Delete</th>
       </tr>
     </thead>
     <tbody>
@@ -39,6 +39,7 @@
                   hx-post="/ui/liberty/log/delete/{{ loop.index0 }}"
                   hx-target="#liberty-log"
                   hx-swap="innerHTML"
+                  aria-label="Delete entry"
                   title="Delete entry">
             {{ icon_safe('x', width=14, height=14) }}
           </button>

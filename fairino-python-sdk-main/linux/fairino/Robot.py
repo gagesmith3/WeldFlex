@@ -9498,9 +9498,16 @@ class RPC():
         client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         client.settimeout(20)
 
-        try:
-            client.connect((self.ip_address, port))
-        except Exception as e:
+        connected = False
+        for _ in range(5):
+            try:
+                client.connect((self.ip_address, port))
+                connected = True
+                break
+            except Exception:
+                time.sleep(0.05)
+
+        if not connected:
             client.close()
             return RobotError.ERR_OTHER
         client.settimeout(20)

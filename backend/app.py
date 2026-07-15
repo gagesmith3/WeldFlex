@@ -146,6 +146,17 @@ def _lbt_finalize_locked(status: str) -> None:
     _lbt_save()
     _lbt_session.clear()
 
+def _lbt_calculate_today_stats(log_list) -> tuple[int, int]:
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    total = 0
+    completed = 0
+    for entry in log_list:
+        ts = entry.get("timestamp", "")
+        if ts.startswith(today_str):
+            total += int(entry.get("cycles_target", 0) or 0)
+            completed += int(entry.get("cycles_done", 0) or 0)
+    return total, completed
+
 def _lbt_monitor_loop(run_id: str) -> None:
     while not _lbt_monitor_stop.is_set():
         try:
@@ -671,7 +682,13 @@ def ui_liberty_status():
 def ui_liberty_log():
     with _lbt_lock:
         log = list(_lbt_log)
-    return render_template("partials/liberty_log.html", log=log)
+        today_total, today_completed = _lbt_calculate_today_stats(log)
+    return render_template(
+        "partials/liberty_log.html",
+        log=log,
+        today_total=today_total,
+        today_completed=today_completed
+    )
 
 @app.route("/ui/liberty/log/delete/<int:index>", methods=["POST"])
 def ui_liberty_log_delete(index: int):
@@ -681,7 +698,13 @@ def ui_liberty_log_delete(index: int):
             _lbt_log.pop(index)
             _lbt_save()
         log = list(_lbt_log)
-    return render_template("partials/liberty_log.html", log=log)
+        today_total, today_completed = _lbt_calculate_today_stats(log)
+    return render_template(
+        "partials/liberty_log.html",
+        log=log,
+        today_total=today_total,
+        today_completed=today_completed
+    )
 
 @app.route("/operator/calibration")
 def calibration():

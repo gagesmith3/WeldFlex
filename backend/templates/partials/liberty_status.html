@@ -16,6 +16,12 @@
 
   {% if state in ('running', 'paused') %}
 
+    <div hidden
+      hx-get="/ui/liberty/status"
+      hx-trigger="every 750ms"
+      hx-target="#liberty-ctrl"
+      hx-swap="innerHTML"></div>
+
   <div class="liberty-info-grid">
     <div class="liberty-info-row">
       <span>Program</span>

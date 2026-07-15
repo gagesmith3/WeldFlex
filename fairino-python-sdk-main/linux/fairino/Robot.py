@@ -2296,10 +2296,11 @@ class RPC():
             socket.setdefaulttimeout(None)
             self.robot = xmlrpc.client.ServerProxy(link)
 
-        # 只有CNDE和XML-RPC都成功才设置is_connect = True
-        if cnde_ok and xmlrpc_ok:
+        # XML-RPC is required; CNDE (port 20005) is optional — its absence degrades
+        # GetProgramState to a local-cache default but does not block commands.
+        if xmlrpc_ok:
             RPC.is_connect = True
-            print("[调试] RPC连接完全成功，is_connect = True")
+            print(f"[调试] RPC连接成功 (CNDE:{cnde_ok}, XML-RPC:{xmlrpc_ok})，is_connect = True")
         else:
             RPC.is_connect = False
             print(f"[调试] RPC连接失败 (CNDE:{cnde_ok}, XML-RPC:{xmlrpc_ok})，is_connect = False")

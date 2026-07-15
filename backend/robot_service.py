@@ -136,8 +136,8 @@ class WeldFlexRobotService:
 
         raw_lua = source_path.read_text(encoding="utf-8")
         patched_lua, replaced = re.subn(
-            r"(?m)^\s*cycleCount\s*=\s*\d+\s*$",
-            f"cycleCount = {int(cycles)}",
+            r"(?m)^([ \t]*)cycleCount([ \t]*)=([ \t]*)\d+([ \t]*)$",
+            lambda m: f"{m.group(1)}cycleCount{m.group(2)}={m.group(3)}{int(cycles)}{m.group(4)}",
             raw_lua,
             count=1,
         )
@@ -147,9 +147,41 @@ class WeldFlexRobotService:
             )
 
         progress_line = 0
-        for idx, line in enumerate(patched_lua.splitlines(), start=1):
-            if "[LIBERTY] Cycle %d/%d complete" in line:
-                progress_line = idx
+        lua_lines = patched_lua.splitlines()
+
+        loop_start = None
+        loop_end = None
+        for idx, line in enumerate(lua_lines, start=1):
+            if re.match(r"^\s*for\s+\w+\s*=\s*1\s*,\s*cycleCount\s+do\s*$", line):
+                loop_start = idx
+                break
+
+        if loop_start is not None:
+            depth = 0
+            for idx in range(loop_start, len(lua_lines) + 1):
+                line = lua_lines[idx - 1]
+                if re.match(r"^\s*for\b.*\bdo\s*$", line):
+                    depth += 1
+                if re.match(r"^\s*end\s*$", line):
+                    depth -= 1
+                    if depth == 0:
+                        loop_end = idx
+                        break
+
+        search_start = loop_start or 1
+        search_end = loop_end or len(lua_lines)
+        search_slice = list(enumerate(lua_lines[search_start - 1:search_end], start=search_start))
+
+        # Prefer a dwell line marker that is sampled reliably by diagnostics polling.
+        marker_needles = [
+            "WaitMs(500)",
+            "WaitMs(1000)",
+            "[LIBERTY] Cycle %d/%d complete",
+        ]
+        for needle in marker_needles:
+            found = next((idx for idx, line in reversed(search_slice) if needle in line), 0)
+            if found:
+                progress_line = found
                 break
 
         tmp_dir = tempfile.mkdtemp()

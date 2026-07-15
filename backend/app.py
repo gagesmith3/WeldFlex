@@ -39,6 +39,7 @@ _lbt_log: list = []
 _lbt_monitor_thread: threading.Thread | None = None
 _lbt_monitor_stop = threading.Event()
 _LBT_MONITOR_INTERVAL_S = 0.25
+_LBT_COMPLETION_FALLBACK_S = 4.0
 
 _current_job: dict = {"name": None, "started_at": None}
 
@@ -172,13 +173,25 @@ def _lbt_monitor_loop(run_id: str) -> None:
                 cycles_done = int(_lbt_session.get("cycles_done", 0) or 0) + 1
                 cycles_target = int(_lbt_session.get("cycles_target", 0) or 0)
                 _lbt_session["cycles_done"] = min(cycles_done, cycles_target) if cycles_target > 0 else cycles_done
+                _lbt_session["last_cycle_ts"] = time.time()
 
             _lbt_session["last_line"] = current_line
 
-            age = time.time() - _lbt_session.get("launched_ts", 0)
-            if robot_state == "stopped" and age > 10:
-                _lbt_finalize_locked("completed")
-                break
+            cycles_done = int(_lbt_session.get("cycles_done", 0) or 0)
+            cycles_target = int(_lbt_session.get("cycles_target", 0) or 0)
+            if cycles_target > 0 and cycles_done >= cycles_target:
+                completed_since = _lbt_session.get("completed_since")
+                if not isinstance(completed_since, (float, int)):
+                    _lbt_session["completed_since"] = time.time()
+                else:
+                    connected = bool(diag.get("connected")) if isinstance(diag, dict) else False
+                    if (connected and robot_state == "stopped") or (
+                        time.time() - float(completed_since)
+                    ) >= _LBT_COMPLETION_FALLBACK_S:
+                        _lbt_finalize_locked("completed")
+                        break
+            else:
+                _lbt_session["completed_since"] = None
 
         _lbt_monitor_stop.wait(_LBT_MONITOR_INTERVAL_S)
 
@@ -596,6 +609,8 @@ def ui_liberty_launch():
                 "program": program,
                 "progress_line": int((launch_info or {}).get("progress_line", 0) or 0),
                 "last_line": None,
+                "last_cycle_ts": None,
+                "completed_since": None,
                 "started_at": datetime.now().isoformat(timespec="seconds"),
                 "launched_ts": time.time(),
             })

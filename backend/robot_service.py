@@ -79,17 +79,26 @@ class WeldFlexRobotService:
             self._robot = Robot.RPC(self.robot_ip)
         return self._robot
 
-    def _call(self, fn: Callable[[], Any], timeout: float = SDK_TIMEOUT_S) -> Any:
-        """Run an SDK call in the executor thread with a hard timeout."""
-        future = self._executor.submit(fn)
-        try:
-            return future.result(timeout=timeout)
-        except concurrent.futures.TimeoutError:
-            with self._lock:
-                self._robot = None
-            raise RuntimeError(
-                f"Robot did not respond within {int(timeout)}s — connection may be lost."
-            )
+    def _call(self, fn: Callable[[Any], Any], timeout: float = SDK_TIMEOUT_S, retries: int = 3) -> Any:
+        """Run an SDK call in the executor thread with a hard timeout and client recreation on error."""
+        for attempt in range(retries):
+            try:
+                with self._lock:
+                    if self._robot is None:
+                        self._robot = Robot.RPC(self.robot_ip)
+                    client = self._robot
+                future = self._executor.submit(lambda: fn(client))
+                return future.result(timeout=timeout)
+            except Exception as e:
+                with self._lock:
+                    self._robot = None
+                if attempt == retries - 1:
+                    if isinstance(e, concurrent.futures.TimeoutError):
+                        raise RuntimeError(
+                            f"Robot did not respond within {int(timeout)}s — connection may be lost."
+                        )
+                    raise e
+                time.sleep(0.1)
 
     @staticmethod
     def _unpack(response: Any) -> tuple[int, Any]:
@@ -104,25 +113,19 @@ class WeldFlexRobotService:
         return -1, response
 
     def pause_program(self) -> None:
-        with self._lock:
-            robot = self._client()
-        err = self._call(lambda: robot.ProgramPause())
+        err = self._call(lambda r: r.ProgramPause())
         err_code, _ = self._unpack(err)
         if err_code != 0:
             raise RuntimeError(f"ProgramPause failed (code {err_code})")
 
     def resume_program(self) -> None:
-        with self._lock:
-            robot = self._client()
-        err = self._call(lambda: robot.ProgramResume())
+        err = self._call(lambda r: r.ProgramResume())
         err_code, _ = self._unpack(err)
         if err_code != 0:
             raise RuntimeError(f"ProgramResume failed (code {err_code})")
 
     def stop_program(self) -> None:
-        with self._lock:
-            robot = self._client()
-        err = self._call(lambda: robot.ProgramStop())
+        err = self._call(lambda r: r.ProgramStop())
         err_code, _ = self._unpack(err)
         if err_code != 0:
             raise RuntimeError(f"ProgramStop failed (code {err_code})")
@@ -204,12 +207,10 @@ class WeldFlexRobotService:
         path = Path(local_path).resolve()
         if not path.is_file():
             raise FileNotFoundError(f"Program file not found: {path}")
-        with self._lock:
-            robot = self._client()
         if replace:
             # Ignore delete errors; file may not already exist.
-            self._call(lambda: robot.LuaDelete(path.name))
-        error = self._call(lambda: robot.LuaUpload(str(path)), timeout=30.0)
+            self._call(lambda r: r.LuaDelete(path.name))
+        error = self._call(lambda r: r.LuaUpload(str(path)), timeout=30.0)
         err_code, _ = self._unpack(error)
         if err_code != 0:
             raise RuntimeError(f"LuaUpload failed (code {err_code}): {path.name}")
@@ -227,18 +228,15 @@ class WeldFlexRobotService:
         lines.append("}")
         lua_content = "\n".join(lines) + "\n"
 
-        with self._lock:
-            robot = self._client()
-
         # Delete the old copy — ignore errors (file may not exist yet)
-        self._call(lambda: robot.LuaDelete(filename))
+        self._call(lambda r: r.LuaDelete(filename))
 
         tmp_dir = tempfile.mkdtemp()
         tmp_path = os.path.join(tmp_dir, filename)
         try:
             with open(tmp_path, "w", encoding="utf-8") as f:
                 f.write(lua_content)
-            error = self._call(lambda: robot.LuaUpload(tmp_path), timeout=30.0)
+            error = self._call(lambda r: r.LuaUpload(tmp_path), timeout=30.0)
             err_code, _ = self._unpack(error)
             if err_code != 0:
                 raise RuntimeError(f"LuaUpload failed (code {err_code}): {filename}")
@@ -251,15 +249,13 @@ class WeldFlexRobotService:
 
     def run_program(self, program_name: str) -> None:
         """Run a Lua program already stored on the robot under /fruser/."""
-        with self._lock:
-            robot = self._client()
-        self._call(lambda: robot.Mode(0))
+        self._call(lambda r: r.Mode(0))
         time.sleep(2)
-        load_resp = self._call(lambda: robot.ProgramLoad(f"/fruser/{program_name}"))
+        load_resp = self._call(lambda r: r.ProgramLoad(f"/fruser/{program_name}"))
         load_err, _ = self._unpack(load_resp)
         if load_err != 0:
             raise RuntimeError(f"ProgramLoad failed (code {load_err}): {program_name}")
-        run_resp = self._call(lambda: robot.ProgramRun())
+        run_resp = self._call(lambda r: r.ProgramRun())
         run_err, _ = self._unpack(run_resp)
         if run_err != 0:
             raise RuntimeError(f"ProgramRun failed (code {run_err}): {program_name}")
@@ -271,20 +267,16 @@ class WeldFlexRobotService:
 
     def tcp_enable_drag(self) -> None:
         """Enter drag teach mode so the operator can physically position the robot."""
-        with self._lock:
-            robot = self._client()
-        err = self._call(lambda: robot.DragTeachSwitch(1))
+        err = self._call(lambda r: r.DragTeachSwitch(1))
         err_code, _ = self._unpack(err)
         if err_code != 0:
             raise RuntimeError(f"DragTeachSwitch(1) failed (code {err_code})")
 
     def tcp_record_point(self, point_num: int) -> None:
         """Exit drag mode and record current pose as TCP reference point N (1-4)."""
-        with self._lock:
-            robot = self._client()
-        def _seq():
-            robot.DragTeachSwitch(0)
-            return robot.SetTcp4RefPoint(point_num)
+        def _seq(r):
+            r.DragTeachSwitch(0)
+            return r.SetTcp4RefPoint(point_num)
         err = self._call(_seq)
         err_code, _ = self._unpack(err)
         if err_code != 0:
@@ -292,13 +284,11 @@ class WeldFlexRobotService:
 
     def tcp_compute_and_apply(self, tool_id: int = 1) -> list:
         """Compute TCP from 4 recorded points and save to tool slot via SetToolCoord."""
-        with self._lock:
-            robot = self._client()
-        resp = self._call(lambda: robot.ComputeTcp4(), timeout=10.0)
+        resp = self._call(lambda r: r.ComputeTcp4(), timeout=10.0)
         err_code, tcp_pose = self._unpack(resp)
         if err_code != 0:
             raise RuntimeError(f"ComputeTcp4 failed (code {err_code})")
-        apply_resp = self._call(lambda: robot.SetToolCoord(tool_id, tcp_pose, 0, 0, 0, 0))
+        apply_resp = self._call(lambda r: r.SetToolCoord(tool_id, tcp_pose, 0, 0, 0, 0))
         apply_code, _ = self._unpack(apply_resp)
         if apply_code != 0:
             raise RuntimeError(f"SetToolCoord failed (code {apply_code})")
@@ -307,47 +297,37 @@ class WeldFlexRobotService:
     def ft_setup(self) -> None:
         """Full init sequence per SDK example: configure → reset → activate → zero.
         Takes ~10 s due to required waits between commands."""
-        with self._lock:
-            robot = self._client()
-
-        def _sequence():
-            robot.FT_SetConfig(24, 0)   # company 24 = XJC (鑫精诚), device 0
+        def _sequence(r):
+            r.FT_SetConfig(24, 0)   # company 24 = XJC (鑫精诚), device 0
             time.sleep(1)
-            robot.FT_Activate(0)        # reset first
+            r.FT_Activate(0)        # reset first
             time.sleep(2)
-            err = robot.FT_Activate(1)  # activate
+            err = r.FT_Activate(1)  # activate
             if isinstance(err, int) and err != 0:
                 raise RuntimeError(f"FT_Activate(1) failed (code {err})")
             time.sleep(2)
-            robot.FT_SetZero(0)         # clear old zero
+            r.FT_SetZero(0)         # clear old zero
             time.sleep(2)
-            robot.FT_SetZero(1)         # apply new zero
+            r.FT_SetZero(1)         # apply new zero
 
         self._call(_sequence, timeout=30.0)
 
     def ft_deactivate(self) -> None:
-        with self._lock:
-            robot = self._client()
-        err = self._call(lambda: robot.FT_Activate(0))
+        err = self._call(lambda r: r.FT_Activate(0))
         err_code, _ = self._unpack(err)
         if err_code != 0:
             raise RuntimeError(f"FT_Activate(0) failed (code {err_code})")
 
     def ft_zero(self) -> None:
-        with self._lock:
-            robot = self._client()
-        err = self._call(lambda: robot.FT_SetZero(1))
+        err = self._call(lambda r: r.FT_SetZero(1))
         err_code, _ = self._unpack(err)
         if err_code != 0:
             raise RuntimeError(f"FT_SetZero failed (code {err_code})")
 
     def ft_read(self) -> dict:
-        with self._lock:
-            robot = self._client()
-
-        def _read():
-            resp = robot.FT_GetForceTorqueRCS()
-            active = bool(robot.robot_state_pkg.ft_sensor_active)
+        def _read(r):
+            resp = r.FT_GetForceTorqueRCS()
+            active = bool(r.robot_state_pkg.ft_sensor_active)
             return resp, active
 
         resp, active = self._call(_read)
@@ -361,11 +341,8 @@ class WeldFlexRobotService:
         }
 
     def status(self) -> dict[str, Any]:
-        with self._lock:
-            robot = self._client()
-
         state_resp, line_resp = self._call(
-            lambda: (robot.GetProgramState(), robot.GetCurrentLine())
+            lambda r: (r.GetProgramState(), r.GetCurrentLine())
         )
 
         state_err, state_raw = self._unpack(state_resp)
@@ -386,14 +363,11 @@ class WeldFlexRobotService:
         }
 
     def diagnostics(self) -> dict[str, Any]:
-        with self._lock:
-            robot = self._client()
-
-        def _gather():
-            state_resp = robot.GetProgramState()
-            line_resp = robot.GetCurrentLine()
+        def _gather(r):
+            state_resp = r.GetProgramState()
+            line_resp = r.GetCurrentLine()
             try:
-                err_resp = robot.GetRobotErrCode()
+                err_resp = r.GetRobotErrCode()
             except Exception:
                 err_resp = None
             return state_resp, line_resp, err_resp
@@ -434,9 +408,7 @@ class WeldFlexRobotService:
         }
 
     def reset_errors(self) -> None:
-        with self._lock:
-            robot = self._client()
-        err = self._call(lambda: robot.ResetAllError())
+        err = self._call(lambda r: r.ResetAllError())
         err_code, _ = self._unpack(err)
         if err_code != 0:
             raise RuntimeError(f"ResetAllError failed (code {err_code})")

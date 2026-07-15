@@ -79,6 +79,21 @@ class WeldFlexRobotService:
             self._robot = Robot.RPC(self.robot_ip)
         return self._robot
 
+    def _close_client(self, client: Any) -> None:
+        """Explicitly shut down background threads and sockets inside the SDK RPC instance."""
+        if client is None:
+            return
+        try:
+            if hasattr(client, "_udp_client") and client._udp_client:
+                client._udp_client.close()
+        except Exception:
+            pass
+        try:
+            if hasattr(client, "_cnde_client") and client._cnde_client:
+                client._cnde_client.close()
+        except Exception:
+            pass
+
     def _call(self, fn: Callable[[Any], Any], timeout: float = SDK_TIMEOUT_S, retries: int = 3) -> Any:
         """Run an SDK call in the executor thread with a hard timeout and client recreation on error."""
         for attempt in range(retries):
@@ -94,7 +109,9 @@ class WeldFlexRobotService:
                 return result
             except Exception as e:
                 with self._lock:
-                    self._robot = None
+                    if self._robot is not None:
+                        self._close_client(self._robot)
+                        self._robot = None
                 if attempt == retries - 1:
                     if isinstance(e, concurrent.futures.TimeoutError):
                         raise RuntimeError(
@@ -369,7 +386,9 @@ class WeldFlexRobotService:
         # next poll triggers a fresh Robot.RPC() call.
         if state_err == -4 and line_err == -4:
             with self._lock:
-                self._robot = None
+                if self._robot is not None:
+                    self._close_client(self._robot)
+                    self._robot = None
 
         connected = (state_err == 0) or (line_err == 0)
 
@@ -396,7 +415,9 @@ class WeldFlexRobotService:
 
         if state_err == -4 and line_err == -4:
             with self._lock:
-                self._robot = None
+                if self._robot is not None:
+                    self._close_client(self._robot)
+                    self._robot = None
 
         connected = (state_err == 0) or (line_err == 0)
 
@@ -432,7 +453,9 @@ class WeldFlexRobotService:
 
     def reconnect(self) -> None:
         with self._lock:
-            self._robot = None
+            if self._robot is not None:
+                self._close_client(self._robot)
+                self._robot = None
         with self._lock:
             self._client()
 

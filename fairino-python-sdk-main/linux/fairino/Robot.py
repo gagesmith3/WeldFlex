@@ -1536,7 +1536,7 @@ class FRCNDEClient:
             self._port = port
 
         self._tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self._tcp_socket.settimeout(3.0)
+        self._tcp_socket.settimeout(0.2)
 
         try:
             self._tcp_socket.connect((self._ip, self._port))

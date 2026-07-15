@@ -89,9 +89,8 @@ class WeldFlexRobotService:
                     client = self._robot
                 future = self._executor.submit(lambda: fn(client))
                 result = future.result(timeout=timeout)
-                err_code, _ = self._unpack(result)
-                if err_code in (-4, -3, -2):
-                    raise RuntimeError(f"SDK communication failure (code {err_code})")
+                if self._has_conn_error(result):
+                    raise RuntimeError("SDK reported communication failure")
                 return result
             except Exception as e:
                 with self._lock:
@@ -103,6 +102,19 @@ class WeldFlexRobotService:
                         )
                     raise e
                 time.sleep(0.1)
+
+    @staticmethod
+    def _has_conn_error(val: Any) -> bool:
+        """Recursively checks if any error code in the result is a communication error (-4, -3, -2)."""
+        if val in (-4, -3, -2):
+            return True
+        if isinstance(val, (list, tuple)):
+            if len(val) > 0 and val[0] in (-4, -3, -2):
+                return True
+            for item in val:
+                if WeldFlexRobotService._has_conn_error(item):
+                    return True
+        return False
 
     @staticmethod
     def _unpack(response: Any) -> tuple[int, Any]:

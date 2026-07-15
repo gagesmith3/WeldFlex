@@ -88,7 +88,11 @@ class WeldFlexRobotService:
                         self._robot = Robot.RPC(self.robot_ip)
                     client = self._robot
                 future = self._executor.submit(lambda: fn(client))
-                return future.result(timeout=timeout)
+                result = future.result(timeout=timeout)
+                err_code, _ = self._unpack(result)
+                if err_code in (-4, -3, -2):
+                    raise RuntimeError(f"SDK communication failure (code {err_code})")
+                return result
             except Exception as e:
                 with self._lock:
                     self._robot = None
@@ -330,7 +334,7 @@ class WeldFlexRobotService:
             active = bool(r.robot_state_pkg.ft_sensor_active)
             return resp, active
 
-        resp, active = self._call(_read)
+        resp, active = self._call(_read, retries=1)
         err_code, values = self._unpack(resp)
         if err_code != 0:
             raise RuntimeError(f"FT_GetForceTorqueRCS failed (code {err_code})")
@@ -342,7 +346,8 @@ class WeldFlexRobotService:
 
     def status(self) -> dict[str, Any]:
         state_resp, line_resp = self._call(
-            lambda r: (r.GetProgramState(), r.GetCurrentLine())
+            lambda r: (r.GetProgramState(), r.GetCurrentLine()),
+            retries=1
         )
 
         state_err, state_raw = self._unpack(state_resp)
@@ -372,7 +377,7 @@ class WeldFlexRobotService:
                 err_resp = None
             return state_resp, line_resp, err_resp
 
-        state_resp, line_resp, err_resp = self._call(_gather)
+        state_resp, line_resp, err_resp = self._call(_gather, retries=1)
 
         state_err, state_raw = self._unpack(state_resp)
         line_err, line_val = self._unpack(line_resp)

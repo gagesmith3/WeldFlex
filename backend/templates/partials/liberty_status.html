@@ -86,8 +86,9 @@
         hx-target="#liberty-ctrl"
         hx-swap="innerHTML">
     <label for="liberty-cycles">Weld Cycles</label>
-    <input type="number" id="liberty-cycles" name="cycles"
-           value="50" min="1" max="9999" required>
+    <input type="text" id="liberty-cycles" name="cycles"
+           inputmode="none" data-kbd="num"
+           value="50" required>
     <p class="panel-note">Program: libertytest.lua</p>
     <div class="actions">
       <button type="submit" class="btn run">

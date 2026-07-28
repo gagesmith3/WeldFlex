@@ -1,0 +1,15 @@
+# This repo is authored on Windows (core.autocrlf=true) but its deploy artifacts
+# run on Raspberry Pi OS. Without these rules, a Windows checkout rewrites the
+# shell scripts with CRLF, and a CRLF shell script fails on the Pi with the
+# famously unhelpful "bad interpreter: /bin/bash^M". That bites whenever the
+# files reach the Pi by any route other than a fresh `git clone` on the Pi
+# itself — scp, rsync, a mounted share, or a USB copy.
+#
+# Pin every Linux-side artifact to LF so it is correct however it gets there.
+*.sh            text eol=lf
+*.service       text eol=lf
+*.desktop       text eol=lf
+deploy/**       text eol=lf
+
+# Uploaded to the robot controller, which is Linux-side too.
+*.lua           text eol=lf

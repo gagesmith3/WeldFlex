@@ -1,15 +1,28 @@
 [Unit]
 Description=WeldFlex Flask Backend
-After=network.target
+# network-online, not just network: plain network.target does not wait for an address,
+# so the first connect attempt on a cold boot always failed.
+Wants=network-online.target
+After=network-online.target
 
 [Service]
 Type=simple
 User=pi
 WorkingDirectory=/home/pi/WeldFlex/backend
-ExecStartPre=/bin/sed -i 's/if cnde_ok and xmlrpc_ok:/if xmlrpc_ok:/' /home/pi/WeldFlex/fairino-python-sdk-main/linux/fairino/Robot.py
+# NOTE: an ExecStartPre sed used to re-patch the SDK's connect gate here on every boot.
+# That patch now lives in the vendored source (Robot.py reads `if xmlrpc_ok:`), so the
+# sed matched nothing. Removed rather than left as a no-op that silently rewrites
+# vendored code and would fight the next SDK update.
 ExecStart=/home/pi/WeldFlex/venv/bin/python app.py
-Restart=on-failure
-RestartSec=5
+# The link self-heals, so a restart here is for the process dying, not the robot going
+# away. always+3s so a crash loop recovers quickly.
+Restart=always
+RestartSec=3
+TimeoutStopSec=10
+KillMode=mixed
+# Unbuffered so the SDK's prints reach journald in real time; buffered output makes
+# post-mortems on a kiosk very hard.
+Environment=PYTHONUNBUFFERED=1
 
 [Install]
 WantedBy=multi-user.target

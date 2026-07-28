@@ -1,5 +1,18 @@
 #!/bin/bash
-# WeldFlex kiosk X11 session — launched by startx
+# WeldFlex kiosk X11 session — launched by startx.
+#
+# FALLBACK STACK. The default is now Wayland/cage (kiosk-session-cage.sh); this
+# is kept because it is the configuration proven working on this hardware,
+# including the ft5x06 touchscreen. Install it with:
+#
+#   sudo bash deploy/rpi/install_rpi_kiosk.sh --x11
+#
+# Nothing here restarts the X session itself — only Chromium is supervised. That
+# asymmetry is one of the reasons the cage stack is preferred.
+
+# Send stdout/stderr to journald (`journalctl -t weldflex-kiosk -f`), matching
+# the cage session. Only stdout/stderr are touched; X still owns the VT.
+exec > >(logger -t weldflex-kiosk) 2>&1
 
 # Prevent screen blanking and DPMS power-off
 xset s off

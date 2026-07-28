@@ -52,7 +52,9 @@
     <span class="chip-label">{{ label }}</span>
   </div>
   <strong class="chip-value">{{ value }}</strong>
-  {% if detail or reserve_detail %}<span class="chip-detail">{{ detail }}</span>{% endif %}
+  {# `detail or ''` because Jinja renders a bare None as the literal text "None",
+     and reserve_detail deliberately renders the span when detail is falsy. #}
+  {% if detail or reserve_detail %}<span class="chip-detail">{{ detail or '' }}</span>{% endif %}
 </div>
 {%- endmacro %}
 

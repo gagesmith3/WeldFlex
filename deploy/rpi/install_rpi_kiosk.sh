@@ -131,18 +131,27 @@ ExecStart=-/sbin/agetty --autologin $KIOSK_USER --noclear %I \$TERM
 EOF
 systemctl daemon-reload
 
+# The session script is invoked through `bash` rather than executed directly, so
+# the boot path does not depend on the file's exec bit. That bit is set above, but
+# it lives in the working tree only if git also tracks it — a `git pull` that
+# touches these scripts restores the mode recorded in the index, and a script that
+# arrives 0644 turns `exec` into "Permission denied", which kills the login shell
+# and leaves the panel on a bare blinking cursor with nothing logged anywhere.
+# The scripts are tracked 0755 now; calling bash explicitly means it stops
+# mattering either way. It also guarantees bash, which the scripts need for
+# process substitution regardless of the shebang.
 if [ "$STACK" = "cage" ]; then
     cat > "/home/$KIOSK_USER/.bash_profile" << EOF
 # WeldFlex kiosk — start the Wayland (cage) session automatically on TTY1
 if [[ -z "\$WAYLAND_DISPLAY" && -z "\$DISPLAY" && "\$XDG_VTNR" == "1" ]]; then
-    exec $PROJECT_DIR/deploy/rpi/kiosk-session-cage.sh
+    exec bash $PROJECT_DIR/deploy/rpi/kiosk-session-cage.sh
 fi
 EOF
 else
     cat > "/home/$KIOSK_USER/.bash_profile" << EOF
 # WeldFlex kiosk — start X automatically on TTY1
 if [[ -z "\$DISPLAY" && "\$XDG_VTNR" == "1" ]]; then
-    exec startx $PROJECT_DIR/deploy/rpi/kiosk-session-x11.sh
+    exec startx /bin/bash $PROJECT_DIR/deploy/rpi/kiosk-session-x11.sh
 fi
 EOF
 fi

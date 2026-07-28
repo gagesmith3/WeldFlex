@@ -21,5 +21,5 @@ sudo reboot
 ## Redeploys
 cd ~/WeldFlex && git pull
 sudo systemctl restart weldflex-backend
-pkill cage                             # supervising loop relaunches it — no reboot
+pkill cage   # supervising loop relaunches it — no reboot
 

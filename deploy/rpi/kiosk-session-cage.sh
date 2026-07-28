@@ -31,10 +31,14 @@ READY_URL="http://localhost:5000/"
 # hide-cursor flag; XCURSOR_SIZE is the lever wlroots actually reads.
 export XCURSOR_SIZE=1
 
-# Send stdout/stderr to journald so `journalctl -t weldflex-kiosk -f` works. The
-# old session logged nowhere. Only stdout/stderr are redirected — cage still owns
-# the VT and opens its own DRM/input devices, so this does not affect the session.
-exec > >(logger -t weldflex-kiosk) 2>&1
+# Send stdout/stderr to journald so `journalctl -t weldflex-kiosk -f` works, and
+# tee it to the console so a startup that never completes says so on the panel.
+# Routing to logger alone meant every pre-cage failure looked identical from the
+# front of the machine: a bare blinking cursor. Console output stops mattering the
+# moment cage takes over the display, which is exactly when we no longer need it.
+# Only stdout/stderr are redirected — cage still owns the VT and opens its own
+# DRM/input devices, so this does not affect the session.
+exec > >(tee >(logger -t weldflex-kiosk)) 2>&1
 
 echo "kiosk session starting (cage/wayland)"
 
@@ -42,8 +46,18 @@ echo "kiosk session starting (cage/wayland)"
 # ordering between them, so wait for Flask to actually accept connections. An
 # After= dependency would not help: it orders start, it does not wait for a
 # listening socket.
+#
+# The wait is unbounded on purpose — a slow boot should still end up at the app —
+# but it reports itself every 5s. A silent wait here is indistinguishable from a
+# hung session, and the backend failing to start is the most likely reason this
+# script ever stalls.
+waited=0
 until curl -sf "$READY_URL" >/dev/null 2>&1; do
     sleep 1
+    waited=$((waited + 1))
+    if [ $((waited % 5)) -eq 0 ]; then
+        echo "still waiting for backend at $READY_URL (${waited}s) — check: systemctl status weldflex-backend"
+    fi
 done
 echo "backend is up, launching cage"
 

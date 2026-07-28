@@ -23,6 +23,14 @@ set -u
 URL="http://localhost:5000/operator"
 READY_URL="http://localhost:5000/"
 
+# Shrink the compositor's cursor to nothing. The app already sets `cursor: none`
+# in kiosk mode, but that only governs the pointer once Chromium owns it — wlroots
+# parks its own default cursor at the centre of the output at startup and keeps
+# drawing it until a pointer motion event hands control to the client. With no
+# mouse attached that motion never comes, so the arrow just sits there. cage has no
+# hide-cursor flag; XCURSOR_SIZE is the lever wlroots actually reads.
+export XCURSOR_SIZE=1
+
 # Send stdout/stderr to journald so `journalctl -t weldflex-kiosk -f` works. The
 # old session logged nowhere. Only stdout/stderr are redirected — cage still owns
 # the VT and opens its own DRM/input devices, so this does not affect the session.
@@ -57,6 +65,7 @@ while true; do
         --disable-dev-shm-usage \
         --user-data-dir=/tmp/weldflex-kiosk \
         --disable-features=TranslateUI \
+        --disable-background-networking \
         "$URL"
     echo "cage exited (status $?) — restarting in 2s"
     sleep 2

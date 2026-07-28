@@ -541,10 +541,13 @@ input, textarea, select, [contenteditable] {
   word-break: break-word;
 }
 
-/* Secondary line on the connection chip: latency, retry countdown, attempt number.
-   Sized to add no height on the 800x480 kiosk header. */
+/* Secondary line on the connection chip: latency, attempt number, "manual".
+   min-height holds the line open when the text is empty (see status_chip's
+   reserve_detail). Without it the chip changes height as the link state changes,
+   and since the chip lives in the sticky header that pushes the whole page down. */
 .chip-detail {
   display: block;
+  min-height: 1.1em;
   font-size: 0.6rem;
   line-height: 1.1;
   color: #6b8299;

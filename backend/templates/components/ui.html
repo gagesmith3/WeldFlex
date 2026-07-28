@@ -41,7 +41,10 @@
 {% endif %}
 {%- endmacro %}
 
-{% macro status_chip(label, value, icon='', state='neutral', compact=false, tooltip='', detail='') -%}
+{# reserve_detail keeps the detail line in the box model even when `detail` is
+   empty, so a chip that gains or loses its detail on a poll never changes height.
+   Off by default — chips that never pass `detail` shouldn't grow a blank line. #}
+{% macro status_chip(label, value, icon='', state='neutral', compact=false, tooltip='', detail='', reserve_detail=false) -%}
 {% set state_class = 'chip-' ~ state if state in ['ok', 'warn', 'error'] else '' %}
 <div class="chip {{ 'chip-compact' if compact else '' }} {{ state_class }}" {% if tooltip %}title="{{ tooltip }}"{% endif %}>
   <div class="chip-row">
@@ -49,7 +52,7 @@
     <span class="chip-label">{{ label }}</span>
   </div>
   <strong class="chip-value">{{ value }}</strong>
-  {% if detail %}<span class="chip-detail">{{ detail }}</span>{% endif %}
+  {% if detail or reserve_detail %}<span class="chip-detail">{{ detail }}</span>{% endif %}
 </div>
 {%- endmacro %}
 

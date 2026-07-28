@@ -46,6 +46,7 @@ while true; do
         --disable-dev-shm-usage \
         --user-data-dir=/tmp/weldflex-kiosk \
         --disable-features=TranslateUI \
+        --disable-background-networking \
         "http://localhost:5000/operator"
     sleep 2
 done

@@ -773,8 +773,10 @@ def _connection_snapshot() -> dict:
     elif snap.state == "degraded":
         age = snap.age_s()
         detail = f"{age:.0f}s ago" if age is not None else "no reply"
-    elif snap.state == "faulted" and snap.retry_in_s is not None:
-        detail = f"retry in {snap.retry_in_s:.0f}s"
+    # No detail for "faulted" on purpose. The retry countdown ticked once a second
+    # and the chip is the only thing in the sticky header that can change height,
+    # so it shoved the whole operator page down. The countdown is still on the
+    # diagnostics readout, where the layout can afford it.
     elif snap.state == "disconnected":
         detail = "manual"
 

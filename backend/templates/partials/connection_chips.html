@@ -1,4 +1,20 @@
 {% from "components/ui.html" import status_chip with context %}
+{#
+  Connection state comes from the link's cached snapshot, so this partial can be polled
+  by every open page without generating any robot traffic.
+#}
+{% set conn = {
+    'connected':    ('ONLINE',       'link_2',     'ok'),
+    'connecting':   ('CONNECTING',   'refresh-cw', 'warn'),
+    'degraded':     ('UNSTABLE',     'link_2',     'warn'),
+    'faulted':      ('OFFLINE',      'link_2_off', 'error'),
+    'disconnected': ('DISCONNECTED', 'link_2_off', 'error'),
+  } %}
+{% set label, conn_icon, conn_state = conn.get(snapshot.state, ('OFFLINE', 'link_2_off', 'error')) %}
+{% if snapshot.online and snapshot.busy %}
+  {% set label, conn_state = 'BUSY', 'warn' %}
+{% endif %}
+
 {% set state_icon = 'square' %}
 {% if snapshot.program_state == 'running' %}
   {% set state_icon = 'play' %}
@@ -8,14 +24,17 @@
   {% set state_icon = 'square' %}
 {% endif %}
 
+{% set conn_tooltip = snapshot.error or (snapshot.ip and 'Robot at ' ~ snapshot.ip) or '' %}
+
 <div class="chip-grid chip-grid-compact">
   {{ status_chip(
       'Connection',
-      'ONLINE' if snapshot.online else 'OFFLINE',
-      icon='link_2' if snapshot.online else 'link_2_off',
-      state='ok' if snapshot.online else 'error',
+      label,
+      icon=conn_icon,
+      state=conn_state,
       compact=true,
-      tooltip=snapshot.error or ''
+      detail=snapshot.detail,
+      tooltip=conn_tooltip
     )
   }}
   {{ status_chip(
@@ -23,7 +42,7 @@
       snapshot.program_state,
       icon=state_icon,
       compact=true,
-      tooltip=snapshot.error or ''
+      tooltip=conn_tooltip
     )
   }}
 </div>

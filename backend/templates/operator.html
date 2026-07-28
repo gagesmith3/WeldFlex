@@ -1,21 +1,14 @@
 {% extends "base.html" %}
-{% from "components/ui.html" import action_button, nav_card, panel_shell, metric_card, htmx_mount with context %}
+{% from "components/ui.html" import nav_card, panel_shell, htmx_mount with context %}
 
 {% block body %}
 <div class="operator-main-body">
+  {# Controls and job status re-render together: the buttons are state-driven, so
+     they have to arrive in the same swap as the state they reflect. The partial
+     carries its own adaptive poll trigger — this mount only fires the first paint. #}
   <div class="operator-left-col">
-    {% call panel_shell('Control Panel', class_name='operator-control-panel') %}
-      <div class="hero-main-controls">
-        {{ action_button('Run',    variant='run',  icon='play',   hx_post='/ui/operator/run', hx_target='#operator-current-job-mount', hx_swap='innerHTML') }}
-        {{ action_button('Pause',  variant='pause', icon='pause', hx_post='/ui/pause',        hx_target='#operator-current-job-mount', hx_swap='innerHTML') }}
-        {{ action_button('Resume', variant='run',  icon='play',   hx_post='/ui/resume',       hx_target='#operator-current-job-mount', hx_swap='innerHTML') }}
-        {{ action_button('Stop',   variant='stop', icon='square', hx_post='/ui/stop',         hx_target='#operator-current-job-mount', hx_swap='innerHTML') }}
-      </div>
-    {% endcall %}
-
-    {% call panel_shell('Current Job', class_name='operator-current-job') %}
-      {{ htmx_mount('operator-current-job-mount', '/ui/operator/current-job', 'load, every 1500ms', 'innerHTML') }}
-    {% endcall %}
+    {{ htmx_mount('operator-current-job-mount', '/ui/job/status', 'load', 'innerHTML',
+                  class_name='operator-job-mount') }}
   </div>
 
   {% call panel_shell('Navigation', class_name='operator-links-panel') %}

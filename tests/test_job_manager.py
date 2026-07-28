@@ -1,0 +1,382 @@
+"""The job state machine and its persistence, against a stubbed robot service.
+
+No SDK and no robot: `state_map` is injected so `job_manager` never reaches into
+`robot_service`, and the stub answers every verb the manager calls.
+"""
+
+import json
+import threading
+import time
+from dataclasses import dataclass
+
+import pytest
+
+from job_manager import (
+    ACTIVE_STATES,
+    MONITOR_INTERVAL_S,
+    TERMINAL_STATES,
+    JobError,
+    JobManager,
+    JobState,
+)
+
+STATE_MAP = {-1: "offline", 0: "stopped", 1: "stopped", 2: "running", 3: "paused"}
+
+# Line values only need to sit either side of the real template's markers, which
+# the manager computes from programs/WeldFlex.lua at start().
+TOP = 1              # at or before loop_start_line
+PAST_MARKER = 999    # at or past cycle_marker_line
+
+
+@dataclass
+class FakeSnap:
+    state: str = "connected"
+    connected: bool = True
+    program_state_raw: int | None = 2
+    current_line: int | None = TOP
+    line_edge_seq: int = 0
+    fault_main: int | None = None
+    fault_sub: int | None = None
+
+
+class FakeRobot:
+    """Every verb JobManager calls, plus a scriptable line feed."""
+
+    def __init__(self, fail: set[str] | None = None) -> None:
+        self.snap = FakeSnap()
+        self.calls: list[str] = []
+        self.fail = fail or set()
+        self.running_hint = None
+        self._lock = threading.Lock()
+
+    def _maybe_fail(self, name):
+        self.calls.append(name)
+        if name in self.fail:
+            raise RuntimeError(f"{name} failed (code -1)")
+
+    def snapshot(self):
+        with self._lock:
+            return FakeSnap(**vars(self.snap))
+
+    def set_running_hint(self, running):
+        self.running_hint = running
+
+    def upload_program(self, path, replace=False):
+        self._maybe_fail("upload_program")
+        return "WeldFlex.lua"
+
+    def run_program(self, name):
+        self._maybe_fail("run_program")
+
+    def pause_program(self):
+        self._maybe_fail("pause_program")
+
+    def resume_program(self):
+        self._maybe_fail("resume_program")
+
+    def stop_program(self):
+        self._maybe_fail("stop_program")
+
+    # --- test control ---
+
+    def feed(self, line, program_state=2):
+        with self._lock:
+            self.snap.current_line = line
+            self.snap.line_edge_seq += 1
+            self.snap.program_state_raw = program_state
+
+
+def make_manager(tmp_path, robot=None, **kw):
+    return JobManager(
+        robot or FakeRobot(),
+        history_path=tmp_path / "run_history.jsonl",
+        events_path=tmp_path / "run_events.jsonl",
+        state_map=STATE_MAP,
+        **kw,
+    )
+
+
+def wait_for(fn, timeout=5.0):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        value = fn()
+        if value:
+            return value
+        time.sleep(0.02)
+    return None
+
+
+def wait_state(mgr, state, timeout=5.0):
+    got = wait_for(lambda: mgr.snapshot().state == state, timeout)
+    assert got, f"expected {state!r}, still {mgr.snapshot().state!r}"
+
+
+# ---------------- transitions ----------------
+
+
+def test_starts_idle(tmp_path):
+    mgr = make_manager(tmp_path)
+    snap = mgr.snapshot()
+    assert snap.state == JobState.IDLE.value
+    assert snap.run_id is None
+    assert not snap.active and not snap.terminal
+
+
+def test_load_then_start_reaches_running(tmp_path):
+    robot = FakeRobot()
+    mgr = make_manager(tmp_path, robot)
+    snap = mgr.load("p1", "Bracket", [{"x": 1, "y": 2}], cycles=3, gate_mode="none")
+    assert snap.state == JobState.QUEUED.value
+    assert snap.part_name == "Bracket"
+    assert snap.cycles_target == 3
+
+    mgr.start()
+    wait_state(mgr, JobState.RUNNING.value)
+    assert "upload_program" in robot.calls and "run_program" in robot.calls
+    assert robot.running_hint is True
+    mgr.shutdown()
+
+
+ILLEGAL = [
+    ("start", JobState.IDLE.value),
+    ("pause", JobState.IDLE.value),
+    ("resume", JobState.IDLE.value),
+    ("continue_", JobState.IDLE.value),
+    ("stop", JobState.IDLE.value),
+    ("pause", JobState.QUEUED.value),
+    ("resume", JobState.QUEUED.value),
+    ("continue_", JobState.QUEUED.value),
+    ("stop", JobState.QUEUED.value),
+]
+
+
+@pytest.mark.parametrize("command,state", ILLEGAL)
+def test_illegal_transitions_are_rejected_not_silently_applied(tmp_path, command, state):
+    mgr = make_manager(tmp_path)
+    if state == JobState.QUEUED.value:
+        mgr.load("p1", "Bracket", [], cycles=1, gate_mode="none")
+    with pytest.raises(JobError):
+        getattr(mgr, command)()
+
+
+def test_pause_resume_stop_round_trip(tmp_path):
+    robot = FakeRobot()
+    mgr = make_manager(tmp_path, robot)
+    mgr.load("p1", "Bracket", [], cycles=5, gate_mode="none")
+    mgr.start()
+    wait_state(mgr, JobState.RUNNING.value)
+
+    assert mgr.pause().state == JobState.PAUSED.value
+    with pytest.raises(JobError):
+        mgr.pause()
+    assert mgr.resume().state == JobState.RUNNING.value
+    assert mgr.stop().state == JobState.STOPPED.value
+    assert "stop_program" in robot.calls
+    # Terminal: no further commands, but clear() returns to idle.
+    with pytest.raises(JobError):
+        mgr.pause()
+    assert mgr.clear().state == JobState.IDLE.value
+
+
+def test_failed_command_lands_on_the_session_error_not_an_exception(tmp_path):
+    robot = FakeRobot(fail={"pause_program"})
+    mgr = make_manager(tmp_path, robot)
+    mgr.load("p1", "Bracket", [], cycles=2, gate_mode="none")
+    mgr.start()
+    wait_state(mgr, JobState.RUNNING.value)
+
+    snap = mgr.pause()
+    assert snap.state == JobState.RUNNING.value   # the pause did not take
+    assert "pause_program failed" in snap.error   # and the operator is told why
+    mgr.shutdown()
+
+
+def test_start_failure_ends_the_job_with_a_visible_reason(tmp_path):
+    robot = FakeRobot(fail={"run_program"})
+    mgr = make_manager(tmp_path, robot)
+    mgr.load("p1", "Bracket", [], cycles=1, gate_mode="none")
+    mgr.start()
+    wait_state(mgr, JobState.ERROR.value)
+    assert "run_program failed" in mgr.snapshot().error
+    # error is re-startable, unlike the other terminal states
+    mgr.start()
+    wait_state(mgr, JobState.ERROR.value)
+
+
+def test_load_is_refused_while_a_job_is_active(tmp_path):
+    mgr = make_manager(tmp_path)
+    mgr.load("p1", "A", [], cycles=2, gate_mode="none")
+    mgr.start()
+    wait_state(mgr, JobState.RUNNING.value)
+    with pytest.raises(JobError, match="stop it before loading another"):
+        mgr.load("p2", "B", [], cycles=1, gate_mode="none")
+    mgr.stop()
+    mgr.load("p2", "B", [], cycles=1, gate_mode="none")   # allowed once terminal
+
+
+# ---------------- cycle counting end to end ----------------
+
+
+def run_one_cycle(robot, mgr, expect):
+    """Drive the line feed through one loop iteration and wait for it to land."""
+    robot.feed(TOP)
+    time.sleep(MONITOR_INTERVAL_S * 2)
+    robot.feed(PAST_MARKER)
+    assert wait_for(lambda: mgr.snapshot().cycles_done == expect, 3.0), (
+        f"expected {expect} cycles, got {mgr.snapshot().cycles_done}"
+    )
+
+
+def test_cycles_advance_with_nothing_polling(tmp_path):
+    """The headline fix: progress is driven by the monitor thread, not the browser."""
+    robot = FakeRobot()
+    mgr = make_manager(tmp_path, robot)
+    mgr.load("p1", "Bracket", [{"x": 1, "y": 1}], cycles=2, gate_mode="none")
+    mgr.start()
+    wait_state(mgr, JobState.RUNNING.value)
+
+    run_one_cycle(robot, mgr, expect=1)
+    run_one_cycle(robot, mgr, expect=2)
+
+    robot.feed(PAST_MARKER, program_state=0)
+    wait_state(mgr, JobState.COMPLETED.value)
+    snap = mgr.snapshot()
+    assert snap.cycles_done == 2
+    assert len(snap.cycle_times) == 2
+    assert snap.ended_at and snap.error is None
+
+
+def test_lost_link_mid_run_is_interrupted_not_running(tmp_path):
+    robot = FakeRobot()
+    mgr = make_manager(tmp_path, robot)
+    mgr.load("p1", "Bracket", [], cycles=5, gate_mode="none")
+    mgr.start()
+    wait_state(mgr, JobState.RUNNING.value)
+    robot.snap.state = "faulted"
+    wait_state(mgr, JobState.INTERRUPTED.value)
+    assert "Lost connection" in mgr.snapshot().error
+
+
+def test_gate_pause_holds_at_the_cycle_boundary(tmp_path):
+    robot = FakeRobot()
+    mgr = make_manager(tmp_path, robot)
+    mgr.load("p1", "Bracket", [], cycles=3, gate_mode="pause")
+    mgr.start()
+    wait_state(mgr, JobState.RUNNING.value)
+
+    robot.feed(TOP)
+    robot.feed(PAST_MARKER)                    # past the boundary marker
+    wait_state(mgr, JobState.GATED.value)
+    assert "pause_program" in robot.calls
+    assert mgr.snapshot().cycles_done == 1
+
+    assert mgr.continue_().state == JobState.RUNNING.value
+    mgr.shutdown()
+
+
+def test_program_ending_early_is_stopped_with_a_partial_count(tmp_path):
+    robot = FakeRobot()
+    mgr = make_manager(tmp_path, robot)
+    mgr.load("p1", "Bracket", [], cycles=10, gate_mode="none")
+    mgr.start()
+    wait_state(mgr, JobState.RUNNING.value)
+    robot.feed(TOP)
+    robot.feed(PAST_MARKER)
+    wait_for(lambda: mgr.snapshot().cycles_done == 1, 2.0)
+    robot.feed(PAST_MARKER, program_state=0)
+    wait_state(mgr, JobState.STOPPED.value)
+    assert "1 of 10" in mgr.snapshot().error
+
+
+# ---------------- persistence ----------------
+
+
+def test_history_and_events_are_written_as_jsonl(tmp_path):
+    finished = []
+    mgr = make_manager(tmp_path, on_finish=finished.append)
+    mgr.load("p1", "Bracket", [{"x": 1, "y": 2}], cycles=2, gate_mode="none")
+    mgr.start()
+    wait_state(mgr, JobState.RUNNING.value)
+    mgr.stop()
+
+    history = (tmp_path / "run_history.jsonl").read_text(encoding="utf-8").strip().splitlines()
+    assert len(history) == 1
+    record = json.loads(history[0])
+    assert record["part_id"] == "p1"
+    assert record["part_name"] == "Bracket"
+    assert record["status"] == "stopped"
+    assert record["cycles_target"] == 2
+    assert record["started_at"] and record["ended_at"]
+    assert finished == [record]
+
+    events = [json.loads(l) for l in
+              (tmp_path / "run_events.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
+    assert [e["event"] for e in events][:2] == ["load", "start"]
+    assert all(e["run_id"] == record["run_id"] for e in events)
+
+
+def test_a_truncated_history_line_is_skipped_not_fatal(tmp_path):
+    mgr = make_manager(tmp_path)
+    path = tmp_path / "run_history.jsonl"
+    good = {"run_id": "a", "part_name": "A", "cycles_target": 3, "cycles_done": 3,
+            "started_at": "2026-07-27T08:00:00", "status": "completed"}
+    # A power cut mid-write costs one line, not the file.
+    path.write_text(json.dumps(good) + "\n" + '{"run_id": "b", "cycles_', encoding="utf-8")
+    assert [r["run_id"] for r in mgr.history()] == ["a"]
+
+
+def test_today_stats_only_counts_today(tmp_path):
+    from datetime import datetime
+
+    mgr = make_manager(tmp_path)
+    today = datetime.now().strftime("%Y-%m-%d")
+    rows = [
+        {"started_at": f"{today}T08:00:00", "cycles_target": 10, "cycles_done": 9},
+        {"started_at": f"{today}T09:00:00", "cycles_target": 5, "cycles_done": 5},
+        {"started_at": "1999-01-01T09:00:00", "cycles_target": 99, "cycles_done": 99},
+    ]
+    (tmp_path / "run_history.jsonl").write_text(
+        "".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8"
+    )
+    assert mgr.today_stats() == (15, 14)
+
+
+def test_history_is_newest_first(tmp_path):
+    mgr = make_manager(tmp_path)
+    rows = [{"run_id": str(i), "started_at": f"2026-07-2{i}T08:00:00"} for i in range(1, 4)]
+    (tmp_path / "run_history.jsonl").write_text(
+        "".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8"
+    )
+    assert [r["run_id"] for r in mgr.history()] == ["3", "2", "1"]
+
+
+def test_shutdown_records_an_in_flight_job_as_interrupted(tmp_path):
+    mgr = make_manager(tmp_path)
+    mgr.load("p1", "Bracket", [], cycles=9, gate_mode="none")
+    mgr.start()
+    wait_state(mgr, JobState.RUNNING.value)
+    mgr.shutdown()
+    assert mgr.snapshot().state == JobState.INTERRUPTED.value
+    record = json.loads((tmp_path / "run_history.jsonl").read_text(encoding="utf-8").strip())
+    assert record["status"] == "interrupted"
+
+
+# ---------------- snapshot ----------------
+
+
+def test_snapshot_is_immutable_and_json_ready(tmp_path):
+    mgr = make_manager(tmp_path)
+    mgr.load("p1", "Bracket", [{"x": 1, "y": 2}], cycles=4, gate_mode="none")
+    snap = mgr.snapshot()
+    with pytest.raises(Exception):
+        snap.state = "running"          # frozen dataclass
+    d = snap.to_dict()
+    json.dumps(d)                        # renderable and serialisable
+    assert d["progress_pct"] == 0.0
+    assert d["cycles_target"] == 4
+    assert d["stud_count"] == 1
+
+
+def test_state_sets_are_disjoint():
+    assert not ACTIVE_STATES & TERMINAL_STATES
+    assert JobState.IDLE.value not in ACTIVE_STATES | TERMINAL_STATES

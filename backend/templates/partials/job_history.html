@@ -1,0 +1,48 @@
+{# Finished runs, newest first, read back from backend/run_history.jsonl. #}
+<div class="job-history-summary">
+  <div class="summary-item">
+    <span class="summary-label">Today's Cycles Attempted:</span>
+    <span class="summary-value">{{ today_attempted }}</span>
+  </div>
+  <div class="summary-item">
+    <span class="summary-label">Today's Cycles Completed:</span>
+    <span class="summary-value">{{ today_completed }}</span>
+  </div>
+</div>
+
+{% if runs %}
+<div class="table-shell">
+  <table class="library-table">
+    <thead>
+      <tr>
+        <th>Started</th>
+        <th>Part</th>
+        <th>Cycles</th>
+        <th>Avg</th>
+        <th>Result</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for run in runs %}
+      {% set times = run.get('cycle_times') or [] %}
+      <tr>
+        <td class="job-history-time">
+          {{ (run.get('started_at') or '—')[:16].replace('T', ' ') }}
+        </td>
+        <td>{{ run.get('part_name') or '—' }}</td>
+        <td>{{ run.get('cycles_done', 0) }} / {{ run.get('cycles_target', 0) }}</td>
+        <td>{{ '%.1fs'|format(times | sum / times | length) if times else '—' }}</td>
+        <td>
+          <span class="last-run-tag state-badge state-badge--{{ run.get('status', 'idle') }}"
+                {% if run.get('error') %}title="{{ run.get('error') }}"{% endif %}>
+            {{ run.get('status', '—') }}
+          </span>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="job-history-empty">No production runs recorded yet.</p>
+{% endif %}

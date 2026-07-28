@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% from "components/ui.html" import panel_shell, htmx_mount with context %}
+
+{% block body %}
+<div class="page-body">
+  {% call panel_shell('Run History', 'Completed and aborted production runs.', class_name='settings-shell') %}
+    {{ htmx_mount('job-history-mount', '/ui/job/history', 'load, every 10s', 'innerHTML') }}
+  {% endcall %}
+</div>
+{% endblock %}

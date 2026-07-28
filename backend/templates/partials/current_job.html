@@ -1,35 +1,114 @@
-{% set state = session.get('state', '') if session else '' %}
-{% set part_name = session.get('recipe_name', '—') if session else '—' %}
-{% set cycles_done = session.get('cycles_done', 0) if session else 0 %}
-{% set cycles_target = session.get('cycles_target', 0) if session else 0 %}
-{% set cycles_label = (cycles_done | string ~ ' / ' ~ cycles_target | string) if cycles_target else '— / —' %}
-{% set display_state = state if state else 'idle' %}
+{#
+  The operator's left column: run controls + current job.
 
-{% if display_state == 'queued' %}
-<p class="current-job-ready-hint">Job loaded — press <strong>Run</strong> to start</p>
-{% endif %}
+  Renders from an immutable JobSnapshot (`job`) plus the connection snapshot
+  (`conn`); it never reaches into manager state itself.
 
-<div class="current-job-grid">
-  <div class="metric-card">
-    <div class="metric-icon">{{ icon_safe('clipboard', fallback='circle', width=14, height=14) }}</div>
-    <span class="metric-label">Part Name</span>
-    <strong class="metric-value">{{ part_name }}</strong>
+  The controls live in here rather than in operator.html because they are
+  state-driven — only the commands that are legal right now are enabled, and that
+  can only stay true if they re-render with the state.
+
+  The poll rate adapts: 750 ms while something is happening, 3 s when idle,
+  instead of a flat 1500 ms forever. Meaningful on a Pi kiosk.
+#}
+{% from "components/ui.html" import action_button, panel_shell with context %}
+{% set state = job.state %}
+{% set poll_ms = 750 if job.active else 3000 %}
+{% set tgt = '#operator-current-job-mount' %}
+
+<div hidden
+     hx-get="/ui/job/status"
+     hx-trigger="every {{ poll_ms }}ms"
+     hx-target="{{ tgt }}"
+     hx-swap="innerHTML"></div>
+
+{% call panel_shell('Control Panel', class_name='operator-control-panel') %}
+  <div class="hero-main-controls">
+    {% if job.terminal %}
+      {{ action_button('Clear', variant='recipe-delete', icon='x',
+                       hx_post='/ui/job/clear', hx_target=tgt, hx_swap='innerHTML') }}
+    {% else %}
+      {{ action_button('Run', variant='run', icon='play',
+                       hx_post='/ui/job/start', hx_target=tgt, hx_swap='innerHTML',
+                       disabled=(state not in ('queued', 'error'))) }}
+    {% endif %}
+
+    {{ action_button('Pause', variant='pause', icon='pause',
+                     hx_post='/ui/job/pause', hx_target=tgt, hx_swap='innerHTML',
+                     disabled=(state != 'running')) }}
+
+    {% if state == 'gated' %}
+      {{ action_button('Continue', variant='run', icon='play',
+                       hx_post='/ui/job/continue', hx_target=tgt, hx_swap='innerHTML') }}
+    {% else %}
+      {{ action_button('Resume', variant='run', icon='play',
+                       hx_post='/ui/job/resume', hx_target=tgt, hx_swap='innerHTML',
+                       disabled=(state != 'paused')) }}
+    {% endif %}
+
+    {{ action_button('Stop', variant='stop', icon='square',
+                     hx_post='/ui/job/stop', hx_target=tgt, hx_swap='innerHTML',
+                     disabled=(not job.active)) }}
   </div>
-  <div class="metric-card">
-    <div class="metric-icon">{{ icon_safe('activity', fallback='circle', width=14, height=14) }}</div>
-    <span class="metric-label">State</span>
-    <strong class="metric-value">
-      <span class="state-badge state-badge--{{ display_state }}">{{ display_state }}</span>
-    </strong>
+{% endcall %}
+
+{% call panel_shell('Current Job', class_name='operator-current-job') %}
+  {% if note %}
+  <p class="current-job-note">{{ note }}</p>
+  {% elif state == 'queued' %}
+  <p class="current-job-ready-hint">Job loaded — press <strong>Run</strong> to start</p>
+  {% elif state == 'starting' %}
+  <p class="current-job-ready-hint">Uploading and loading program…</p>
+  {% elif state == 'gated' %}
+  <p class="current-job-gate-hint">Cycle complete — swap the part, then press <strong>Continue</strong></p>
+  {% endif %}
+
+  {# Closes the long-standing gap where a failure set an error nobody could see. #}
+  {% if job.error %}
+  <p class="current-job-error">{{ job.error }}</p>
+  {% endif %}
+
+  <div class="current-job-grid">
+    <div class="metric-card">
+      <div class="metric-icon">{{ icon_safe('clipboard', fallback='circle', width=14, height=14) }}</div>
+      <span class="metric-label">Part Name</span>
+      <strong class="metric-value">{{ job.part_name or '—' }}</strong>
+    </div>
+    <div class="metric-card">
+      <div class="metric-icon">{{ icon_safe('activity', fallback='circle', width=14, height=14) }}</div>
+      <span class="metric-label">State</span>
+      <strong class="metric-value">
+        <span class="state-badge state-badge--{{ state }}">{{ state }}</span>
+      </strong>
+    </div>
+    <div class="metric-card">
+      <div class="metric-icon">{{ icon_safe('repeat', fallback='circle', width=14, height=14) }}</div>
+      <span class="metric-label">Cycles</span>
+      <strong class="metric-value">
+        {{ (job.cycles_done ~ ' / ' ~ job.cycles_target) if job.cycles_target else '— / —' }}
+      </strong>
+    </div>
+    <div class="metric-card">
+      <div class="metric-icon">{{ icon_safe('wifi', fallback='circle', width=14, height=14) }}</div>
+      <span class="metric-label">Connection</span>
+      <strong class="metric-value">{{ 'Online' if conn.online else 'Offline' }}</strong>
+    </div>
   </div>
-  <div class="metric-card">
-    <div class="metric-icon">{{ icon_safe('repeat', fallback='circle', width=14, height=14) }}</div>
-    <span class="metric-label">Cycles</span>
-    <strong class="metric-value">{{ cycles_label }}</strong>
+
+  {% if job.cycles_target %}
+  <div class="current-job-progress" aria-label="Cycle completion progress">
+    <div class="current-job-progress-meta">
+      <span id="job-progress-label">
+        Cycle Progress
+        {%- if job.avg_cycle_s %} · avg {{ '%.1f'|format(job.avg_cycle_s) }}s{% endif %}
+        {%- if job.current_cycle_s is not none %} · now {{ '%.0f'|format(job.current_cycle_s) }}s{% endif %}
+      </span>
+      <strong>{{ '%.0f'|format(job.progress_pct) }}%</strong>
+    </div>
+    <progress class="current-job-progress-track"
+              value="{{ job.cycles_done }}"
+              max="{{ job.cycles_target }}"
+              aria-labelledby="job-progress-label"></progress>
   </div>
-  <div class="metric-card">
-    <div class="metric-icon">{{ icon_safe('wifi', fallback='circle', width=14, height=14) }}</div>
-    <span class="metric-label">Connection</span>
-    <strong class="metric-value">{{ 'Online' if connected else 'Offline' }}</strong>
-  </div>
-</div>
+  {% endif %}
+{% endcall %}

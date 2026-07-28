@@ -41,14 +41,15 @@
 {% endif %}
 {%- endmacro %}
 
-{% macro status_chip(label, value, icon='', state='neutral', compact=false, tooltip='') -%}
-{% set state_class = 'chip-' ~ state if state in ['ok', 'error'] else '' %}
+{% macro status_chip(label, value, icon='', state='neutral', compact=false, tooltip='', detail='') -%}
+{% set state_class = 'chip-' ~ state if state in ['ok', 'warn', 'error'] else '' %}
 <div class="chip {{ 'chip-compact' if compact else '' }} {{ state_class }}" {% if tooltip %}title="{{ tooltip }}"{% endif %}>
   <div class="chip-row">
     {% if icon %}<span class="chip-icon">{{ icon_safe(icon, fallback='circle', width=14, height=14) }}</span>{% endif %}
     <span class="chip-label">{{ label }}</span>
   </div>
   <strong class="chip-value">{{ value }}</strong>
+  {% if detail %}<span class="chip-detail">{{ detail }}</span>{% endif %}
 </div>
 {%- endmacro %}
 

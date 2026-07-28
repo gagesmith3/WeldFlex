@@ -71,13 +71,14 @@ async function runModalConfirm() {
   const fd = new FormData();
   fd.append('recipe_id', _runRecipeId);
   fd.append('cycles', cycles);
-  const resp = await fetch('/ui/parts/run', { method: 'POST', body: fd });
+  // Queues the job; the operator page is where it actually gets started.
+  const resp = await fetch('/ui/job/load', { method: 'POST', body: fd });
   const data = await resp.json();
   if (data.ok) {
     window.location.href = '/operator';
   } else {
     const rack = document.getElementById('toast-rack');
-    if (rack) rack.innerHTML = '<div class="result error"><div class="result-header">Run Failed</div><pre>' + (data.error || 'Unknown error') + '</pre></div>';
+    if (rack) rack.innerHTML = '<div class="result error"><div class="result-header">Load Failed</div><pre>' + (data.error || 'Unknown error') + '</pre></div>';
   }
 }
 </script>

@@ -1,137 +1,100 @@
 from __future__ import annotations
 
-import concurrent.futures
-import io
 import os
-import re
-import sys
 import tempfile
-import threading
 import time
 from pathlib import Path
 from typing import Any, Callable
 
-# The FAIRINO SDK prints Chinese debug text to stdout/stderr. On Windows the
-# default console codec (cp1252) can't encode it, which raises UnicodeEncodeError
-# and gets mistaken for a connection failure. Force UTF-8 stdio regardless of how
-# the process was launched.
-for _stream in (sys.stdout, sys.stderr):
-    if isinstance(_stream, io.TextIOWrapper):
-        _stream.reconfigure(encoding="utf-8", errors="replace")
-
-
-def _bootstrap_sdk() -> None:
-    """Add the local FAIRINO SDK to sys.path so it can be imported."""
-    workspace_root = Path(__file__).resolve().parents[1]
-    sdk_root = workspace_root / "fairino-python-sdk-main"
-
-    platform_dir = "windows" if sys.platform == "win32" else "linux"
-    fallback_dir = "linux" if sys.platform == "win32" else "windows"
-
-    candidates = [
-        os.getenv("WELDFLEX_FAIRINO_PATH"),
-        str(sdk_root / platform_dir),
-        str(sdk_root / fallback_dir),
-    ]
-
-    for candidate in candidates:
-        if not candidate:
-            continue
-        path = Path(candidate)
-        fairino_pkg = path / "fairino"
-        if fairino_pkg.is_dir() and str(path) not in sys.path:
-            sys.path.insert(0, str(path))
-            return
-
-
-_bootstrap_sdk()
-
-try:
-    from fairino import Robot  # type: ignore[import]
-except ImportError as exc:
-    raise ImportError(
-        "Cannot import FAIRINO SDK. Set WELDFLEX_FAIRINO_PATH to the SDK platform folder."
-    ) from exc
+from robot_link import (
+    ConnSnapshot,
+    ConnState,
+    RobotLink,
+    has_conn_error,
+    is_conn_code,
+)
 
 SDK_TIMEOUT_S = 5.0
 
 STATE_MAP = {
+    -1: "offline",
     0: "stopped",
     1: "stopped",
     2: "running",
     3: "paused",
+    4: "drag",  # drag-teach active; undocumented in the SDK's own docstring
 }
+
+# StartJOG ref: 0-joint, 2-base coord, 4-tool coord, 8-workpiece coord.
+# StopJOG ref is always start-ref + 1 (e.g. base-jog stop is ref 3, not 2).
+JOG_START_REF = {
+    ("cartesian", "base"): 2,
+    ("cartesian", "tool"): 4,
+    ("cartesian", "workpiece"): 8,
+}
+JOG_AXIS_NB = {"x": 1, "y": 2, "z": 3, "rx": 4, "ry": 5, "rz": 6}
+JOG_DIRECTION = {"negative": 0, "positive": 1}
+
+JOG_MOTION_TIMEOUT_S = 5.0
+JOG_MOTION_POLL_S = 0.02
+JOG_MOTION_SETTLE_S = 0.05
 
 
 class WeldFlexRobotService:
+    """Robot operations. Connection concerns live in RobotLink; this is the verb layer."""
+
     def __init__(self, robot_ip: str) -> None:
-        self.robot_ip = robot_ip
-        self._robot: Any | None = None
-        self._lock = threading.RLock()
+        self._link = RobotLink(robot_ip)
         self._start_time = time.time()
-        self._executor = concurrent.futures.ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix="robot-sdk"
-        )
 
-    def _client(self) -> Any:
-        """Return the live SDK connection, creating it if needed."""
-        if self._robot is None:
-            self._robot = Robot.RPC(self.robot_ip)
-        return self._robot
+    # --- connection surface (delegated to the link) ---
 
-    def _close_client(self, client: Any) -> None:
-        """Explicitly shut down background threads and sockets inside the SDK RPC instance."""
-        if client is None:
-            return
-        try:
-            if hasattr(client, "_udp_client") and client._udp_client:
-                client._udp_client.close()
-        except Exception:
-            pass
-        try:
-            if hasattr(client, "_cnde_client") and client._cnde_client:
-                client._cnde_client.close()
-        except Exception:
-            pass
+    @property
+    def robot_ip(self) -> str:
+        return self._link.robot_ip
+
+    def start(self) -> None:
+        """Begin maintaining the connection. Non-blocking; call once at app startup."""
+        self._link.start(connect=True)
+
+    def shutdown(self, timeout: float = 5.0) -> None:
+        self._link.shutdown(timeout=timeout)
+
+    def connect(self) -> None:
+        self._link.connect()
+
+    def disconnect(self) -> None:
+        self._link.disconnect()
+
+    def reconnect(self) -> None:
+        self._link.request_reconnect()
+
+    def set_robot_ip(self, ip: str) -> bool:
+        """Retarget the live connection. Returns True if the address changed."""
+        return self._link.set_ip(ip)
+
+    def snapshot(self) -> ConnSnapshot:
+        return self._link.snapshot()
+
+    def set_running_hint(self, running: bool) -> None:
+        """Tell the link to probe faster while a program runs, for live line tracking."""
+        self._link.set_heartbeat_hint(running)
+
+    def thread_report(self) -> dict[str, Any]:
+        return self._link.thread_report()
+
+    # --- SDK call plumbing ---
 
     def _call(self, fn: Callable[[Any], Any], timeout: float = SDK_TIMEOUT_S, retries: int = 3) -> Any:
-        """Run an SDK call in the executor thread with a hard timeout and client recreation on error."""
-        for attempt in range(retries):
-            try:
-                with self._lock:
-                    if self._robot is None:
-                        self._robot = Robot.RPC(self.robot_ip)
-                    client = self._robot
-                future = self._executor.submit(lambda: fn(client))
-                result = future.result(timeout=timeout)
-                if self._has_conn_error(result):
-                    raise RuntimeError("SDK reported communication failure")
-                return result
-            except Exception as e:
-                with self._lock:
-                    if self._robot is not None:
-                        self._close_client(self._robot)
-                        self._robot = None
-                if attempt == retries - 1:
-                    if isinstance(e, concurrent.futures.TimeoutError):
-                        raise RuntimeError(
-                            f"Robot did not respond within {int(timeout)}s — connection may be lost."
-                        )
-                    raise e
-                time.sleep(0.1)
+        """Run an SDK call on the link's worker thread with a hard timeout."""
+        return self._link.call(
+            fn, timeout=timeout, retries=retries, label=getattr(fn, "__name__", "call")
+        )
 
-    @staticmethod
-    def _has_conn_error(val: Any) -> bool:
-        """Recursively checks if any error code in the result is a communication error (-4, -3, -2)."""
-        if val in (-4, -3, -2):
-            return True
-        if isinstance(val, (list, tuple)):
-            if len(val) > 0 and val[0] in (-4, -3, -2):
-                return True
-            for item in val:
-                if WeldFlexRobotService._has_conn_error(item):
-                    return True
-        return False
+    # Kept as staticmethods for the documented wrapper pattern; the implementations
+    # live in robot_link so the link's own dispatch path shares them.
+    _is_conn_code = staticmethod(is_conn_code)
+    _has_conn_error = staticmethod(has_conn_error)
 
     @staticmethod
     def _unpack(response: Any) -> tuple[int, Any]:
@@ -162,78 +125,6 @@ class WeldFlexRobotService:
         err_code, _ = self._unpack(err)
         if err_code != 0:
             raise RuntimeError(f"ProgramStop failed (code {err_code})")
-
-    def run_liberty(self, cycles: int, program_name: str = "libertytest.lua") -> dict[str, int | str]:
-        """Upload/run canonical Liberty script and return launch metadata for progress tracking."""
-        workspace_root = Path(__file__).resolve().parents[1]
-        source_path = workspace_root / "programs" / program_name
-        if not source_path.is_file():
-            raise FileNotFoundError(f"Liberty program file not found: {source_path}")
-
-        raw_lua = source_path.read_text(encoding="utf-8")
-        patched_lua, replaced = re.subn(
-            r"(?m)^([ \t]*)cycleCount([ \t]*)=([ \t]*)\d+([ \t]*)$",
-            lambda m: f"{m.group(1)}cycleCount{m.group(2)}={m.group(3)}{int(cycles)}{m.group(4)}",
-            raw_lua,
-            count=1,
-        )
-        if replaced == 0:
-            raise RuntimeError(
-                f"Missing 'cycleCount = <number>' in {source_path.name}; cannot inject cycles."
-            )
-
-        progress_line = 0
-        lua_lines = patched_lua.splitlines()
-
-        loop_start = None
-        loop_end = None
-        for idx, line in enumerate(lua_lines, start=1):
-            if re.match(r"^\s*for\s+\w+\s*=\s*1\s*,\s*cycleCount\s+do\s*$", line):
-                loop_start = idx
-                break
-
-        if loop_start is not None:
-            depth = 0
-            for idx in range(loop_start, len(lua_lines) + 1):
-                line = lua_lines[idx - 1]
-                if re.match(r"^\s*for\b.*\bdo\s*$", line):
-                    depth += 1
-                if re.match(r"^\s*end\s*$", line):
-                    depth -= 1
-                    if depth == 0:
-                        loop_end = idx
-                        break
-
-        search_start = loop_start or 1
-        search_end = loop_end or len(lua_lines)
-        search_slice = list(enumerate(lua_lines[search_start - 1:search_end], start=search_start))
-
-        # Prefer a dwell line marker that is sampled reliably by diagnostics polling.
-        marker_needles = [
-            "WaitMs(500)",
-            "WaitMs(1000)",
-            "[LIBERTY] Cycle %d/%d complete",
-        ]
-        for needle in marker_needles:
-            found = next((idx for idx, line in reversed(search_slice) if needle in line), 0)
-            if found:
-                progress_line = found
-                break
-
-        tmp_dir = tempfile.mkdtemp()
-        tmp_path = os.path.join(tmp_dir, program_name)
-        try:
-            with open(tmp_path, "w", encoding="utf-8") as f:
-                f.write(patched_lua)
-            uploaded_name = self.upload_program(tmp_path, replace=True)
-            self.run_program(uploaded_name)
-            return {"program": uploaded_name, "progress_line": progress_line}
-        finally:
-            try:
-                os.remove(tmp_path)
-                os.rmdir(tmp_dir)
-            except OSError:
-                pass
 
     def upload_program(self, local_path: str, replace: bool = False) -> str:
         """Upload a Lua file to the robot. Returns the program name as stored on the robot."""
@@ -298,6 +189,43 @@ class WeldFlexRobotService:
         program_name = self.upload_program(local_path)
         self.run_program(program_name)
 
+    def jog_step(self, mode: str, frame: str, axis: str, direction: str, step: float, vel: float) -> None:
+        """Jog one bounded step (StartJOG's max_dis) and block until the robot reports motion done."""
+        ref = JOG_START_REF.get((mode, frame))
+        nb = JOG_AXIS_NB.get(axis)
+        dir_ = JOG_DIRECTION.get(direction)
+        if ref is None or nb is None or dir_ is None:
+            raise ValueError(f"Invalid jog request: mode={mode} frame={frame} axis={axis} direction={direction}")
+
+        err = self._call(lambda r: r.StartJOG(ref, nb, dir_, float(step), float(vel)))
+        err_code, _ = self._unpack(err)
+        if err_code != 0:
+            raise RuntimeError(f"StartJOG failed (code {err_code})")
+
+        time.sleep(JOG_MOTION_SETTLE_S)
+        deadline = time.time() + JOG_MOTION_TIMEOUT_S
+        while time.time() < deadline:
+            done_resp = self._call(lambda r: r.GetRobotMotionDone(), retries=1)
+            _, done = self._unpack(done_resp)
+            if done:
+                return
+            time.sleep(JOG_MOTION_POLL_S)
+
+    def jog_stop(self) -> None:
+        """Immediate jog stop — no ref needed, halts whatever mode is active."""
+        err = self._call(lambda r: r.ImmStopJOG())
+        err_code, _ = self._unpack(err)
+        if err_code != 0:
+            raise RuntimeError(f"ImmStopJOG failed (code {err_code})")
+
+    def jog_pose(self) -> list:
+        """Current TCP pose [x, y, z, rx, ry, rz] for the jog position readout."""
+        resp = self._call(lambda r: r.GetActualTCPPose(1), retries=1)
+        err_code, pose = self._unpack(resp)
+        if err_code != 0 or pose is None:
+            raise RuntimeError(f"GetActualTCPPose failed (code {err_code})")
+        return [float(v) for v in pose]
+
     def tcp_enable_drag(self) -> None:
         """Enter drag teach mode so the operator can physically position the robot."""
         err = self._call(lambda r: r.DragTeachSwitch(1))
@@ -332,6 +260,11 @@ class WeldFlexRobotService:
         Takes ~10 s due to required waits between commands."""
         def _sequence(r):
             r.FT_SetConfig(24, 0)   # company 24 = XJC (鑫精诚), device 0
+            time.sleep(1)
+            # Report in the tool frame (0=tool, 1=base). Asserted rather than
+            # inherited: weld contact force acts along the torch approach axis,
+            # which stays on one tool-frame axis as the robot reorients.
+            r.FT_SetRCS(0)
             time.sleep(1)
             r.FT_Activate(0)        # reset first
             time.sleep(2)
@@ -374,75 +307,67 @@ class WeldFlexRobotService:
         }
 
     def status(self) -> dict[str, Any]:
-        state_resp, line_resp = self._call(
-            lambda r: (r.GetProgramState(), r.GetCurrentLine()),
-            retries=1
-        )
+        """Connection + program state from the link's cached snapshot. Does no robot I/O.
 
-        state_err, state_raw = self._unpack(state_resp)
-        line_err, _ = self._unpack(line_resp)
-
-        # -4 means SDK is_connect=False (CNDE handshake failed). Reset so the
-        # next poll triggers a fresh Robot.RPC() call.
-        if state_err == -4 and line_err == -4:
-            with self._lock:
-                if self._robot is not None:
-                    self._close_client(self._robot)
-                    self._robot = None
-
-        connected = (state_err == 0) or (line_err == 0)
-
+        Polled once a second by every open page, so it must stay free: the robot is
+        contacted once per heartbeat by the supervisor regardless of how many browsers
+        are watching.
+        """
+        snap = self._link.snapshot()
         return {
-            "connected": connected,
-            "program_state": STATE_MAP.get(state_raw, "unknown"),
-            "program_state_raw": state_raw,
+            "connected": snap.connected,
+            "program_state": STATE_MAP.get(snap.program_state_raw, "unknown"),
+            "program_state_raw": snap.program_state_raw,
         }
 
     def diagnostics(self) -> dict[str, Any]:
-        def _gather(r):
-            state_resp = r.GetProgramState()
-            line_resp = r.GetCurrentLine()
-            try:
-                err_resp = r.GetRobotErrCode()
-            except Exception:
-                err_resp = None
-            return state_resp, line_resp, err_resp
-
-        state_resp, line_resp, err_resp = self._call(_gather, retries=1)
-
-        state_err, state_raw = self._unpack(state_resp)
-        line_err, line_val = self._unpack(line_resp)
-
-        if state_err == -4 and line_err == -4:
-            with self._lock:
-                if self._robot is not None:
-                    self._close_client(self._robot)
-                    self._robot = None
-
-        connected = (state_err == 0) or (line_err == 0)
-
-        if err_resp is not None and isinstance(err_resp, (tuple, list)) and len(err_resp) >= 3:
-            robot_error_error = int(err_resp[0])
-            main_code = err_resp[1] if err_resp[1] != 0 else None
-            sub_code = err_resp[2] if len(err_resp) > 2 and err_resp[2] != 0 else None
-        else:
-            robot_error_error = -1
-            main_code = None
-            sub_code = None
+        """Everything status() reports plus link internals. Also a pure cache read."""
+        snap = self._link.snapshot()
+        live = snap.state in (ConnState.CONNECTED.value, ConnState.DEGRADED.value)
+        err = 0 if live else -1
 
         return {
-            "connected": connected,
-            "program_state": STATE_MAP.get(state_raw, "unknown"),
-            "program_state_error": state_err,
-            "current_line": line_val,
-            "current_line_error": line_err,
-            "fault_codes": {
-                "main_code": main_code,
-                "sub_code": sub_code,
-                "safety_code": None,
-                "safety_error": 0,
-                "robot_error_error": robot_error_error,
-            },
+            "connected": snap.connected,
+            "program_state": STATE_MAP.get(snap.program_state_raw, "unknown"),
+            "program_state_error": err,
+            "program_state_source": snap.program_state_source,
+            "current_line": snap.current_line,
+            "current_line_error": err,
+            "fault_codes": self._fault_codes(snap),
+            # link internals
+            "state": snap.state,
+            "ip": snap.ip,
+            "last_error": snap.last_error,
+            "last_success_age_s": snap.age_s(),
+            "since_s": snap.since_s(),
+            "attempts": snap.attempts,
+            "consecutive_failures": snap.consecutive_failures,
+            "generation": snap.generation,
+            "worker_restarts": snap.worker_restarts,
+            "probe_latency_ms": snap.probe_latency_ms,
+            "retry_in_s": snap.retry_in_s,
+            "busy": snap.busy,
+            "busy_label": snap.busy_label,
+            "threads": self._link.thread_report(),
+        }
+
+    @staticmethod
+    def _fault_codes(snap: ConnSnapshot) -> dict[str, Any]:
+        """Controller fault codes as of the last heartbeat.
+
+        Collected by the probe rather than fetched here, so the diagnostics page costs
+        no robot traffic. The underlying source is robot_state_pkg — the same struct
+        GetRobotErrorCode reads — which only the CNDE stream fills. CNDE does not
+        connect on the FR-16, so `source` reports "none" there and a blank code is not
+        evidence of no fault.
+        """
+        return {
+            "main_code": snap.fault_main,
+            "sub_code": snap.fault_sub,
+            "safety_code": None,
+            "safety_error": 0,
+            "robot_error_error": 0 if snap.fault_source == "cache" else -1,
+            "source": snap.fault_source,
         }
 
     def reset_errors(self) -> None:
@@ -450,14 +375,6 @@ class WeldFlexRobotService:
         err_code, _ = self._unpack(err)
         if err_code != 0:
             raise RuntimeError(f"ResetAllError failed (code {err_code})")
-
-    def reconnect(self) -> None:
-        with self._lock:
-            if self._robot is not None:
-                self._close_client(self._robot)
-                self._robot = None
-        with self._lock:
-            self._client()
 
     def uptime(self) -> str:
         elapsed = int(time.time() - self._start_time)

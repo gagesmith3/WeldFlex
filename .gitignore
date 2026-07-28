@@ -8,8 +8,10 @@ docs/fairino-doc-en-readthedocs-io-en-latest.pdf
 data/recipes.json
 
 # Runtime-generated files — not committed
-backend/_liberty_run.lua
-backend/liberty_log.json
+backend/run_history.jsonl
+backend/run_events.jsonl
+backend/run_events.jsonl.1
+backend/recipes.json.tmp
 
 # FAIRINO SDK build artifacts
 fairino-python-sdk-main/**/build/**

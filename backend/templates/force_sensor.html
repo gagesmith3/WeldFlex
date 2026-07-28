@@ -1,54 +1,136 @@
 {% extends "base.html" %}
-{% from "components/ui.html" import action_button, htmx_mount, panel_shell with context %}
+{% from "components/ui.html" import htmx_mount with context %}
+
+{# Read-only dashboard: no robot commands. The /ui/ft/setup, /ui/ft/deactivate
+   and /ui/ft/zero endpoints still exist in app.py but nothing here calls them.
+   One panel rather than two so the whole thing clears 480px without scrolling. #}
 
 {% block body %}
-<div class="page-body">
-  <div class="settings-sections">
+<div class="page-body ft-page">
+  <section class="panel settings-shell ft-panel">
 
-    {% call panel_shell('Force Sensor Control', 'XJC X-6A-XD80-H28 · 200 N / 5 N·m', class_name='settings-shell') %}
-      <div class="btn-row">
-        <button class="btn run"
-          hx-post="/ui/ft/setup"
-          hx-target="#ft-action-result"
-          hx-swap="innerHTML"
-          hx-disabled-elt="this">
-          <span class="btn-icon">{{ icon_safe('activity', fallback='circle', width=14, height=14) }}</span>
-          <span class="btn-label-idle">Initialize</span>
-          <span class="btn-label-busy" style="display:none">Initializing (~10s)…</span>
-        </button>
-        {{ action_button('Deactivate', variant='stop', icon='square',
-            hx_post='/ui/ft/deactivate', hx_target='#ft-action-result', hx_swap='innerHTML') }}
-        {{ action_button('Re-Zero', variant='primary', icon='crosshair',
-            hx_post='/ui/ft/zero', hx_target='#ft-action-result', hx_swap='innerHTML') }}
+    <div class="ft-head">
+      <div>
+        <h2>Force / Torque Readout</h2>
+        <p class="panel-note">
+          Force (N) and torque (N·m) in tool frame · 200 N / 5 N·m full scale · 300 ms refresh
+        </p>
       </div>
-      <p class="panel-note" style="margin-top:10px">
-        <strong>Initialize</strong> configures the XJC sensor, resets, activates, and zeros it (~10 s).
-        Use <strong>Re-Zero</strong> to null the resting load after the sensor is already active.
-      </p>
-      <div id="ft-action-result" class="command-result"></div>
-    {% endcall %}
+      <button type="button" class="btn ft-obs-reset" id="ft-obs-reset">Reset window</button>
+    </div>
 
-    {% call panel_shell('Live Readings', 'Force (N) and torque (N·m) in robot coordinate frame · 300 ms refresh', class_name='settings-shell') %}
-      {{ htmx_mount('ft-readout', '/ui/ft/reading', 'load, every 300ms', 'innerHTML') }}
-    {% endcall %}
+    {{ htmx_mount('ft-readout', '/ui/ft/reading', 'load, every 300ms', 'innerHTML') }}
 
-  </div>
+    <div class="ft-obs-title">Observation window — how far each axis has moved since reset</div>
+
+    <table class="ft-obs-table">
+      <thead>
+        <tr>
+          <td></td>{# corner: the row headers below are the stat names #}
+          {% for key, label, unit in ft_axes %}
+          <th scope="col">{{ label }}<span class="ft-obs-unit">{{ unit }}</span></th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in ['min', 'max', 'span'] %}
+        <tr data-stat-row="{{ row }}">
+          <th scope="row">{{ row }}</th>
+          {% for key, label, unit in ft_axes %}
+          <td data-stat="{{ row }}:{{ label }}">—</td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <p id="ft-obs-verdict" class="ft-obs-verdict">Waiting for the first sample…</p>
+
+    <p class="panel-note ft-help-note">
+      Span is the noise floor — a force threshold below roughly 3× the Fz span will
+      chatter. Real strain-gauge data always moves in the low digits; every axis
+      holding bit-for-bit constant means a dead feed, not a zero load.
+    </p>
+
+  </section>
 </div>
+{% endblock %}
 
 {% block scripts %}
 <script>
-  document.body.addEventListener('htmx:beforeRequest', function(e) {
-    if (e.detail.elt.matches('[hx-post="/ui/ft/setup"]')) {
-      e.detail.elt.querySelector('.btn-label-idle').style.display = 'none';
-      e.detail.elt.querySelector('.btn-label-busy').style.display = '';
+  // Accumulates min/max per axis from the polled readout. Purely client-side —
+  // the window resets on reload or on the Reset button, and nothing is persisted.
+  (function () {
+    var stats = {};
+    var samples = 0;
+    var started = Date.now();
+
+    function cell(row, axis) {
+      return document.querySelector('[data-stat="' + row + ':' + axis + '"]');
     }
-  });
-  document.body.addEventListener('htmx:afterRequest', function(e) {
-    if (e.detail.elt.matches('[hx-post="/ui/ft/setup"]')) {
-      e.detail.elt.querySelector('.btn-label-idle').style.display = '';
-      e.detail.elt.querySelector('.btn-label-busy').style.display = 'none';
+
+    function verdict() {
+      var el = document.getElementById('ft-obs-verdict');
+      var axes = Object.keys(stats);
+      var secs = Math.round((Date.now() - started) / 1000);
+      var moved = axes.some(function (a) { return stats[a].max > stats[a].min; });
+      var head = samples + ' samples · ' + secs + 's · ';
+      var cls = 'ft-obs-verdict';
+      var msg;
+
+      if (!axes.length) {
+        msg = 'Waiting for the first sample…';
+      } else if (moved) {
+        msg = head + 'values dithering — live data is arriving';
+        cls += ' ft-obs-live';
+      } else if (samples < 20) {
+        msg = head + 'no movement yet, keep watching';
+      } else {
+        msg = head + 'every axis bit-for-bit constant — frozen or absent feed';
+        cls += ' ft-obs-frozen';
+      }
+      el.textContent = msg;
+      el.className = cls;
     }
-  });
+
+    function sample() {
+      var cards = document.querySelectorAll('#ft-readout .ft-axis-card[data-value]');
+      if (!cards.length) return;  // failed poll renders the grid with no values
+
+      Array.prototype.forEach.call(cards, function (card) {
+        var axis = card.dataset.axis;
+        var v = parseFloat(card.dataset.value);
+        if (!isFinite(v)) return;
+
+        var s = stats[axis];
+        if (!s) { s = stats[axis] = { min: v, max: v }; }
+        if (v < s.min) { s.min = v; }
+        if (v > s.max) { s.max = v; }
+
+        cell('min', axis).textContent = s.min.toFixed(3);
+        cell('max', axis).textContent = s.max.toFixed(3);
+        cell('span', axis).textContent = (s.max - s.min).toFixed(3);
+      });
+
+      samples += 1;
+      verdict();
+    }
+
+    function reset() {
+      stats = {};
+      samples = 0;
+      started = Date.now();
+      Array.prototype.forEach.call(
+        document.querySelectorAll('.ft-obs-table td'),
+        function (td) { td.textContent = '—'; }
+      );
+      verdict();
+    }
+
+    document.body.addEventListener('htmx:afterSwap', function (e) {
+      if (e.target && e.target.id === 'ft-readout') { sample(); }
+    });
+    document.getElementById('ft-obs-reset').addEventListener('click', reset);
+  })();
 </script>
-{% endblock %}
 {% endblock %}

@@ -1,108 +1,13 @@
 {% extends "base.html" %}
-{% from "components/ui.html" import action_button, panel_shell, status_chip with context %}
+{% from "components/ui.html" import panel_shell with context %}
 
 {% block body %}
 <div class="page-body">
-  <div class="settings-sections">
-
-    {# ── Date & Time ── #}
-    {% call panel_shell('Date & Time', 'Automatic sync via NTP keeps time accurate over WiFi.', class_name='settings-shell') %}
-      <div class="sys-info-row">
-        {{ status_chip('Current', sys_info.datetime, compact=true) }}
-        {{ status_chip('Timezone', sys_info.timezone, compact=true) }}
-        {{ status_chip('Auto-Sync', 'Enabled' if sys_info.ntp_enabled else 'Disabled',
-             state='ok' if sys_info.ntp_enabled else 'error', compact=true) }}
-        {{ status_chip('Synced', 'Yes' if sys_info.ntp_synced else 'No',
-             state='ok' if sys_info.ntp_synced else 'error', compact=true) }}
-      </div>
-      <div class="settings-ntp-row">
-        {{ action_button('Enable Auto-Sync', variant='run', icon='wifi',
-             hx_post='/ui/settings/ntp',
-             hx_target='#toast-rack') }}
-      </div>
-      <form class="settings-grid" hx-post="/ui/settings/timezone" hx-target="#toast-rack" hx-swap="innerHTML" style="margin-top: 16px;">
-        <div>
-          <label for="s_timezone">System Timezone</label>
-          <select id="s_timezone" name="timezone" required>
-            {% for tz in common_timezones %}
-              <option value="{{ tz }}" {% if tz == sys_info.timezone %}selected{% endif %}>{{ tz }}</option>
-            {% endfor %}
-          </select>
-        </div>
-        <div class="settings-actions">
-          {{ action_button('Update Timezone', variant='run', icon='globe', button_type='submit') }}
-        </div>
-      </form>
-    {% endcall %}
-
-    {# ── Network / WiFi ── #}
-    {% call panel_shell('Network / WiFi', 'Connect to a wireless network.', class_name='settings-shell') %}
-      <div class="sys-info-row">
-        {{ status_chip('SSID', sys_info.ssid, compact=true) }}
-        {{ status_chip('IP Address', sys_info.ip_address, compact=true) }}
-      </div>
-      <form class="settings-grid" hx-post="/ui/settings/wifi" hx-target="#toast-rack" hx-swap="innerHTML">
-        <div>
-          <label for="s_ssid">Network SSID</label>
-          <div style="display: flex; gap: 8px; align-items: center;">
-            <select id="s_ssid" name="ssid" onchange="toggleManualSSID(this)" style="flex: 1;" required>
-              <option value="">Scanning for networks...</option>
-            </select>
-            <div hx-get="/ui/settings/wifi/scan"
-                 hx-trigger="load"
-                 hx-target="#s_ssid"
-                 hx-swap="innerHTML">
-            </div>
-            {{ action_button('Rescan', variant='run', icon='rotate-cw',
-                 hx_get='/ui/settings/wifi/scan',
-                 hx_target='#s_ssid',
-                 hx_swap='innerHTML') }}
-          </div>
-          <input id="s_ssid_manual" name="ssid_manual" type="text" style="display: none; margin-top: 8px;" placeholder="Enter SSID Manually">
-        </div>
-        <div>
-          <label for="s_wifi_pw">Password</label>
-          <input id="s_wifi_pw" name="wifi_password" type="text" inputmode="none" data-kbd="alpha"
-                 placeholder="Leave blank for open networks">
-        </div>
-        <div class="settings-actions">
-          {{ action_button('Connect', variant='run', icon='wifi', button_type='submit') }}
-        </div>
-      </form>
-    {% endcall %}
-
-
-    {# ── System Actions ── #}
-    {% call panel_shell('System Actions', 'Control the system power states.', class_name='settings-shell') %}
-      <p class="panel-note">Reboot or shut down the Raspberry Pi OS safely.</p>
-      <div class="settings-ntp-row" style="display: flex; gap: 12px; margin-top: 12px;">
-        {{ action_button('Reboot System', variant='recipe-delete', icon='refresh-cw',
-             hx_post='/ui/settings/system/reboot',
-             confirm='Are you sure you want to reboot the system?',
-             hx_target='#toast-rack') }}
-        {{ action_button('Shutdown System', variant='recipe-delete', icon='power',
-             hx_post='/ui/settings/system/shutdown',
-             confirm='Are you sure you want to shut down the system?',
-             hx_target='#toast-rack') }}
-      </div>
-    {% endcall %}
-
-  </div>
+  {% call panel_shell('Settings', class_name='settings-shell') %}
+    <div class="mgr-coming-soon">
+      {{ icon_safe('settings', width=48, height=48) }}
+      <p>Settings are coming soon.</p>
+    </div>
+  {% endcall %}
 </div>
-{% endblock %}
-
-{% block scripts %}
-<script>
-function toggleManualSSID(selectEl) {
-  const manualInput = document.getElementById('s_ssid_manual');
-  if (selectEl.value === '__custom__') {
-    manualInput.style.display = 'block';
-    manualInput.required = true;
-    manualInput.focus();
-  } else {
-    manualInput.style.display = 'none';
-    manualInput.required = false;
-  }
-}
-</script>
 {% endblock %}

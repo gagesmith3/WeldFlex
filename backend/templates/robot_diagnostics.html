@@ -8,16 +8,27 @@
       {{ htmx_mount('diagnostics-readout', '/ui/diagnostics', 'load, every ' ~ (status_interval_ms or 1000) ~ 'ms', 'innerHTML') }}
     {% endcall %}
 
-    {% call panel_shell('Actions', 'Reset robot errors, force reconnect, or stop an active program.', class_name='settings-shell') %}
+    {% call panel_shell('Connection', 'Connect, release, or rebuild the link to the controller.', class_name='settings-shell') %}
+      {# Split across two rows so five controls still fit the 800px kiosk width. #}
       <div class="btn-row">
-        {{ action_button('Reset Errors', variant='recipe-delete', icon='shield-alert',
-            hx_post='/ui/diagnostics/reset-errors', hx_target='#diag-action-result', hx_swap='innerHTML') }}
-        {{ action_button('Reconnect', variant='run', icon='refresh-cw',
+        {{ action_button('Connect', variant='run', icon='link_2',
+            hx_post='/ui/connection/connect', hx_target='#diag-action-result', hx_swap='innerHTML') }}
+        {{ action_button('Reconnect', variant='recipe-edit', icon='refresh_cw',
             hx_post='/ui/diagnostics/reconnect', hx_target='#diag-action-result', hx_swap='innerHTML') }}
-        {{ action_button('Stop Program', variant='stop', icon='square',
-            hx_post='/ui/stop', hx_target='#diag-action-result', hx_swap='innerHTML') }}
+        {{ action_button('Disconnect', variant='stop', icon='link_2_off',
+            hx_post='/ui/connection/disconnect', hx_target='#diag-action-result', hx_swap='innerHTML',
+            confirm='Disconnect from the robot? It will stay disconnected until you press Connect. Running programs are not stopped.') }}
       </div>
       <div id="diag-action-result" class="command-result"></div>
+    {% endcall %}
+
+    {% call panel_shell('Actions', 'Reset robot errors or stop an active program.', class_name='settings-shell') %}
+      <div class="btn-row">
+        {{ action_button('Reset Errors', variant='recipe-delete', icon='shield_alert',
+            hx_post='/ui/diagnostics/reset-errors', hx_target='#diag-action-result', hx_swap='innerHTML') }}
+        {{ action_button('Stop Program', variant='stop', icon='square',
+            hx_post='/ui/diagnostics/stop-program', hx_target='#diag-action-result', hx_swap='innerHTML') }}
+      </div>
     {% endcall %}
 
     {% call panel_shell('Connection Error', 'Last connection or communication error.', class_name='settings-shell') %}

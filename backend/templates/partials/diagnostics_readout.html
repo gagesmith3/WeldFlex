@@ -1,12 +1,24 @@
 <div class="diagnostics-grid">
 
-  {# ── Connection health banner ── #}
-  {% set is_online = ok and snapshot.online %}
-  <div class="diag-health {% if is_online %}diag-health-ok{% else %}diag-health-error{% endif %}">
+  {# ── Connection health banner, driven by the link state machine ── #}
+  {% set health = {
+      'connected':    ('Online',       'diag-health-ok'),
+      'connecting':   ('Connecting',   'diag-health-warn'),
+      'degraded':     ('Unstable',     'diag-health-warn'),
+      'faulted':      ('Offline',      'diag-health-error'),
+      'disconnected': ('Disconnected', 'diag-health-error'),
+    } %}
+  {% set health_label, health_class = health.get(status.state, ('Unknown', 'diag-health-error')) %}
+  {% set is_online = status.connected %}
+  <div class="diag-health {{ health_class }}">
     <div class="diag-health-dot"></div>
     <div class="diag-health-body">
-      <strong>{% if is_online %}Online{% elif ok %}Offline{% else %}Unreachable{% endif %}</strong>
-      <span>{{ snapshot.robot_ip }}</span>
+      <strong>{{ health_label }}</strong>
+      <span>
+        {{ snapshot.robot_ip }}
+        {%- if status.probe_latency_ms is not none and is_online %} · {{ '%.0f'|format(status.probe_latency_ms) }}ms{% endif %}
+        {%- if status.retry_in_s is not none and not is_online %} · retry in {{ '%.0f'|format(status.retry_in_s) }}s{% endif %}
+      </span>
     </div>
     {% if ok %}
     <div class="diag-health-right">
@@ -42,11 +54,17 @@
       </div>
     </div>
 
-    <div class="diag-call {% if fc.robot_error_error == 0 and (fc.main_code == 0 or fc.main_code is none) %}diag-call-ok{% else %}diag-call-error{% endif %}">
+    {# Fault codes come from robot_state_pkg, which only the CNDE stream fills. CNDE
+       does not connect on the FR-16, so a blank here means "not reported", never
+       "no fault" — the source label keeps that honest. #}
+    <div class="diag-call {% if fc.main_code is none or fc.main_code == 0 %}diag-call-ok{% else %}diag-call-error{% endif %}">
       <div class="diag-call-name">Robot Fault</div>
       <div class="diag-call-code">
-        <span class="diag-code-num {% if fc.robot_error_error == 0 and (fc.main_code == 0 or fc.main_code is none) %}diag-code-num-ok{% else %}diag-code-num-error{% endif %}">{{ fc.main_code if fc.main_code is not none else '—' }}</span>
-        <span class="diag-code-label">sub: {{ fc.sub_code if fc.sub_code is not none else '—' }}</span>
+        <span class="diag-code-num {% if fc.main_code is none or fc.main_code == 0 %}diag-code-num-ok{% else %}diag-code-num-error{% endif %}">{{ fc.main_code if fc.main_code is not none else '—' }}</span>
+        <span class="diag-code-label">
+          {%- if fc.source == 'cache' %}sub: {{ fc.sub_code if fc.sub_code is not none else '—' }}
+          {%- else %}not reported{% endif -%}
+        </span>
       </div>
     </div>
 
@@ -80,12 +98,38 @@
     <div class="diag-meta-section">
       <div class="diag-meta-title">Runtime</div>
       <div class="row"><span>Uptime</span><strong>{{ uptime }}</strong></div>
+      <div class="row"><span>State</span><strong>{{ status.state }}</strong></div>
+      <div class="row">
+        <span>Last seen</span>
+        <strong>
+          {%- if status.last_success_age_s is not none %}{{ '%.0f'|format(status.last_success_age_s) }}s ago
+          {%- else %}never{% endif -%}
+        </strong>
+      </div>
+      {% if status.busy %}
+      <div class="row"><span>Busy</span><strong>{{ status.busy_label }}</strong></div>
+      {% endif %}
     </div>
     <div class="diag-meta-section diag-meta-section-overflow">
       <div class="diag-meta-title">Connection</div>
       <div class="row"><span>IP</span><strong>{{ snapshot.robot_ip }}</strong></div>
       <div class="row"><span>Controller</span><strong>{{ snapshot.controller_host }}</strong></div>
       <div class="row"><span>Program</span><strong class="diag-path-value">{{ snapshot.program_path }}</strong></div>
+    </div>
+    {# Link internals. Attempts climbing means it cannot reach the robot; worker
+       restarts above zero means a call wedged and the worker had to be replaced;
+       a growing thread count is the signature of a leak. #}
+    <div class="diag-meta-section">
+      <div class="diag-meta-title">Link</div>
+      <div class="row"><span>Attempts</span><strong>{{ status.attempts }}</strong></div>
+      <div class="row"><span>Failures</span><strong>{{ status.consecutive_failures }}</strong></div>
+      <div class="row"><span>Generation</span><strong>{{ status.generation }}</strong></div>
+      <div class="row">
+        <span>Worker restarts</span>
+        <strong{% if status.worker_restarts %} class="diag-code-num-error"{% endif %}>{{ status.worker_restarts }}</strong>
+      </div>
+      <div class="row"><span>Threads</span><strong>{{ status.threads.count }}</strong></div>
+      <div class="row"><span>State source</span><strong>{{ status.program_state_source }}</strong></div>
     </div>
   </div>
 

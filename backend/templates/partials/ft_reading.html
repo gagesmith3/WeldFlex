@@ -1,24 +1,37 @@
 {% if ok %}
 <div class="ft-status-bar {% if reading.active %}ft-active{% else %}ft-inactive{% endif %}">
   <div class="ft-status-dot"></div>
-  <span>Sensor {% if reading.active %}Active{% else %}Inactive — press Initialize{% endif %}</span>
+  <span>Sensor {% if reading.active %}Active{% else %}Inactive — not configured, or robot unreachable{% endif %}</span>
 </div>
-<div class="ft-reading-grid">
-  {% for label, val, unit in [
-    ('Fx', reading.fx, 'N'),
-    ('Fy', reading.fy, 'N'),
-    ('Fz', reading.fz, 'N'),
-    ('Mx', reading.mx, 'N·m'),
-    ('My', reading.my, 'N·m'),
-    ('Mz', reading.mz, 'N·m'),
-  ] %}
-  <div class="ft-axis-card">
-    <div class="ft-axis-label">{{ label }}</div>
-    <div class="ft-axis-value">{{ "%+.2f" % val }}</div>
-    <div class="ft-axis-unit">{{ unit }}</div>
+{% else %}
+<div class="ft-status-bar ft-inactive">
+  <div class="ft-status-dot"></div>
+  <span class="ft-status-error">No reading — {{ error }}</span>
+</div>
+{% endif %}
+
+<div class="ft-reading-grid {% if not ok %}ft-reading-stale{% endif %}">
+  {% for ax in axes %}
+  {# data-value is the unformatted reading — the observation window accumulates
+     from it rather than re-parsing the rounded text below. Bound outside the tag
+     so the ` is ` doesn't read as an `is` attribute to HTML linters. #}
+  {% set has_value = ax.value is not none %}
+  <div class="ft-axis-card" data-axis="{{ ax.label }}"
+       {% if has_value %}data-value="{{ ax.value }}"{% endif %}>
+    <div class="ft-axis-label">{{ ax.label }}</div>
+    <div class="ft-axis-value {% if ok and ax.level != 'ok' %}ft-value-{{ ax.level }}{% endif %}">
+      {% if ax.value is none %}—{% else %}{{ "%+.2f" % ax.value }}{% endif %}
+    </div>
+    <div class="ft-axis-meter" title="{{ ax.pct }}% of {{ ax.full_scale }} {{ ax.unit }} full scale">
+      <div class="ft-axis-meter-zero"></div>
+      {% if ax.value is not none %}
+      <div class="ft-axis-meter-fill ft-meter-{{ ax.level }} ft-meter-{{ ax.sign }}"
+           style="width: {{ ax.pct / 2 }}%"></div>
+      {% endif %}
+    </div>
+    <div class="ft-axis-unit">
+      {{ ax.unit }}{% if ax.value is not none %} · {{ ax.pct }}% FS{% endif %}
+    </div>
   </div>
   {% endfor %}
 </div>
-{% else %}
-<div class="ft-reading-error">{{ error }}</div>
-{% endif %}

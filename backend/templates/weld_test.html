@@ -1,0 +1,262 @@
+{% extends "base.html" %}
+{% from "components/ui.html" import htmx_mount with context %}
+
+{#
+  Weld Test — exercises programs/weld.lua once, at one point.
+
+  Bring-up tool, not a production path: WeldFlex.lua's cycle loop does not call
+  weld.lua yet. Running from here uploads weld.lua plus a generated harness
+  (lua_builder.build_weld_test_lua) and runs the harness, because weld.lua alone
+  faults on its own input contract.
+
+  Arming is deliberately a separate, confirmed action from running. The default
+  is a dry run: full search / press / hold / retract / feed motion with weld.lua's
+  DO0 pulse suppressed.
+#}
+
+{% block body %}
+<div class="page-body wt-page">
+
+  <section class="panel wt-panel wt-setup">
+    <h2>Weld Test</h2>
+    <p class="panel-note">One stud · one pass of <code>weld.lua</code></p>
+
+    <div id="wt-params" class="wt-params">
+      <div class="wt-field">
+        <label for="weld_x">Offset X (mm)</label>
+        <input id="weld_x" name="weld_x" type="text" value="{{ weld_x }}"
+               inputmode="none" data-kbd="num">
+      </div>
+      <div class="wt-field">
+        <label for="weld_y">Offset Y (mm)</label>
+        <input id="weld_y" name="weld_y" type="text" value="{{ weld_y }}"
+               inputmode="none" data-kbd="num">
+      </div>
+      <input type="hidden" id="armed" name="armed" value="0">
+    </div>
+
+    <p class="panel-note wt-origin-note">
+      Offsets are from the <code>zerozero</code> taught point, same frame as a cycle.
+    </p>
+
+    <div class="wt-arm-row">
+      <button type="button" id="wt-arm-btn" class="btn wt-arm-btn" onclick="wtToggleArm()">
+        <span class="wt-arm-dot"></span>
+        <span id="wt-arm-label">Dry run — DO0 disarmed</span>
+      </button>
+    </div>
+
+    <div class="wt-actions">
+      <button type="button" id="wt-run-btn" class="btn run wt-run-btn"
+              hx-post="/ui/weld-test/run" hx-include="#wt-params"
+              hx-target="#toast-rack" hx-swap="innerHTML" hx-disabled-elt="this">
+        {{ icon_safe('play', fallback='circle', width=16, height=16) }}
+        <span id="wt-run-label">Run Dry</span>
+      </button>
+      {# Press verification: search, hold weld force, retract. Always disarmed —
+         the server drops any armed flag that rides along in #wt-params. #}
+      <button type="button" class="btn wt-force-btn"
+              hx-post="/ui/weld-test/run" hx-include="#wt-params"
+              hx-vals='{"force_test": "1"}'
+              hx-target="#toast-rack" hx-swap="innerHTML" hx-disabled-elt="this">
+        {{ icon_safe('activity', fallback='circle', width=16, height=16) }}
+        <span>Force Test</span>
+      </button>
+      <button type="button" class="btn stop wt-stop-btn"
+              hx-post="/ui/weld-test/stop" hx-target="#toast-rack" hx-swap="innerHTML">
+        {{ icon_safe('square', fallback='circle', width=16, height=16) }}
+        <span>Stop</span>
+      </button>
+    </div>
+  </section>
+
+  <section class="panel wt-panel wt-monitor">
+    {{ htmx_mount('wt-telemetry', '/ui/weld-test/telemetry', 'load', 'innerHTML') }}
+
+    <div class="wt-trace-head">
+      <span class="wt-trace-title">Trace</span>
+      <span class="wt-trace-peak">peak <strong id="wt-peak">—</strong> lbf</span>
+      <button type="button" class="btn wt-trace-clear" onclick="wtClearTrace()">Clear</button>
+    </div>
+    <ol id="wt-trace" class="wt-trace" aria-live="polite">
+      <li class="wt-trace-empty">Waiting for the first sample…</li>
+    </ol>
+  </section>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Arming is a confirmed toggle rather than a flag on the Run button: a mis-tap on
+// one control should not be able to strike an arc.
+function wtToggleArm() {
+  var input = document.getElementById('armed');
+  var btn   = document.getElementById('wt-arm-btn');
+  var label = document.getElementById('wt-arm-label');
+  var run   = document.getElementById('wt-run-label');
+
+  if (input.value === '1') {
+    input.value = '0';
+  } else {
+    if (!window.confirm('Arm the weld output?\n\nThe next run will fire DO0 for real.')) return;
+    input.value = '1';
+  }
+
+  var armed = input.value === '1';
+  btn.classList.toggle('is-armed', armed);
+  document.getElementById('wt-run-btn').classList.toggle('is-armed', armed);
+  label.textContent = armed ? 'ARMED — DO0 will fire' : 'Dry run — DO0 disarmed';
+  run.textContent   = armed ? 'Run ARMED' : 'Run Dry';
+}
+
+(function () {
+  var TRACE_CAP = 120;
+  // Force is sampled several times a second; log it only when it actually moves,
+  // or the interesting transitions get buried.
+  var FORCE_STEP_LBF = 2.0;
+
+  var trace = document.getElementById('wt-trace');
+  var peakEl = document.getElementById('wt-peak');
+  var prev = null;
+  var lastLoggedForce = null;
+  var peak = null;
+
+  function stamp() {
+    var d = new Date();
+    return d.toTimeString().slice(0, 8) + '.' +
+           String(d.getMilliseconds()).padStart(3, '0');
+  }
+
+  function add(text, kind) {
+    var empty = trace.querySelector('.wt-trace-empty');
+    if (empty) empty.remove();
+    var li = document.createElement('li');
+    li.className = 'wt-trace-row' + (kind ? ' wt-trace-row--' + kind : '');
+    li.innerHTML = '<span class="wt-trace-time"></span><span class="wt-trace-text"></span>';
+    li.firstChild.textContent = stamp();
+    li.lastChild.textContent = text;
+    trace.appendChild(li);
+    while (trace.children.length > TRACE_CAP) trace.removeChild(trace.firstChild);
+    trace.scrollTop = trace.scrollHeight;
+  }
+
+  window.wtClearTrace = function () {
+    trace.innerHTML = '<li class="wt-trace-empty">Trace cleared.</li>';
+    prev = null;
+    lastLoggedForce = null;
+    peak = null;
+    peakEl.textContent = '—';
+  };
+
+  function num(v) { return v === '' || v === undefined ? null : parseFloat(v); }
+
+  function sample(el) {
+    var cur = {
+      running: el.dataset.running === '1',
+      state:   el.dataset.state,
+      line:    el.dataset.line,
+      lbf:     num(el.dataset.lbf),
+      stud:    el.dataset.stud,
+      ready:   el.dataset.ready,
+      phase:   el.dataset.phase,
+      ret:     el.dataset.ret,
+      guard:   el.dataset.guard,
+      z:       num(el.dataset.z),
+      travel:  num(el.dataset.travel),
+      fault:   el.dataset.fault,
+      faultSub: el.dataset.faultSub
+    };
+
+    if (cur.lbf !== null && (peak === null || cur.lbf > peak)) {
+      peak = cur.lbf;
+      peakEl.textContent = peak.toFixed(1);
+    }
+
+    if (prev === null) {
+      add('Monitoring — program ' + cur.state, 'info');
+      prev = cur;
+      lastLoggedForce = cur.lbf;
+      return;
+    }
+
+    if (cur.state !== prev.state) {
+      add('Program ' + cur.state, cur.running ? 'run' : 'info');
+      // A fresh run gets a fresh peak, otherwise it reads as the previous run's.
+      if (cur.running && !prev.running) {
+        peak = cur.lbf;
+        peakEl.textContent = cur.lbf === null ? '—' : cur.lbf.toFixed(1);
+      }
+    }
+
+    if (cur.line !== prev.line && cur.line !== '') {
+      add('Line ' + cur.line + (cur.lbf === null ? '' : '  ·  ' + cur.lbf.toFixed(1) + ' lbf'), 'line');
+    }
+
+    // weld.lua's own phase, from controller system variable 1. The one channel
+    // that keeps reporting while force control owns the sensor, so it is carried
+    // with force and Z to make the press timeline readable after the fact.
+    if (cur.phase !== prev.phase && cur.phase !== '') {
+      var detail = [];
+      if (cur.lbf !== null)    detail.push(cur.lbf.toFixed(1) + ' lbf');
+      if (cur.z !== null)      detail.push('Z ' + cur.z.toFixed(1));
+      if (cur.travel !== null) detail.push(cur.travel.toFixed(1) + ' mm in');
+      add(cur.phase + (detail.length ? '  ·  ' + detail.join('  ·  ') : ''),
+          cur.phase.indexOf('FAULT') === 0 ? 'error' : 'run');
+    }
+
+    // Logged once when it first appears: this is the answer to whether FT_*
+    // instructions return a code on this firmware or nothing at all.
+    if (cur.ret !== prev.ret && cur.ret !== '') {
+      add('FT_* returned ' + cur.ret, 'info');
+    }
+
+    // Whether the press got its collision headroom. Without it a 20 lbf press is
+    // 89% of the controller's 0-100 N collision scale and faults on its own force
+    // ramp, so this line is what tells a fix that did not apply from one that did
+    // and was not enough.
+    if (cur.guard !== prev.guard && cur.guard !== '' && cur.guard !== 'released') {
+      add('Collision guard — ' + cur.guard,
+          cur.guard === 'not applied' ? 'warn' : 'info');
+    }
+
+    // Force is worth carrying on the stud edge specifically — the pair of them is
+    // how you tell a real seat from a bounce.
+    if (cur.stud !== prev.stud) {
+      if (cur.stud === '1')      add('Stud SEATED' + (cur.lbf === null ? '' : '  ·  ' + cur.lbf.toFixed(1) + ' lbf'), 'on');
+      else if (cur.stud === '0') add('Stud contact open', 'off');
+      else                       add('Stud input unreadable', 'warn');
+    }
+
+    if (cur.ready !== prev.ready) {
+      if (cur.ready === '1')      add('Welder READY — caps at charge', 'on');
+      else if (cur.ready === '0') add('Welder not ready — caps charging', 'off');
+      else                        add('Welder ready input unreadable', 'warn');
+    }
+
+    if (cur.lbf !== null &&
+        (lastLoggedForce === null || Math.abs(cur.lbf - lastLoggedForce) >= FORCE_STEP_LBF)) {
+      add(cur.lbf.toFixed(1) + ' lbf', 'force');
+      lastLoggedForce = cur.lbf;
+    }
+
+    // Only reachable since the raw GetRobotErrorCode read landed — the codes used
+    // to come solely from the CNDE cache, which never fills on this controller, so
+    // a collision abort ended a run without leaving a mark anywhere in this trace.
+    if (cur.fault && cur.fault !== prev.fault) {
+      add('Controller fault ' + cur.fault + (cur.faultSub ? '.' + cur.faultSub : '') +
+          (cur.travel === null ? '' : '  ·  after ' + cur.travel.toFixed(1) + ' mm of press'),
+          'error');
+    }
+
+    prev = cur;
+  }
+
+  document.body.addEventListener('htmx:afterSwap', function (e) {
+    if (!e.detail.target || e.detail.target.id !== 'wt-telemetry') return;
+    var el = e.detail.target.querySelector('.wt-telemetry');
+    if (el) sample(el);
+  });
+})();
+</script>
+{% endblock %}

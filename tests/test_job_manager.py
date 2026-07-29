@@ -19,13 +19,17 @@ from job_manager import (
     JobManager,
     JobState,
 )
+from lua_builder import build_weldflex_lua
 
 STATE_MAP = {-1: "offline", 0: "stopped", 1: "stopped", 2: "running", 3: "paused"}
 
-# Line values only need to sit either side of the real template's markers, which
-# the manager computes from programs/WeldFlex.lua at start().
-TOP = 1              # at or before loop_start_line
-PAST_MARKER = 999    # at or past cycle_marker_line
+# Line values are taken from a real build of programs/WeldFlex.lua, which is what
+# the manager itself measures at start(). BODY is a line inside the loop body; the
+# loop head is never used, because the controller never reports it — assuming it
+# did is how the counter came to latch after cycle 1 and the gate stopped re-arming.
+_BUILT = build_weldflex_lua([{"x": 1, "y": 1}], cycles=2, gate_mode="none")
+BODY = _BUILT.loop_start_line + 1        # inside the loop, below the boundary dwell
+PAST_MARKER = _BUILT.cycle_marker_line   # the boundary dwell itself
 
 
 @dataclass
@@ -33,7 +37,7 @@ class FakeSnap:
     state: str = "connected"
     connected: bool = True
     program_state_raw: int | None = 2
-    current_line: int | None = TOP
+    current_line: int | None = BODY
     line_edge_seq: int = 0
     fault_main: int | None = None
     fault_sub: int | None = None
@@ -76,6 +80,9 @@ class FakeRobot:
 
     def stop_program(self):
         self._maybe_fail("stop_program")
+
+    def set_manual_mode(self):
+        self._maybe_fail("set_manual_mode")
 
     # --- test control ---
 
@@ -178,6 +185,40 @@ def test_pause_resume_stop_round_trip(tmp_path):
     assert mgr.clear().state == JobState.IDLE.value
 
 
+def test_clear_hands_the_cell_back_to_manual_mode(tmp_path):
+    """A run leaves the controller in auto; clearing is where the operator gets it back."""
+    robot = FakeRobot()
+    mgr = make_manager(tmp_path, robot)
+    mgr.load("p1", "Bracket", [], cycles=1, gate_mode="none")
+    mgr.start()
+    wait_state(mgr, JobState.RUNNING.value)
+    mgr.stop()
+
+    snap = mgr.clear()
+    assert snap.state == JobState.IDLE.value
+    assert "set_manual_mode" in robot.calls
+    assert snap.error is None
+
+
+def test_a_failed_manual_handoff_still_clears_but_says_so(tmp_path):
+    robot = FakeRobot(fail={"set_manual_mode"})
+    mgr = make_manager(tmp_path, robot)
+    mgr.load("p1", "Bracket", [], cycles=1, gate_mode="none")
+    mgr.start()
+    wait_state(mgr, JobState.RUNNING.value)
+    mgr.stop()
+
+    snap = mgr.clear()
+    assert snap.state == JobState.IDLE.value   # the job is gone either way
+    assert "stayed in auto mode" in snap.error
+    assert mgr.snapshot().state == JobState.IDLE.value
+
+    events = [json.loads(l) for l in
+              (tmp_path / "run_events.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
+    clear_event = next(e for e in events if e["event"] == "clear")
+    assert "set_manual_mode failed" in clear_event["detail"]["error"]
+
+
 def test_failed_command_lands_on_the_session_error_not_an_exception(tmp_path):
     robot = FakeRobot(fail={"pause_program"})
     mgr = make_manager(tmp_path, robot)
@@ -219,7 +260,7 @@ def test_load_is_refused_while_a_job_is_active(tmp_path):
 
 def run_one_cycle(robot, mgr, expect):
     """Drive the line feed through one loop iteration and wait for it to land."""
-    robot.feed(TOP)
+    robot.feed(BODY)
     time.sleep(MONITOR_INTERVAL_S * 2)
     robot.feed(PAST_MARKER)
     assert wait_for(lambda: mgr.snapshot().cycles_done == expect, 3.0), (
@@ -257,20 +298,64 @@ def test_lost_link_mid_run_is_interrupted_not_running(tmp_path):
     assert "Lost connection" in mgr.snapshot().error
 
 
-def test_gate_pause_holds_at_the_cycle_boundary(tmp_path):
+def gate_one_cycle(robot, mgr, expect):
+    """Run a cycle to the boundary and wait for the gate to hold there."""
+    robot.feed(BODY)
+    time.sleep(MONITOR_INTERVAL_S * 2)
+    robot.feed(PAST_MARKER)
+    wait_state(mgr, JobState.GATED.value)
+    assert mgr.snapshot().cycles_done == expect
+
+
+def test_gate_pause_re_arms_on_every_cycle(tmp_path):
+    """The 2026-07-28 regression: it gated after cycle 1 and then never again.
+
+    A run that gates once and then sprints through the rest of its cycles is the
+    dangerous failure here — nobody is swapping parts — so this drives the full
+    gate/continue/gate/continue round trip rather than stopping at the first hold.
+    """
     robot = FakeRobot()
     mgr = make_manager(tmp_path, robot)
-    mgr.load("p1", "Bracket", [], cycles=3, gate_mode="pause")
+    mgr.load("p1", "Bracket", [{"x": 1, "y": 1}], cycles=3, gate_mode="pause")
     mgr.start()
     wait_state(mgr, JobState.RUNNING.value)
 
-    robot.feed(TOP)
-    robot.feed(PAST_MARKER)                    # past the boundary marker
-    wait_state(mgr, JobState.GATED.value)
+    gate_one_cycle(robot, mgr, expect=1)
     assert "pause_program" in robot.calls
-    assert mgr.snapshot().cycles_done == 1
-
     assert mgr.continue_().state == JobState.RUNNING.value
+
+    gate_one_cycle(robot, mgr, expect=2)           # the one that used to never come
+    assert mgr.continue_().state == JobState.RUNNING.value
+
+    # Last cycle: the target is met, so it finishes instead of gating again.
+    robot.feed(BODY)
+    time.sleep(MONITOR_INTERVAL_S * 2)
+    robot.feed(PAST_MARKER)
+    wait_for(lambda: mgr.snapshot().cycles_done == 3, 3.0)
+    robot.feed(PAST_MARKER, program_state=0)
+    wait_state(mgr, JobState.COMPLETED.value)
+
+    snap = mgr.snapshot()
+    assert snap.cycles_done == 3
+    assert snap.error is None
+
+
+def test_a_gate_that_cannot_hold_stops_the_job(tmp_path):
+    """Fail closed. A gate that cannot pause must not let the program run on."""
+    robot = FakeRobot(fail={"pause_program"})
+    mgr = make_manager(tmp_path, robot)
+    mgr.load("p1", "Bracket", [{"x": 1, "y": 1}], cycles=3, gate_mode="pause")
+    mgr.start()
+    wait_state(mgr, JobState.RUNNING.value)
+
+    robot.feed(BODY)
+    time.sleep(MONITOR_INTERVAL_S * 2)
+    robot.feed(PAST_MARKER)
+
+    wait_state(mgr, JobState.ERROR.value)
+    assert "Could not hold at the cycle boundary" in mgr.snapshot().error
+    assert robot.calls.count("pause_program") == 2      # tried once, retried once
+    assert "stop_program" in robot.calls                # then put the robot down
     mgr.shutdown()
 
 
@@ -280,7 +365,7 @@ def test_program_ending_early_is_stopped_with_a_partial_count(tmp_path):
     mgr.load("p1", "Bracket", [], cycles=10, gate_mode="none")
     mgr.start()
     wait_state(mgr, JobState.RUNNING.value)
-    robot.feed(TOP)
+    robot.feed(BODY)
     robot.feed(PAST_MARKER)
     wait_for(lambda: mgr.snapshot().cycles_done == 1, 2.0)
     robot.feed(PAST_MARKER, program_state=0)

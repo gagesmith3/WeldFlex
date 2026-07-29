@@ -29,6 +29,15 @@ though it's not SDK-mandated.
 - **`GetCurrentLine(self)`** — `Robot.py:7050`. Real RPC call. Returns
   `(0, line_num)` / `(err, None)`. Used for line-based progress tracking (see
   the `weldflex-app` skill's liberty-test completion-detection pattern).
+  **Inside a `NewDofile`'d chunk it reports the *sub-file's* line numbers**
+  (observed live 2026-07-28: line 262 = `weld.lua`'s `searchForStud` while the
+  weld-test harness was the loaded program), with nothing in the value saying
+  which file it refers to. Any consumer comparing it against a parent file's
+  marker lines — the job manager's cycle counter — will alias once the parent
+  calls `NewDofile`; see the `weldflex-app` skill's cycle-counting notes. It
+  also keeps answering **while motion executes**, including during
+  `FT_FindSurface` (unlike FT reads — see `error-handling-and-connection.md`
+  on code 14).
 
 ## Lua file upload/delete
 
@@ -47,8 +56,31 @@ though it's not SDK-mandated.
     `robot_service.py`'s `upload_program()`/`upload_studs_data()` do.
   - **Return-shape deviation**: on success returns a **bare int**; on failure
     of the post-upload `LuaUpLoadUpdate` step, returns a **2-tuple**
-    `(tmp_error, _error[1])` — the reverse of the SDK's usual
-    "tuple-on-success, bare-int-on-failure" pattern seen elsewhere.
+    `(tmp_error, errorStr)` — the reverse of the SDK's usual
+    "tuple-on-success, bare-int-on-failure" pattern seen elsewhere. **Never
+    discard that errorStr**: it carries the controller's actual reason
+    (`lua_name:...---line_num:N---error_info:...`). `robot_service.upload_program`
+    unpacks it and `_upload_hint()` puts it in the raised message — adding that
+    was what cracked the `weld.lua` refusal on 2026-07-28.
+  - **`-1` has two distinct sources — read the detail before touching the Lua.**
+    `-1` is `RobotError.ERR_OTHER` (`:570`). `__FileUpLoad` (`9477-9539`)
+    returns it bare from **five raw-socket points** on :20010 (refused
+    `FileUpload` RPC, failed connect, short `send()`, non-`"SUCCESS"` reply) —
+    nothing parsed yet. But `LuaUpLoadUpdate` failure *also* surfaces as `-1`,
+    with the errorStr attached. An opaque `-1` with no errorStr is the
+    transfer; a `-1` with one is the controller refusing the file's content.
+  - **The post-upload check EXECUTES the file's top-level Lua.** Confirmed live
+    2026-07-28: uploading `weld.lua` ran its top level with no globals set, hit
+    its own contract `error()`, and the upload was refused with that exact
+    string. Consequence: a sub-program whose top level does anything needs a
+    caller-published sentinel (`weld.lua`'s `if WELD_RUN == 1 then` gate;
+    the harness publishes `WELD_RUN = 1`) so a bare upload is define-only.
+    `tests/test_lua_builder.py` pins the sentinel on both sides.
+  - **The size theory is dead.** The 2026-07-28 `-1` on the 13 KB `weld.lua`
+    was the executes-top-level refusal above, not a size limit — the stripped
+    ~6 KB file uploads and runs fine once gated. `lua_builder.strip_lua_comments()`
+    is kept anyway (blanking, not deleting, so `GetCurrentLine` line numbers
+    still match the repo file).
 - **`LuaDelete(self, fileName)`** — `Robot.py:9600`. Same undecorated-wrapper
   pattern (delegates to `__FileDelete`). Bare int.
 - **`GetLuaList(self)`** — `Robot.py:9616`. Returns

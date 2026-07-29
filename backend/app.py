@@ -2,19 +2,29 @@ import atexit
 import json
 import logging
 import os
+import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
 from flask import Flask, make_response, render_template, request, jsonify
 from markupsafe import Markup
 from job_manager import JobError, JobManager
-from lua_builder import GATE_MODES
+from lua_builder import (
+    GATE_MODES,
+    WELD_PATH,
+    WELD_PROGRAM_NAME,
+    build_weld_test_lua,
+    format_number,
+    strip_lua_comments,
+)
 from robot_service import STATE_MAP as ROBOT_STATE_MAP, WeldFlexRobotService
 
 # stderr, which systemd hands to journald. The unit already sets PYTHONUNBUFFERED=1,
@@ -237,6 +247,7 @@ _ICONS = {
     "clipboard":        '<rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>',
     "repeat":           '<path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/>',
     "wifi":             '<path d="M5 13a10 10 0 0 1 14 0"/><path d="M8.5 16.5a5 5 0 0 1 7 0"/><path d="M2 8.82a15 15 0 0 1 20 0"/><line x1="12" y1="20" x2="12.01" y2="20"/>',
+    "zap":              '<path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/>',
 }
 
 def icon_safe(name, fallback="circle", width=14, height=14, class_=""):
@@ -591,9 +602,7 @@ def ui_jog_stop():
 
 @app.route("/operator/calibration/force-sensor")
 def force_sensor():
-    # FT_AXES also drives the polled readout partial, so the observation table
-    # can't drift out of order with the cards it summarises.
-    return render_template("force_sensor.html", page_title="Force Sensor", ft_axes=FT_AXES)
+    return render_template("force_sensor.html", page_title="Force Sensor")
 
 @app.route("/operator/tcp-calibrate")
 def tcp_calibrate_page():
@@ -675,41 +684,17 @@ def ui_tcp_calibrate_reset():
         })
     return _tcp_render()
 
-# XJC X-6A-XD80-H28, 200 N / 5 N·m variant — per-axis sensor full scale.
+# XJC X-6A-XD80-H28, 200 N / 5 N·m variant — force-axis full scale.
 # Used only to give the readout a sense of scale; it does not limit anything.
-FT_FULL_SCALE = {"fx": 200.0, "fy": 200.0, "fz": 200.0, "mx": 5.0, "my": 5.0, "mz": 5.0}
+FT_FZ_FULL_SCALE_N = 200.0
 FT_WARN_FRAC = 0.70
 FT_CRIT_FRAC = 0.90
-
-FT_AXES = (
-    ("fx", "Fx", "N"), ("fy", "Fy", "N"), ("fz", "Fz", "N"),
-    ("mx", "Mx", "N·m"), ("my", "My", "N·m"), ("mz", "Mz", "N·m"),
-)
-
-
-def _ft_axes(reading):
-    """Decorate each raw axis value with its share of full scale, for the readout."""
-    axes = []
-    for key, label, unit in FT_AXES:
-        value = reading[key]
-        full = FT_FULL_SCALE[key]
-        frac = min(abs(value) / full, 1.0) if full else 0.0
-        if frac >= FT_CRIT_FRAC:
-            level = "crit"
-        elif frac >= FT_WARN_FRAC:
-            level = "warn"
-        else:
-            level = "ok"
-        axes.append({
-            "label": label,
-            "unit": unit,
-            "value": value,
-            "full_scale": full,
-            "pct": round(frac * 100),
-            "level": level,
-            "sign": "pos" if value >= 0 else "neg",
-        })
-    return axes
+N_TO_LBF = 0.2248089
+# Tool-frame Z points out of the flange, so pressing the tool against the work
+# reads as a negative Fz reaction (observed live 2026-07-28). Operators expect
+# "pressing = positive", so the readout flips it. Display-only — ft_read()
+# still returns the sensor's native sign.
+FT_FZ_DISPLAY_SIGN = -1.0
 
 
 @app.route("/ui/ft/setup", methods=["POST"])
@@ -743,17 +728,482 @@ def ui_ft_zero():
 def ui_ft_reading():
     try:
         reading = robot.ft_read()
+        fz = reading["fz"] * FT_FZ_DISPLAY_SIGN
+        frac = min(abs(fz) / FT_FZ_FULL_SCALE_N, 1.0)
+        if frac >= FT_CRIT_FRAC:
+            level = "crit"
+        elif frac >= FT_WARN_FRAC:
+            level = "warn"
+        else:
+            level = "ok"
         return render_template(
-            "partials/ft_reading.html", ok=True, reading=reading, axes=_ft_axes(reading)
+            "partials/ft_reading.html", ok=True, active=reading["active"],
+            lbf=fz * N_TO_LBF, fz_n=fz, pct=round(frac * 100), level=level,
+            sign="pos" if fz >= 0 else "neg",
         )
     except Exception as e:
-        # Polled 3x/sec — render the same grid shape with placeholder values so a
+        # Polled 3x/sec — render the same shape with placeholder values so a
         # transient failure doesn't collapse the layout out from under the operator.
         return render_template(
-            "partials/ft_reading.html", ok=False, error=str(e),
-            axes=[{"label": label, "unit": unit, "value": None, "full_scale": FT_FULL_SCALE[key],
-                   "pct": 0, "level": "ok", "sign": "pos"} for key, label, unit in FT_AXES],
+            "partials/ft_reading.html", ok=False, error=str(e), active=False,
+            lbf=None, fz_n=None, pct=0, level="ok", sign="pos",
         )
+
+# ---------------------------------------------------------------------------
+# Weld test — one stud, one pass of programs/weld.lua.
+#
+# A bring-up tool, not part of the operator's production path. weld.lua is a
+# sub-process that WeldFlex.lua does not call yet (see docs/ARCHITECTURE.md), so
+# this section is the only way it gets exercised on hardware in the meantime. It
+# uploads weld.lua alongside a generated single-point harness and runs the
+# harness; weld.lua on its own would just fault on its input contract.
+#
+# The controller gives Python no way to read a Lua print() — there is no such
+# call anywhere in the SDK — so "feedback" here is what can genuinely be observed
+# over RPC: program state, the executing line, contact force, and the
+# stud-on-work input. The page turns those samples into a trace.
+# ---------------------------------------------------------------------------
+
+WELD_TEST_POLL_MS = int(os.getenv("WELDFLEX_WELD_TEST_POLL_MS", "400"))
+# Idle polling still costs three RPCs a tick, so back off hard when nothing is running.
+WELD_TEST_IDLE_POLL_MS = int(os.getenv("WELDFLEX_WELD_TEST_IDLE_POLL_MS", "1200"))
+# The two weld interlock inputs, and they are not interchangeable:
+#   DI1 — stud on work: continuity welder -> work surface -> gun.
+#   DI0 — ready / caps at charge: the welder itself is able to fire.
+# These must match DI_STUD_ON_WORK and DI_WELD_READY in programs/weld.lua. Nothing
+# enforces that across the language boundary, so they are changed together;
+# tests/test_lua_builder.py asserts the pair still agrees.
+WELD_STUD_DI = int(os.getenv("WELDFLEX_WELD_STUD_DI", "1"))
+WELD_READY_DI = int(os.getenv("WELDFLEX_WELD_READY_DI", "0"))
+# The controller answers FT_GetForceTorqueRCS with 14 ("interface execution
+# failed") the whole time a force-control move — weld.lua's FT_FindSurface —
+# owns the sensor (observed live 2026-07-28). While a program is running that
+# is expected, not a fault; the page shows it as "sensor busy". The same code
+# also appears when a latched controller fault blocks all reads, but that case
+# surfaces through fault_main, which outranks the busy note in the template.
+FT_RPC_BUSY_CODE = 14
+
+# Controller system variables weld.lua's pub() writes to. This is the only channel
+# that reports from inside a running Lua program — see weld_probe. Hand-kept in
+# sync with the SV_* constants in programs/weld.lua the same way the DI numbers
+# above are; tests/test_lua_builder.py asserts the two sides still agree.
+WELD_SV_PHASE = 1        # phase code
+WELD_SV_LAST_RET = 2     # raw return of the last FT_* instruction
+WELD_SV_PRESS_Z0 = 3     # base-frame tool Z at contact, mm
+WELD_SV_PRESS_TRAVEL = 4 # travel the press achieved, mm (only set if it finished)
+WELD_SV_PRESS_GUARD = 5  # which collision-threshold instruction the press got
+
+# weld.lua's PRESS_MAX_MM — the travel FT_LinInsertion is allowed past contact.
+# Mirrored here so the page can show travel against its budget. That reading
+# separates the two ways the press can fail: settling near the ~13 mm the chuck
+# spring needs for 20 lbf means the regulator had real force to work with, while
+# running all the way to the budget means it was driving blind and weld.lua's
+# FTC_SENSOR_NUM is wrong. Changed together with programs/weld.lua.
+#
+# It is NOT what ends the run. Tripling this between the two 2026-07-29 press runs
+# left the axis-3 collision fault landing in the same place, which is what ruled
+# the travel abort out — see _WELD_GUARD_CODES.
+WELD_PRESS_MAX_MM = 60.0
+# How close to the budget counts as "hit the limit" on the page, in mm.
+WELD_PRESS_LIMIT_EPS_MM = 1.0
+
+# Mirrors the PH_* constants in programs/weld.lua. Nothing enforces that across
+# the language boundary, so the two tables are changed together.
+_WELD_PHASES = {
+    10: "entered",
+    20: "search: approaching",
+    21: "search: contact",
+    30: "press: force control on",
+    31: "press: driving in",
+    32: "press: holding",
+    33: "press: held",
+    40: "weld",
+    50: "retracting",
+    60: "done",
+}
+
+# weld.lua's fault codes are 90 + the beacon site, so they decode as a group.
+_WELD_FAULT_BASE = 90
+_WELD_FAULT_SITES = {
+    1: "FT_FindSurface refused the approach",
+    4: "DI1 (stud on work) not active",
+    5: "FT_LinInsertion refused the press",
+    9: "FT_Control unavailable or refused",
+    10: "DI1 dropped before the weld pulse",
+    11: "DI0 (caps at charge) never came up",
+}
+
+# weld.lua cannot write nil to a numeric system variable, so it encodes the
+# return value it most wants to report. See RET_NIL / RET_NON_NUM there.
+#
+# A value shown here is NOT necessarily an error. FAIRINO's error-code table (SDK
+# manual 2.5) is -7..-1, 0 = success, then 3..207 — it contains no 1 and no 2. So
+# the 1 this firmware returns from FT_FindSurface after a successful search is
+# outside the error space entirely; weld.lua's ftRefused() only faults on
+# negatives and values >= 3, and that is the rule to keep the two sides agreeing.
+_WELD_RET_CODES = {
+    -999: "nil (no return value)",
+    -998: "non-numeric",
+    1: "1 (contact, not an error)",
+}
+
+# Mirrors the GUARD_* constants in programs/weld.lua's pressCollisionGuard().
+#
+# The controller scores a collision as a force on a 0-100 N scale (FR Lua manual
+# 3.3.9: "1~100% corresponds to 0~100N"), and weld.lua presses to 88.96 N — 89% of
+# it, held. So a correct 20 lbf press and a crash are the same signal to the
+# joint-torque monitor, which is what killed both 2026-07-29 runs on a resettable
+# axis-3 fault. weld.lua now widens the monitor for the press window only, and
+# publishes here which instruction actually took, because neither has ever been
+# called on this cell. If the press faults again this is the first thing to read:
+# "not applied" means the fix never ran, anything else means it ran and was not
+# enough.
+_WELD_GUARD_CODES = {
+    0: "released",
+    1: "custom thresholds",
+    2: "custom + level",
+    3: "level only",
+    9: "not applied",
+}
+
+
+_WELD_GUARD_NOT_APPLIED = 9
+
+
+def _weld_guard_state(value: float | None) -> dict | None:
+    """Which collision-threshold instruction weld.lua got for the press.
+
+    `applied` is carried separately from the label so the page can call out the
+    one reading that means the fix never ran, rather than the template having to
+    match on wording.
+    """
+    if value is None:
+        return None
+    code = int(value)
+    return {
+        "label": _WELD_GUARD_CODES.get(code, f"unknown ({code})"),
+        "applied": code != _WELD_GUARD_NOT_APPLIED,
+    }
+
+
+def _weld_phase_label(code: float | None) -> str | None:
+    """Human label for weld.lua's phase code, or None if nothing has published."""
+    if code is None:
+        return None
+    code = int(code)
+    if code >= _WELD_FAULT_BASE:
+        site = code - _WELD_FAULT_BASE
+        return f"FAULT: {_WELD_FAULT_SITES.get(site, f'site {site}')}"
+    return _WELD_PHASES.get(code, f"unknown ({code})")
+
+
+def _weld_ret_label(value: float | None) -> str | None:
+    """Human label for the last FT_* return value weld.lua published.
+
+    Worth showing on its own row: the FR Lua manual documents every FT_*
+    instruction as returning null, but this file's history claims a live run saw
+    a success code. Whichever this shows is the answer.
+    """
+    if value is None:
+        return None
+    code = int(value)
+    return _WELD_RET_CODES.get(code, str(code))
+
+
+def _weld_press_travel(z0: float | None, final: float | None,
+                       tcp_z: float | None) -> dict | None:
+    """How far the press has driven since contact, against its budget.
+
+    weld.lua cannot read force at all — controller Lua has no force-read
+    instruction — so travel against the known ~1.5 lbf/mm chuck spring is the
+    available proxy for what the press is doing while RPC force reads are refused.
+    A press that settles near 13 mm was regulating on real force; one that runs to
+    the budget was driving blind, which points at weld.lua's FTC_SENSOR_NUM rather
+    than at anything here.
+
+    Two sources, in order:
+      * `final` (s_var_4) is the travel weld.lua measured itself once
+        FT_LinInsertion returned. Authoritative, but it only exists if the
+        insertion COMPLETED — an aborted press never publishes it.
+      * otherwise, `z0` (s_var_3, published before the press began) differenced
+        against the tool Z sampled this tick. Live during the press, and still
+        correct after the program was killed mid-insertion, which is exactly the
+        case worth diagnosing.
+
+    Both are base-frame Z deltas, not tool-frame insertion distance. They are the
+    same number here only because this cell presses along base -Z; the template
+    labels it as what it is.
+
+    weld.lua zeroes both slots at the top of each stud, so 0.0 means "no press
+    yet this run" rather than a stale reading — hence z0 == 0 is treated as unset.
+    """
+    if final:
+        travel, live = float(final), False
+    elif z0 and tcp_z is not None:
+        travel, live = float(z0) - float(tcp_z), True
+    else:
+        return None
+    return {
+        "mm": travel,
+        "max_mm": WELD_PRESS_MAX_MM,
+        "live": live,
+        "at_limit": travel >= WELD_PRESS_MAX_MM - WELD_PRESS_LIMIT_EPS_MM,
+    }
+
+
+_weld_test: dict = {
+    "last_run": None,
+    "armed": False,
+    "weld_x": 0.0,
+    "weld_y": 0.0,
+    "error": None,
+    "hint_on": False,
+}
+_weld_test_lock = threading.Lock()
+
+
+def _weld_test_toast(ok: bool, title: str, payload: dict):
+    return render_template("partials/command_result.html", ok=ok, title=title, payload=payload)
+
+
+@app.route("/operator/weld-test")
+def weld_test_page():
+    with _weld_test_lock:
+        state = dict(_weld_test)
+    return render_template(
+        "weld_test.html",
+        page_title="Weld Test",
+        stud_di=WELD_STUD_DI,
+        ready_di=WELD_READY_DI,
+        weld_x=format_number(state["weld_x"]),
+        weld_y=format_number(state["weld_y"]),
+        armed=state["armed"],
+    )
+
+
+@app.route("/ui/weld-test/run", methods=["POST"])
+def ui_weld_test_run():
+    armed = (request.form.get("armed") or "0") == "1"
+    force_test = (request.form.get("force_test") or "0") == "1"
+    # The Force Test button includes the same params block as Run, so a leftover
+    # armed=1 can ride along with it. Force test wins: it exists to be safe to
+    # press while nothing is wired, so it must never inherit an arc.
+    if force_test:
+        armed = False
+    try:
+        weld_x = float(request.form.get("weld_x") or 0)
+        weld_y = float(request.form.get("weld_y") or 0)
+    except ValueError:
+        return _weld_test_toast(False, "Weld Test", {"error": "X and Y offsets must be numbers."})
+
+    # The job manager and this page both drive ProgramLoad/ProgramRun. If both
+    # owned the controller at once the manager would be counting cycles against
+    # line numbers from a program it did not build.
+    if job.snapshot().active:
+        return _weld_test_toast(False, "Weld Test", {
+            "error": "A job is loaded — stop and clear it before running the weld test."
+        })
+
+    try:
+        built = build_weld_test_lua(weld_x, weld_y, armed=armed, force_test=force_test)
+
+        tmp_dir = tempfile.mkdtemp()
+        try:
+            # weld.lua goes up first. The harness's NewDofile resolves at run time,
+            # so a stale copy left on the controller is what would run otherwise.
+            #
+            # Comments are blanked before sending: the repo file is 13 KB and more
+            # than half of that is header the controller never reads. Line numbers
+            # are preserved, so the trace on this page still lines up with the file
+            # you have open.
+            weld_tmp = Path(tmp_dir) / WELD_PROGRAM_NAME
+            weld_tmp.write_text(
+                strip_lua_comments(WELD_PATH.read_text(encoding="utf-8")), encoding="utf-8"
+            )
+            robot.upload_program(str(weld_tmp), replace=True)
+
+            harness_tmp = Path(tmp_dir) / built.program_name
+            harness_tmp.write_text(built.text, encoding="utf-8")
+            uploaded = robot.upload_program(str(harness_tmp), replace=True)
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+        # Activate the FT sensor before every run so the readout is live from
+        # the moment the program starts. A controller reboot or fault-clear
+        # deactivates it, and weld.lua's FindSurface will fault without it.
+        robot.ft_setup()
+
+        # Armed before every run, not once: a controller reboot or fault-clear
+        # may reset it, and the first live run (2026-07-28) died on a latched
+        # axis-2 joint-overspeed fault thrown during FT_FindSurface's descent —
+        # which then blocked every raw RPC read with code 14 until cleared.
+        robot.joint_overspeed_protect()
+        robot.run_program(uploaded)
+        robot.set_running_hint(True)
+    except Exception as e:
+        with _weld_test_lock:
+            _weld_test["error"] = str(e)
+        app.logger.exception("weld test failed to start")
+        return _weld_test_toast(False, "Weld Test", {"error": str(e)})
+
+    with _weld_test_lock:
+        _weld_test.update({
+            "last_run": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "armed": armed,
+            "weld_x": weld_x,
+            "weld_y": weld_y,
+            "error": None,
+            "hint_on": True,
+        })
+    app.logger.info(
+        "weld test running x=%s y=%s armed=%s force_test=%s", weld_x, weld_y, armed, force_test
+    )
+    if force_test:
+        title = "Weld Test — force test"
+    elif armed:
+        title = "Weld Test — armed"
+    else:
+        title = "Weld Test — dry run"
+    return _weld_test_toast(True, title, {})
+
+
+@app.route("/ui/weld-test/stop", methods=["POST"])
+def ui_weld_test_stop():
+    errors = []
+    try:
+        robot.stop_program()
+    except Exception as e:
+        errors.append(str(e))
+    # Hand the cell back even if the stop reported an error: run_program left the
+    # controller in auto and nothing else takes it out again.
+    try:
+        robot.set_manual_mode()
+    except Exception as e:
+        errors.append(str(e))
+
+    robot.set_running_hint(False)
+    with _weld_test_lock:
+        _weld_test["hint_on"] = False
+
+    ok = not errors
+    return _weld_test_toast(ok, "Stop", {} if ok else {"error": " · ".join(errors)})
+
+
+@app.route("/ui/weld-test/reset-errors", methods=["POST"])
+def ui_weld_test_reset_errors():
+    """Clear a latched controller fault without walking to the pendant.
+
+    Duplicated from the diagnostics page on purpose. A latched fault blocks every
+    raw RPC read with code 14 (live 2026-07-28), so after a press aborts, this
+    page's own force and DI tiles stay dead until it is cleared — the operator
+    would be looking at a blank readout with no way to act on it from here.
+    """
+    try:
+        robot.reset_errors()
+    except Exception as e:
+        return _weld_test_toast(False, "Clear fault", {"error": str(e)})
+    return _weld_test_toast(True, "Clear fault", {})
+
+
+@app.route("/ui/weld-test/telemetry")
+def ui_weld_test_telemetry():
+    snap = robot.snapshot()
+    program_state = ROBOT_STATE_MAP.get(snap.program_state_raw, "unknown")
+    running = program_state == "running"
+    current_line = snap.current_line
+    fault_main = snap.fault_main
+    fault_sub = snap.fault_sub
+
+    # run_program turns the fast-probe hint on; drop it once the program is done so
+    # an idle page isn't holding the heartbeat at its faster rate forever.
+    if not running:
+        with _weld_test_lock:
+            was_on = _weld_test["hint_on"]
+            _weld_test["hint_on"] = False
+        if was_on:
+            robot.set_running_hint(False)
+
+    fz_lbf = None
+    stud_on_work = None
+    weld_ready = None
+    probe_error = None
+    ft_busy = False
+    weld_phase = None
+    weld_ret = None
+    weld_guard = None
+    tcp_z = None
+    press_travel = None
+    if snap.connected:
+        try:
+            probe = robot.weld_probe(
+                WELD_STUD_DI, WELD_READY_DI,
+                sysvar_slots=(
+                    WELD_SV_PHASE, WELD_SV_LAST_RET,
+                    WELD_SV_PRESS_Z0, WELD_SV_PRESS_TRAVEL,
+                    WELD_SV_PRESS_GUARD,
+                ),
+            )
+            stud_on_work = probe["stud_on_work"]
+            weld_ready = probe["weld_ready"]
+            tcp_z = probe["tcp_z"]
+            if probe.get("program_state_raw") is not None:
+                program_state = ROBOT_STATE_MAP.get(int(probe["program_state_raw"]), "unknown")
+                running = program_state == "running"
+            if probe.get("line") is not None:
+                current_line = probe["line"]
+            if probe.get("fault_main") is not None:
+                fault_main = probe["fault_main"]
+            if probe.get("fault_sub") is not None:
+                fault_sub = probe["fault_sub"]
+            weld_phase = _weld_phase_label(probe["sysvars"].get(WELD_SV_PHASE))
+            weld_ret = _weld_ret_label(probe["sysvars"].get(WELD_SV_LAST_RET))
+            weld_guard = _weld_guard_state(probe["sysvars"].get(WELD_SV_PRESS_GUARD))
+            press_travel = _weld_press_travel(
+                probe["sysvars"].get(WELD_SV_PRESS_Z0),
+                probe["sysvars"].get(WELD_SV_PRESS_TRAVEL),
+                tcp_z,
+            )
+            if probe["ft_err"] == 0:
+                fz_lbf = (probe["fz"] or 0.0) * FT_FZ_DISPLAY_SIGN * N_TO_LBF
+            elif running and probe["ft_err"] == FT_RPC_BUSY_CODE:
+                ft_busy = True
+            else:
+                probe_error = f"FT_GetForceTorqueRCS failed (code {probe['ft_err']})"
+
+        except Exception as e:
+            probe_error = str(e)
+    else:
+        probe_error = "Robot offline"
+
+    with _weld_test_lock:
+        state = dict(_weld_test)
+
+    return render_template(
+        "partials/weld_test_telemetry.html",
+        poll_ms=WELD_TEST_POLL_MS if running else WELD_TEST_IDLE_POLL_MS,
+        program_state=program_state,
+        running=running,
+        current_line=current_line,
+        line_edge_seq=snap.line_edge_seq,
+        fz_lbf=fz_lbf,
+        stud_on_work=stud_on_work,
+        stud_di=WELD_STUD_DI,
+        weld_ready=weld_ready,
+        ready_di=WELD_READY_DI,
+        fault_main=fault_main,
+        fault_sub=fault_sub,
+        probe_error=probe_error,
+        ft_busy=ft_busy,
+        weld_phase=weld_phase,
+        weld_ret=weld_ret,
+        weld_guard=weld_guard,
+        tcp_z=tcp_z,
+        press_travel=press_travel,
+        armed=state["armed"],
+        last_run=state["last_run"],
+        run_error=state["error"],
+    )
+
 
 def _connection_snapshot() -> dict:
     """Shape the link snapshot for the connection chips.
@@ -766,8 +1216,6 @@ def _connection_snapshot() -> dict:
     detail = None
     if snap.state == "connected" and snap.busy:
         detail = snap.busy_label
-    elif snap.state == "connected" and snap.probe_latency_ms is not None:
-        detail = f"{snap.probe_latency_ms:.0f}ms"
     elif snap.state == "connecting" and snap.attempts > 1:
         detail = f"attempt {snap.attempts}"
     elif snap.state == "degraded":

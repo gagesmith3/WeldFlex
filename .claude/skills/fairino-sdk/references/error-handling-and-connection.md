@@ -44,6 +44,28 @@ appearing anywhere in a nested return value as fatal, and forces client
 recreation on the next call — the validated, working convention to replicate
 for any new call path.
 
+## Controller RPC error code `14` — "Interface execution failed"
+
+A **positive controller-side** code (FAIRINO errcode table, readthedocs
+SDKManual/errcode.html), distinct from the negative client-side `RobotError`
+codes above. Vendor resolution: "check whether the web interface reports a
+fault". Two live-confirmed meanings (both 2026-07-28):
+
+1. **A latched controller fault blocks raw RPC reads until Cleared** on the
+   pendant/web UI. Every read fails with 14 and the robot looks broken from
+   Python; the fix is the web UI's Clear button, not a reconnect. Also note:
+   a controller-side Lua `error()` does *not* latch such a fault — only real
+   controller faults (e.g. joint overspeed) do.
+2. **`FT_GetForceTorqueRCS` returns 14 for the whole time a force-control move
+   (`FT_FindSurface`) is executing** — the force-control task owns the sensor.
+   Routine, not a fault; `GetCurrentLine` keeps working through it.
+
+Telling them apart: (1) persists after the program stops and hits *every* raw
+read; (2) is confined to FT reads while motion runs and clears itself on move
+end. `weld_probe()` returns the code as `ft_err` rather than raising, and the
+weld-test page renders running+14 as "sensor busy" while a latched fault still
+surfaces via `fault_main` (`FT_RPC_BUSY_CODE`, `backend/app.py`).
+
 ## `GetSafetyCode(self)` — `Robot.py:2762`
 
 **No decorators at all** — no `@log_call`, no `@xmlrpc_timeout`, no

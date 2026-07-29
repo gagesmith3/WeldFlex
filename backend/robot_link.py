@@ -394,6 +394,7 @@ class RobotLink:
         self._fault_source = "none"
         self._next_attempt_ts: float | None = None
         self._raw_state_supported: bool | None = None
+        self._raw_fault_supported: bool | None = None
 
         self._snapshot = ConnSnapshot(ip=self._ip)
 
@@ -754,9 +755,11 @@ class RobotLink:
             self._attempt_open()
             return
 
-        # Skip the probe while a command is in flight. One thread owns the SDK, so
-        # queueing a probe behind a 30s upload would only produce a stale reading late.
-        if self._worker.is_busy():
+        # Skip the probe while a command is in flight unless we are in a fast
+        # heartbeat mode for a running job. A running job wants current_line and
+        # fault updates to stay fresh, so the lightweight direct probe is allowed
+        # to run even while the command worker is occupied.
+        if self._worker.is_busy() and not self._fast_heartbeat:
             with self._state_lock:
                 stale = (
                     self._last_success_ts is not None
@@ -871,7 +874,14 @@ class RobotLink:
         self._set_state(ConnState.CONNECTED, None)
 
     def _run_probe(self, client: Any) -> dict[str, Any]:
-        """Probe on the worker thread, so only one thread ever touches the SDK."""
+        """Probe the controller for telemetry.
+
+        During a fast heartbeat for an active job we run the lightweight probe
+        directly on the supervisor thread so live line/fault updates still flow
+        even while the SDK worker is occupied with another command.
+        """
+        if self._fast_heartbeat and self._worker.is_busy():
+            return self._probe_body(client)
         future = self._worker.submit(lambda: self._probe_body(client), label="probe")
         return future.result(timeout=PROBE_TIMEOUT_S)
 
@@ -900,22 +910,7 @@ class RobotLink:
         except Exception:  # noqa: BLE001 - liveness already established above
             pass
 
-        # Same source GetRobotErrorCode reads (Robot.py:6143), without the decorators.
-        # Only trust it when CNDE is actually streaming: the struct exists and reads all
-        # zeros whether or not anything ever filled it, so without this check a dead
-        # CNDE link would render as a confident "no faults".
-        fault_main = fault_sub = None
-        fault_src = "none"
-        try:
-            cnde = getattr(client, "_cnde_client", None)
-            streaming = bool(cnde is not None and cnde._robot_state_run_flag)
-            pkg = getattr(client, "robot_state_pkg", None)
-            if streaming and pkg is not None:
-                fault_main = int(pkg.main_code) or None
-                fault_sub = int(pkg.sub_code) or None
-                fault_src = "cache"
-        except Exception:  # noqa: BLE001
-            pass
+        fault_main, fault_sub, fault_src = self._read_fault_codes(client)
 
         return {
             "latency_ms": latency_ms,
@@ -958,6 +953,57 @@ class RobotLink:
         except Exception:  # noqa: BLE001
             pass
         return None, "none"
+
+    def _read_fault_codes(self, client: Any) -> tuple[int | None, int | None, str]:
+        """Controller fault codes: ask the controller, fall back to the SDK's cache.
+
+        Same shape and same reason as _read_program_state. The SDK's
+        GetRobotErrorCode has its RPC call commented out (Robot.py:6147-6153) and
+        returns robot_state_pkg.main_code/sub_code, which only the CNDE stream
+        writes — and CNDE does not connect on the FR-16. So until this method
+        existed, a controller fault could not reach the UI at all: a collision
+        abort killed a running program and every page still read "no faults".
+        That is how the axis-3 collision that ended the 2026-07-29 press run
+        stayed invisible until someone walked to the pendant.
+
+        The raw response is flat, [err, main, sub], which is what the SDK's own
+        commented-out code unpacks.
+
+        Absence of a code is never reported as "no fault": if the raw call is
+        unavailable and CNDE is not streaming, the source is "none" and callers
+        show nothing rather than an all-clear.
+        """
+        if self._raw_fault_supported is not False:
+            try:
+                resp = client.robot.GetRobotErrorCode()
+                if isinstance(resp, (list, tuple)) and len(resp) >= 3 and int(resp[0]) == 0:
+                    self._raw_fault_supported = True
+                    # 0 means "no fault" for both codes; normalise to None so every
+                    # consumer's `if fault_main:` reads the same as it always did.
+                    return int(resp[1]) or None, int(resp[2]) or None, "rpc"
+                # Answered in a shape we don't understand — don't guess, and don't
+                # keep paying for it on every heartbeat.
+                self._raw_fault_supported = False
+            except xmlrpc.client.Fault:
+                # Method genuinely absent on this controller — stop asking.
+                self._raw_fault_supported = False
+            except RobotUnreachable:
+                raise
+            except Exception:  # noqa: BLE001
+                self._raw_fault_supported = False
+
+        # Only trust the cache when CNDE is actually streaming: the struct exists and
+        # reads all zeros whether or not anything ever filled it, so without this
+        # check a dead CNDE link would render as a confident "no faults".
+        try:
+            cnde = getattr(client, "_cnde_client", None)
+            streaming = bool(cnde is not None and cnde._robot_state_run_flag)
+            pkg = getattr(client, "robot_state_pkg", None)
+            if streaming and pkg is not None:
+                return int(pkg.main_code) or None, int(pkg.sub_code) or None, "cache"
+        except Exception:  # noqa: BLE001
+            pass
+        return None, None, "none"
 
     @staticmethod
     def _second(resp: Any) -> Any:

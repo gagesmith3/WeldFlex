@@ -16,6 +16,12 @@ from robot_link import (
 
 SDK_TIMEOUT_S = 5.0
 
+# Mode(): the controller's operating mode, not a program state. Auto is what a
+# Lua program runs under; manual is the one with the green indicator, and is
+# where the cell should sit whenever WeldFlex is not driving it.
+MODE_AUTO = 0
+MODE_MANUAL = 1
+
 STATE_MAP = {
     -1: "offline",
     0: "stopped",
@@ -38,6 +44,42 @@ JOG_DIRECTION = {"negative": 0, "positive": 1}
 JOG_MOTION_TIMEOUT_S = 5.0
 JOG_MOTION_POLL_S = 0.02
 JOG_MOTION_SETTLE_S = 0.05
+
+
+def _upload_hint(err_code: int, path: Path, detail: Any = None) -> str:
+    """Turn the SDK's catch-all upload codes into something actionable.
+
+    `LuaUpload` reports -1 (RobotError.ERR_OTHER) for five unrelated failures in
+    `__FileUpLoad` — a refused FileUpload RPC, no connect to the file port, a
+    short send, and a reply that wasn't "SUCCESS" — and never says which. Worth
+    naming, because a bare "code -1" reads like a compile error and it is not:
+    the transfer fails before the controller ever parses the Lua.
+
+    The exception: when the transfer succeeds but the post-upload
+    `LuaUpLoadUpdate` check refuses the file, the SDK returns (code, errorStr)
+    instead of a bare int. `detail` carries that errorStr — the controller's
+    own stated reason — so when it is present, report it verbatim and skip the
+    transfer guesswork, which would be wrong.
+    """
+    if detail not in (None, ""):
+        return (
+            f" — the transfer completed; the controller refused the file at the "
+            f"post-upload check: {detail}"
+        )
+    if err_code == -1:
+        try:
+            size = path.stat().st_size
+        except OSError:
+            size = -1
+        return (
+            f" — the controller refused the transfer of {size} bytes; the Lua was "
+            "never parsed. Every program known to upload here is under 2 KB, so try "
+            "a smaller file first, then Reconnect from Robot Diagnostics (an aborted "
+            "transfer leaves the file port unusable until the session is remade)."
+        )
+    if err_code == -7:
+        return " — the SDK could not find the local file it was asked to send."
+    return ""
 
 
 class WeldFlexRobotService:
@@ -135,9 +177,11 @@ class WeldFlexRobotService:
             # Ignore delete errors; file may not already exist.
             self._call(lambda r: r.LuaDelete(path.name))
         error = self._call(lambda r: r.LuaUpload(str(path)), timeout=30.0)
-        err_code, _ = self._unpack(error)
+        err_code, detail = self._unpack(error)
         if err_code != 0:
-            raise RuntimeError(f"LuaUpload failed (code {err_code}): {path.name}")
+            raise RuntimeError(
+                f"LuaUpload failed (code {err_code}): {path.name}{_upload_hint(err_code, path, detail)}"
+            )
         return path.name
 
     def upload_studs_data(self, studs: list, filename: str = "studs_data_wf.lua") -> None:
@@ -171,9 +215,45 @@ class WeldFlexRobotService:
             except OSError:
                 pass
 
+    def joint_overspeed_protect(self, strategy: int = 3, speed_percent: int = 50) -> None:
+        """Arm the controller's joint-overspeed handling for subsequent motion.
+
+        Raw RPC: the SDK only issues JointOverSpeedProtectStart as a private
+        bracket around its own MoveL (Robot.py:3088), but the motion that needs
+        it here — weld.lua's FT_FindSurface descent — executes inside a
+        controller-side program, so it is armed session-wide instead. strategy:
+        0 off, 1 standard, 2 error-stop on overspeed, 3 adaptive slowdown.
+        speed_percent is the vendor's "allowed slow-down threshold" [0-100]
+        (their default is 10); 50 gives the adaptive strategy real headroom.
+
+        Deliberately never paired with JointOverSpeedProtectEnd: nothing
+        host-side observes the program end reliably, and armed is the safer
+        resting state while the FT_FindSurface axis-2 overspeed fault
+        (2026-07-28) is under investigation. Whether this API governs
+        program-executed motion at all on this firmware is unverified — a
+        nonzero return here is how we find out it does not exist.
+        """
+        resp = self._call(
+            lambda r: r.robot.JointOverSpeedProtectStart(int(strategy), int(speed_percent))
+        )
+        err_code, _ = self._unpack(resp)
+        if err_code != 0:
+            raise RuntimeError(f"JointOverSpeedProtectStart failed (code {err_code})")
+
+    def set_manual_mode(self) -> None:
+        """Hand the cell back to the operator in manual mode (the green indicator).
+
+        `run_program` puts the controller into auto and nothing takes it out again
+        when the program ends, so this is the way back.
+        """
+        err = self._call(lambda r: r.Mode(MODE_MANUAL))
+        err_code, _ = self._unpack(err)
+        if err_code != 0:
+            raise RuntimeError(f"Mode(manual) failed (code {err_code})")
+
     def run_program(self, program_name: str) -> None:
         """Run a Lua program already stored on the robot under /fruser/."""
-        self._call(lambda r: r.Mode(0))
+        self._call(lambda r: r.Mode(MODE_AUTO))
         time.sleep(2)
         load_resp = self._call(lambda r: r.ProgramLoad(f"/fruser/{program_name}"))
         load_err, _ = self._unpack(load_resp)
@@ -291,19 +371,191 @@ class WeldFlexRobotService:
             raise RuntimeError(f"FT_SetZero failed (code {err_code})")
 
     def ft_read(self) -> dict:
-        def _read(r):
-            resp = r.FT_GetForceTorqueRCS()
-            active = bool(r.robot_state_pkg.ft_sensor_active)
-            return resp, active
+        """Force/torque via raw XML-RPC, bypassing the SDK's local-cache read.
 
-        resp, active = self._call(_read, retries=1)
-        err_code, values = self._unpack(resp)
-        if err_code != 0:
+        The SDK's FT_GetForceTorqueRCS and ft_sensor_active both read
+        robot_state_pkg, which only the CNDE stream (port 20005) ever writes —
+        and CNDE never connects on this FR-16 firmware, so the cache is zeroed
+        forever and the sensor always looked inactive. Same bypass as
+        robot_link's _read_program_state. The raw response is flat:
+        [err, fx, fy, fz, tx, ty, tz].
+        """
+        resp = self._call(lambda r: r.robot.FT_GetForceTorqueRCS(0), retries=1)
+        if isinstance(resp, (list, tuple)) and len(resp) >= 7:
+            err_code, values = int(resp[0]), resp[1:7]
+        else:
+            err_code, values = self._unpack(resp)
+        if err_code != 0 or values is None:
             raise RuntimeError(f"FT_GetForceTorqueRCS failed (code {err_code})")
         return {
             "fx": float(values[0]), "fy": float(values[1]), "fz": float(values[2]),
             "mx": float(values[3]), "my": float(values[4]), "mz": float(values[5]),
-            "active": active,
+            # No liveness flag exists over RPC; err==0 only says the controller
+            # answered. Real liveness is the commissioning checks (values dither,
+            # RCS != Origin, hand push moves the expected axis).
+            "active": True,
+        }
+
+    def weld_probe(
+        self,
+        stud_di: int = 1,
+        ready_di: int = 0,
+        sysvar_slots: tuple[int, ...] = (1, 2),
+    ) -> dict:
+        """Everything the Weld Test page shows, in a single worker dispatch.
+
+        The two inputs are different signals and both have to be watched:
+        `stud_di` (DI1) is continuity welder -> work -> gun, i.e. the stud is
+        seated; `ready_di` (DI0) is the welder's caps-at-charge line. weld.lua
+        gates the pulse on both, so a stalled weld test is only diagnosable if the
+        page can show which one is missing.
+
+        `sysvar_slots` are the controller system variables weld.lua's pub() writes
+        its progress to — slot 1 is the phase code, slot 2 the raw return value of
+        the last FT_* instruction. This is the only channel that reports anything
+        from inside a running Lua program: print()/error() never leave the pendant,
+        and force reads are refused for the whole time force control owns the
+        sensor. GetSysVarValue is a genuine RPC call (Robot.py:5460), not another
+        robot_state_pkg read, which is what makes it work mid-run.
+
+        Polled a few times a second while a weld test runs, so every read shares
+        one submission rather than queueing behind the others on the link's single
+        worker. All bypass the SDK wrappers for the reason ft_read documents: the
+        wrapped GetDI and FT_GetForceTorqueRCS read robot_state_pkg, which only the
+        CNDE stream fills, and CNDE never connects on this firmware. GetActualTCPPose
+        is unwrapped for consistency and to keep the whole probe on one code path —
+        its SDK wrapper does do real RPC.
+
+        `fz` is the sensor's native value — negative under compression. Callers
+        that display it flip the sign; see FT_FZ_DISPLAY_SIGN in app.py.
+
+        Every read here is best-effort — nothing raises. The DI reads come back
+        as `None` on failure (they have no live-verified precedent). The force
+        read reports its error code in `ft_err` with `fz = None` instead of
+        raising, because a nonzero code is routine, not exceptional: the
+        controller refuses FT_GetForceTorqueRCS with code 14 for the whole time
+        FT_FindSurface is executing (observed live 2026-07-28 — the force-control
+        task owns the sensor), which is exactly when this gets polled hardest.
+        The caller decides whether a given code is "busy" or a real fault.
+        """
+        def _probe(r):
+            ft = r.robot.FT_GetForceTorqueRCS(0)
+            dis = []
+            for di_id in (stud_di, ready_di):
+                try:
+                    dis.append(r.robot.GetDI(int(di_id), 0))
+                except Exception:
+                    dis.append(None)
+            svars = []
+            for slot in sysvar_slots:
+                try:
+                    svars.append(r.robot.GetSysVarValue(int(slot)))
+                except Exception:
+                    svars.append(None)
+            try:
+                pose = r.robot.GetActualTCPPose(0)
+            except Exception:
+                pose = None
+            try:
+                state_resp = r.robot.GetProgramState()
+            except Exception:
+                state_resp = None
+            try:
+                line_resp = r.robot.GetCurrentLine()
+            except Exception:
+                line_resp = None
+            try:
+                fault_resp = r.robot.GetRobotErrorCode()
+            except Exception:
+                fault_resp = None
+            return ft, dis[0], dis[1], svars, pose, state_resp, line_resp, fault_resp
+
+        ft_resp, stud_resp, ready_resp, svar_resps, pose_resp, state_resp, line_resp, fault_resp = self._call(_probe, retries=1, timeout=1.0)
+
+        if isinstance(ft_resp, (list, tuple)) and len(ft_resp) >= 7:
+            ft_err, fz = int(ft_resp[0]), float(ft_resp[3])
+        else:
+            ft_err, fz = int(self._unpack(ft_resp)[0]), None
+        if ft_err != 0:
+            fz = None
+
+        def _level(resp):
+            if isinstance(resp, (list, tuple)) and len(resp) >= 2 and int(resp[0]) == 0:
+                return 1 if int(resp[1]) else 0
+            return None
+
+        def _number(resp):
+            """Value out of an (err, value) response, or None on any failure."""
+            if isinstance(resp, (list, tuple)) and len(resp) >= 2 and int(resp[0]) == 0:
+                try:
+                    return float(resp[1])
+                except (TypeError, ValueError):
+                    return None
+            return None
+
+        # Keyed by slot so a caller that asks for different slots still gets a
+        # dict it can index by the number weld.lua wrote to.
+        sysvars = {
+            int(slot): _number(resp)
+            for slot, resp in zip(sysvar_slots, svar_resps)
+        }
+
+        tcp_z = None
+        if isinstance(pose_resp, (list, tuple)) and len(pose_resp) >= 4 and int(pose_resp[0]) == 0:
+            try:
+                tcp_z = float(pose_resp[3])
+            except (TypeError, ValueError):
+                tcp_z = None
+
+        program_state_raw = None
+        if isinstance(state_resp, (list, tuple)) and len(state_resp) >= 2 and int(state_resp[0]) == 0:
+            try:
+                program_state_raw = int(state_resp[1])
+            except (TypeError, ValueError):
+                program_state_raw = None
+        elif isinstance(state_resp, (int, float)):
+            try:
+                program_state_raw = int(state_resp)
+            except (TypeError, ValueError):
+                program_state_raw = None
+
+        line = None
+        if isinstance(line_resp, (list, tuple)) and len(line_resp) >= 2 and int(line_resp[0]) == 0:
+            try:
+                line = int(line_resp[1])
+            except (TypeError, ValueError):
+                line = None
+        elif isinstance(line_resp, (int, float)):
+            try:
+                line = int(line_resp)
+            except (TypeError, ValueError):
+                line = None
+
+        fault_main = None
+        fault_sub = None
+        if isinstance(fault_resp, (list, tuple)) and len(fault_resp) >= 3 and int(fault_resp[0]) == 0:
+            try:
+                fault_main = int(fault_resp[1]) or None
+            except (TypeError, ValueError):
+                fault_main = None
+            try:
+                fault_sub = int(fault_resp[2]) or None
+            except (TypeError, ValueError):
+                fault_sub = None
+
+        return {
+            "ft_err": ft_err,
+            "fz": fz,
+            "stud_di": int(stud_di),
+            "stud_on_work": _level(stud_resp),
+            "ready_di": int(ready_di),
+            "weld_ready": _level(ready_resp),
+            "sysvars": sysvars,
+            "tcp_z": tcp_z,
+            "program_state_raw": program_state_raw,
+            "line": line,
+            "fault_main": fault_main,
+            "fault_sub": fault_sub,
         }
 
     def status(self) -> dict[str, Any]:
@@ -356,10 +608,14 @@ class WeldFlexRobotService:
         """Controller fault codes as of the last heartbeat.
 
         Collected by the probe rather than fetched here, so the diagnostics page costs
-        no robot traffic. The underlying source is robot_state_pkg — the same struct
-        GetRobotErrorCode reads — which only the CNDE stream fills. CNDE does not
-        connect on the FR-16, so `source` reports "none" there and a blank code is not
-        evidence of no fault.
+        no robot traffic. `source` says where the codes came from and must be read
+        alongside them:
+
+          "rpc"   — asked the controller directly (robot_link._read_fault_codes).
+          "cache" — robot_state_pkg, which only the CNDE stream fills.
+          "none"  — neither channel is available, so a blank code is NOT evidence
+                    of no fault. CNDE does not connect on the FR-16, so this was
+                    the only outcome until the raw read was added.
         """
         return {
             "main_code": snap.fault_main,

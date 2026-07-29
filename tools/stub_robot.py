@@ -85,15 +85,22 @@ class StubController:
     def _ctl_cycle(self, loop_start: int, marker: int, cycles: int) -> str:
         """Build the line feed a real `for cycleIndex = 1, cycleCount` loop produces.
 
-        Each cycle walks the body, dwells on the boundary marker (which the manager
-        polls several times), then jumps back to the loop head. The dwell repeats
-        are what prove the detector does not double-count a held line.
+        Each cycle walks the body twice (a two-stud part, so body lines are
+        non-monotonic *within* a cycle, as they really are), dwells on the boundary
+        marker — which the manager polls several times — then wraps. The dwell
+        repeats are what prove the detector does not double-count a held line.
+
+        `loop_start` itself is deliberately never emitted. That is the `for
+        cycleIndex` statement, and a 250 ms sampler does not land on it; the real
+        controller has never once reported it. A stub that emitted it made a
+        detector keyed on the loop head look correct while hardware gated after
+        cycle 1 and then ran free (2026-07-28). Keep this feed honest.
         """
         loop_start, marker, cycles = int(loop_start), int(marker), int(cycles)
-        body = list(range(loop_start, marker))
+        body = list(range(loop_start + 1, marker))
         script: list[int] = []
         for _ in range(cycles):
-            script += body + [marker] * 4 + [marker + 1, marker + 2]
+            script += body + body + [marker] * 4 + [marker + 1, marker + 2]
         return self._ctl_lines(script)
 
     def _ctl_stats(self) -> dict:

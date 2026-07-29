@@ -1,0 +1,59 @@
+{
+  "$schema": "https://raw.githubusercontent.com/LuaLS/vscode-lua/master/setting/schema.json",
+
+  "runtime.version": "Lua 5.3",
+
+  "diagnostics.globals": [
+    "PTP",
+    "Lin",
+    "WaitMs",
+    "WaitDI",
+    "SPLCSetDO",
+    "GetDI",
+    "PointsOffsetEnable",
+    "PointsOffsetDisable",
+    "FT_FindSurface",
+    "FT_Control",
+    "FT_LinInsertion",
+    "FT_Guard",
+    "FT_GetForceTorqueRCS",
+    "GetActualTCPPose",
+    "SetAnticollision",
+    "CustomCollisionDetectionStart",
+    "CustomCollisionDetectionEnd",
+    "NewDofile",
+    "DofileEnd",
+
+    "SetSysVarvalue",
+    "GetSysVarvalue",
+    "SetSysVarValue",
+    "GetSysVarValue",
+
+    "zerozero",
+    "CenterPoint",
+    "safeHeight",
+
+    "tool",
+    "blend",
+    "wobj",
+    "offsetEnable",
+    "speed",
+    "safeZ",
+    "downZ",
+    "Z_CLEARANCE",
+    "BOUNDARY_MS",
+    "studs",
+    "cycleCount",
+    "weldX",
+    "weldY",
+    "WELD_ARMED",
+    "WELD_RUN",
+    "WELD_FORCE_TEST"
+  ],
+
+  "workspace.ignoreDir": [
+    ".git",
+    "node_modules",
+    "fairino-python-sdk-main"
+  ]
+}

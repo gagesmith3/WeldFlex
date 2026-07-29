@@ -28,7 +28,7 @@ import tempfile
 import threading
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
@@ -87,15 +87,28 @@ def _now_iso() -> str:
 class CycleTracker:
     """Counts completed cycles from a stream of `GetCurrentLine` samples.
 
-    Two independent signals bank a cycle, and they cannot double-count each other:
+    One signal banks a cycle: **the boundary dwell** — a sample at or past
+    `cycle_marker_line`. The marker is a `WaitMs` long enough that the 250 ms poll
+    cannot step over it. A second sample below the marker then re-arms the counter
+    for the next cycle.
 
-    * **the boundary dwell** — a sample at or past `cycle_marker_line`. The normal
-      path: the marker is a `WaitMs` long enough that a 250 ms poll cannot step
-      over it.
-    * **the loop wrap** — a jump back to at-or-before `loop_start_line` after
-      having been past it. Within one cycle the reported line only advances, so a
-      backwards jump to the loop head can only be the `for` wrapping. This fires
-      even if the tail of the cycle was never sampled at all.
+    Two things this deliberately does *not* do, both learned the hard way:
+
+    * It does not wait to see `loop_start_line` to re-arm. That is the `for
+      cycleIndex` statement, the single lowest-numbered line in the loop, and it
+      executes in microseconds — a 250 ms sampler never lands on it. Keying the
+      re-arm on it latched the counter after cycle 1, so `cycles_done` stuck at 1
+      and the inter-cycle gate never fired again (2026-07-28 bring-up).
+    * It does not treat "the reported line went backwards" as a wrap. The **inner
+      stud loop** makes body lines non-monotonic within a single cycle, so a
+      backwards jump cannot tell an inner iteration from an outer one.
+
+    The cost of dropping those is that the boundary dwell is now the only thing
+    that banks a cycle: miss every sample across the whole dwell and the count
+    stalls. That is why the dwell is long, and longer still in `pause` gate mode.
+
+    A part with zero studs has no executable line below the marker at all, so its
+    cycles cannot be re-armed. That is a config error the builder already flags.
 
     Repeated identical samples are ignored via the link's `line_edge_seq`, which
     only advances when the reported line actually changes.
@@ -107,7 +120,6 @@ class CycleTracker:
         self.cycles_target = int(cycles_target)
         self.cycles_done = 0
         self._counted_this_cycle = False
-        self._max_line = 0
         self._last_edge_seq: int | None = None
 
     def observe(self, line: Any, edge_seq: int | None = None) -> bool:
@@ -119,21 +131,18 @@ class CycleTracker:
                 return False
             self._last_edge_seq = edge_seq
 
-        wrapped = line <= self.loop_start_line and self._max_line > self.loop_start_line
-
         if line >= self.cycle_marker_line:
-            self._max_line = max(self._max_line, line)
             if self._counted_this_cycle:
                 return False
             return self._bank()
 
-        if wrapped:
-            banked = False if self._counted_this_cycle else self._bank()
-            self._counted_this_cycle = False   # a new cycle starts here
-            self._max_line = line
-            return banked
-
-        self._max_line = max(self._max_line, line)
+        # Below the boundary dwell but inside the loop. The inner stud loop never
+        # crosses the marker, so arriving here after the marker was banked can only
+        # be the outer `for` wrapping into the next cycle. Level-triggered rather
+        # than edge-triggered on purpose: the wrap itself usually happens while the
+        # job is GATED, when nothing is feeding this at all.
+        if self._counted_this_cycle and line >= self.loop_start_line:
+            self._counted_this_cycle = False
         return False
 
     def _bank(self) -> bool:
@@ -362,7 +371,17 @@ class JobManager:
         return self._finish(run_id, JobState.STOPPED.value, error=error)
 
     def clear(self) -> JobSnapshot:
-        """Dismiss a finished job so the panel returns to idle."""
+        """Dismiss a finished job so the panel returns to idle, and hand the cell
+        back in manual mode.
+
+        Running a job puts the controller into auto (`run_program`'s `Mode(0)`) and
+        nothing takes it out again when the program ends. Clearing is the point
+        where the operator gets the robot back, so the green manual indicator
+        should agree with the now-idle panel.
+
+        A failed handoff does not undo the clear — the job is already gone. The
+        reason rides back on the otherwise-idle snapshot for the panel to show.
+        """
         with self._lock:
             state = self._state_locked()
             if state in ACTIVE_STATES:
@@ -370,9 +389,17 @@ class JobManager:
             run_id = self._session.run_id if self._session else None
             self._session = None
             snap = self._snapshot_locked()
+
+        # Outside the lock: an SDK call can block for seconds.
+        error = None
+        try:
+            self._robot.set_manual_mode()
+        except Exception as exc:  # noqa: BLE001 - shown to the operator, not swallowed
+            error = f"Job cleared, but the robot stayed in auto mode: {exc}"
+            log.warning("manual-mode handoff failed after clear run_id=%s: %s", run_id, exc)
         if run_id:
-            self._event(run_id, "clear", {})
-        return snap
+            self._event(run_id, "clear", {"error": error})
+        return replace(snap, error=error) if error else snap
 
     def _command(
         self, name: str, from_states: tuple[str, ...], to_state: str, call: Callable[[], None]
@@ -533,14 +560,16 @@ class JobManager:
                 sess.launched_ts = time.time()
                 sess.cycle_start_ts = time.time()
 
-            log.info("job running run_id=%s program=%s cycles=%d loop_start=%d marker=%d gate=%d",
+            log.info("job running run_id=%s program=%s cycles=%d loop_start=%d marker=%d "
+                     "gate=%d boundary_ms=%d",
                      run_id, uploaded, cycles, built.loop_start_line,
-                     built.cycle_marker_line, built.gate_line)
+                     built.cycle_marker_line, built.gate_line, built.boundary_ms)
             self._event(run_id, "running", {
                 "program": uploaded,
                 "loop_start_line": built.loop_start_line,
                 "cycle_marker_line": built.cycle_marker_line,
                 "gate_line": built.gate_line,
+                "boundary_ms": built.boundary_ms,
             })
             self._start_monitor(run_id)
         except Exception as exc:  # noqa: BLE001
@@ -656,23 +685,38 @@ class JobManager:
         `pause` mode only. The pause lands wherever the robot is inside the
         boundary dwell rather than exactly on the gate line — acceptable for
         bring-up, which is why `di` is the production target.
+
+        Fails closed. A gate that cannot hold is worse than no gate at all: the
+        program would run its remaining cycles with nobody swapping parts. One
+        retry covers a transient RPC hiccup; past that the run ends.
         """
         error = None
-        try:
-            self._robot.pause_program()
-        except Exception as exc:  # noqa: BLE001
-            error = str(exc)
-            log.warning("gate pause failed run_id=%s: %s", run_id, exc)
+        for attempt in (1, 2):
+            try:
+                self._robot.pause_program()
+                error = None
+                break
+            except Exception as exc:  # noqa: BLE001
+                error = str(exc)
+                log.warning("gate pause attempt %d failed run_id=%s: %s", attempt, run_id, exc)
+
+        if error:
+            try:
+                self._robot.stop_program()
+            except Exception:  # noqa: BLE001 - already heading for ERROR
+                log.exception("stop after a failed gate also failed run_id=%s", run_id)
+            self._event(run_id, "gate_failed", {"error": error})
+            self._finish(run_id, JobState.ERROR.value,
+                         error=f"Could not hold at the cycle boundary: {error}")
+            return
+
         with self._lock:
             sess = self._session
             if sess is None or sess.run_id != run_id:
                 return
-            if error:
-                sess.error = error
-                sess.gate_pending = False
-            elif sess.state == JobState.RUNNING.value:
+            if sess.state == JobState.RUNNING.value:
                 sess.state = JobState.GATED.value
-        self._event(run_id, "gated", {"error": error})
+        self._event(run_id, "gated", {"error": None})
 
     def _finish(self, run_id: str, status: str, error: str | None = None) -> JobSnapshot:
         """Move to a terminal state exactly once, and write the history record."""

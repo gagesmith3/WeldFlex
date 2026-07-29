@@ -40,7 +40,7 @@ all the variants seen so far. Unpack defensively; don't assume a fixed arity.
 
 | # | Gotcha | Detail |
 |---|---|---|
-| 1 | Local-cache reads always report `err=0` | `GetRobotMotionDone`, `GetProgramState`, `GetRobotErrorCode`, `GetActualTCPNum`/`GetActualWObjNum`, `FT_GetForceTorqueRCS`/`Origin`, `GetDI`/`GetDO`/tool variants — see per-domain files |
+| 1 | Local-cache reads always report `err=0` — **and the cache never fills on this robot** | `GetRobotMotionDone`, `GetProgramState`, `GetRobotErrorCode`, `GetActualTCPNum`/`GetActualWObjNum`, `FT_GetForceTorqueRCS`/`Origin`, `GetDI`/`GetDO`/tool variants. The CNDE stream that feeds `robot_state_pkg` never connects on this firmware (20004-vs-20005 port mismatch), so every one of these returns zeros forever. Bypass with a raw `client.robot.<Method>()` call where the controller supports it (`robot_link._read_program_state`, `robot_service.ft_read`) — **but the raw `GetDI` bypass is live-disproven on this firmware** (2026-07-28: both weld interlock DIs unreadable from run start; `weld_probe` reports them as unknown, never a confident 0). See per-domain files and the audit log 2026-07-28 |
 | 2 | `GetRobotErrCode` does not exist | Only `GetRobotErrorCode` exists in `Robot.py`. The wrong name raises `AttributeError`. |
 | 3 | Asymmetric failure shape | `GetActualJointPosDegree`/`GetActualTCPPose` return a **bare int** (no `None`) on failure, unlike most getters |
 | 4 | Coordinate `id` indexing is inconsistent | `SetToolCoord`/`SetToolList` use `id ∈ [1,15]` (1-indexed); `SetWObjCoord`/`SetWObjList` use `id ∈ [0,14]` (0-indexed) |
@@ -48,6 +48,12 @@ all the variants seen so far. Unpack defensively; don't assume a fixed arity.
 | 6 | `refFrame` for work-object compute calls is undocumented | Neither the Chinese docstring nor the English PDF enumerate its value space — every official example uses `0` (base coordinate system); treat that as the safe default |
 | 7 | `LuaUpload` fails if the destination file already exists | Always `LuaDelete` first (ignore its error — file may not exist yet) before re-uploading the same filename |
 | 8 | `SetAO`/`SetToolAO` take a 0–100% input | The SDK internally multiplies by `40.95` before sending — don't pre-scale to the raw 0–4095 range yourself |
+| 9 | **`LuaUpload` code `-1` has two distinct sources** — read the errorStr before touching the Lua | Either the raw socket transfer on :20010 (five points in `__FileUpLoad`, nothing parsed yet) **or** the post-upload `LuaUpLoadUpdate` check refusing the file, which returns `(-1, errorStr)` — the errorStr carries the controller's actual reason. `robot_service.upload_program` surfaces it; an opaque `-1` with no detail means the transfer itself. See `program-and-file-management.md` |
+| 10 | **The controller's post-upload check EXECUTES the uploaded file's top-level Lua** | Confirmed live 2026-07-28: uploading `weld.lua` ran its top level with no globals set and the check refused the file with the program's own `error()` string. Any sub-program whose top level does work needs a caller-published sentinel gate (`if WELD_RUN == 1 then ...` pattern) so a bare upload is define-only |
+| 11 | Raw-RPC error code `14` ("Interface execution failed") has two live meanings | (a) a latched controller fault blocks raw reads until Cleared on the pendant/web UI; (b) `FT_GetForceTorqueRCS` returns 14 for the whole time a force-control move (`FT_FindSurface`) is executing — routine, not a fault; `weld_probe` reports it as `ft_err` instead of raising. See `error-handling-and-connection.md` |
+| 12 | **Controller-side Lua is a DIFFERENT API from this SDK** — never write `programs/*.lua` against `Robot.py` docstrings | Every `FT_*` Lua instruction documents **null** as its return, and there is **no force-read instruction in Lua at all**; `FT_GetForceTorqueRCS` is Python-only. Both mistakes were live in `weld.lua` until 2026-07-29. The manual is `docs/FR Lua programmingscript.txt`. See `controller-lua-api.md` |
+| 14 | **`0` is not the only non-error return** — `1` and `2` are not error codes at all | FAIRINO's error table (SDK manual §2.5) is `-7..-1`, `0` = "Successful call", then `3..207`; it skips 1 and 2 entirely. Live 2026-07-29 a **successful** `FT_FindSurface` returned `1`, and `if ret ~= 0 then fault()` turned every good search into a retract. Bound refusals to `ret < 0 or ret >= 3`. Handy codes: `14` interface execution failed, `59` F/T sensor not activated, `60` sensor frame not tool, `61` sensor not homed, `62` sensor load not zeroed |
+| 13 | **`pcall` is banned by the controller's upload check** | `error_info:pcall is not allowed in lua file` — a whole-file rejection (live 2026-07-29), so one defensive wrapper anywhere makes the program unuploadable. Controller Lua cannot be written in "try it and swallow the error" style; a call that might throw must be replaced by one that can't. `error`/`print`/`type`/`tostring`/`string.format` are fine. See `controller-lua-api.md` |
 
 Also: **bundled `example/*.py` scripts are not reliably in sync with current
 `Robot.py` signatures.** A concrete instance (`TestSetCommand.py`'s
@@ -77,7 +83,8 @@ SDK calls it uses (`references/motion-and-jog.md`).
 
 | File | Load this when... |
 |---|---|
-| `references/motion-and-jog.md` | Starting/stopping jog motion, polling motion completion |
+| `references/controller-lua-api.md` | **Writing or debugging anything in `programs/*.lua`.** The controller-side Lua instruction set — a separate API from this SDK, with its own return contracts (all `FT_*` return null), no force-read instruction, mismatched direction encodings, and the system-variable channel for reporting out of a running program |
+| `references/motion-and-jog.md` | Starting/stopping jog motion, polling motion completion; also the controller-side **Lua** motion instructions (`PTP`/`Lin`) used by `programs/*.lua` |
 | `references/coordinate-calibration.md` | Working on tool-TCP or work-object calibration (the next planned feature) |
 | `references/program-and-file-management.md` | Loading/running Lua programs, uploading/deleting files on the robot |
 | `references/io-and-force-torque.md` | Digital/analog IO, or the force-torque sensor (setup, weld-force control) |

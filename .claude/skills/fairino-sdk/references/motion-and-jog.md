@@ -54,3 +54,42 @@ is more robust than a fixed sleep (adapts to actual step distance/velocity)
 and is the validated, live-tested pattern — see the `weldflex-app` skill's
 `robot-service-wrapper.md` for the actual implementation; this file only
 documents the underlying SDK calls it's built from.
+
+## Controller-side Lua motion instructions (`PTP`, `Lin`)
+
+Everything above is the **Python SDK**. The Lua programs in `programs/` run on
+the controller and use a *different, separate* instruction set — `PTP(...)`,
+`Lin(...)`, `PointsOffsetEnable(...)`, `WaitMs(...)`, `WaitDI(...)`,
+`SPLCSetDO(...)`. **This instruction set is documented nowhere in this repo.**
+`docs/fairino-doc-en-readthedocs-io-en-latest.pdf` is the Python SDK reference,
+and no `.lua` examples ship with the vendor SDK. What follows is inferred from
+the programs themselves — treat it as a working theory, not vendor truth.
+
+`PTP(point, vel, blend, offset_flag)` as used in `programs/WeldFlex.lua:39`:
+
+| arg | example | reading | confidence |
+|---|---|---|---|
+| `point` | `zerozero` | taught point name; lives on the controller, not in the file | certain |
+| `vel` | `speed` (25) | joint speed as a percent, scaled again by the pendant's global override | **high** |
+| `blend` | `-1` | blending off — decelerate to a full stop at the point | inferred |
+| `offset_flag` | `0` | no inline offset; the offset comes from the enclosing `PointsOffsetEnable` | inferred |
+
+The `vel` reading is provable from the repo rather than assumed:
+`programs/feedCycle.lua` sets `tool = 10` yet calls `PTP(safeHeight,25,-1,0)`,
+so arg 2 tracks nothing else in the file.
+
+### The file-header globals are frame ids, not speeds
+
+Every Lua program opens with `tool = N`, `blend = -1`, `wobj = 2`,
+`offsetEnable = 1`. These are **coordinate-frame slot ids** — `tool` is the
+`SetToolCoord` id (1–15) that `robot_service.tcp_compute_and_apply()` writes
+calibrated TCPs into, `wobj` the `SetWObjCoord` id (see
+`coordinate-calibration.md`). It is tempting to read `tool = 10` as a speed
+because it sits next to no other numbers; it is not. `programs/WeldFlex.lua`
+declares a separate `speed` global for that.
+
+Unresolved: whether the Lua runtime *reads* these globals implicitly, or
+whether they are inert leftovers from pendant-generated code. The `PTP`/`Lin`
+calls pass literals and never reference them. Until that is settled, **do not
+rename or delete them** — if the runtime does read `tool`, dropping it falls
+back to an uncalibrated frame and every point moves somewhere wrong.

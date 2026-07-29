@@ -3640,7 +3640,7 @@ pre {
 }
 
 
-/* ── Force/Torque sensor readout ── */
+/* ── Force sensor readout (lbs) ── */
 .ft-status-bar {
   display: flex;
   align-items: center;
@@ -3664,40 +3664,26 @@ pre {
 .ft-active  .ft-status-dot { background: var(--run); }
 .ft-inactive .ft-status-dot { background: var(--stop); }
 
-.ft-reading-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
+.ft-readout-main {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 10px 0 4px;
 }
 
-.ft-axis-card {
-  padding: 14px 10px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  text-align: center;
-  background: var(--drawer);
-}
-
-.ft-axis-label {
-  font-size: 0.7rem;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  color: var(--muted);
-  margin-bottom: 6px;
-}
-
-.ft-axis-value {
-  font-size: 1.5rem;
+.ft-big-value {
+  font-size: 4.2rem;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   color: var(--ink);
-  line-height: 1;
+  line-height: 1.05;
 }
 
-.ft-axis-unit {
-  font-size: 0.7rem;
+.ft-big-unit {
+  font-size: 1.3rem;
+  font-weight: 600;
   color: var(--muted);
-  margin-top: 5px;
+  margin-left: 8px;
 }
 
 /* Center-anchored load meter: zero at midpoint, fill grows out toward the
@@ -3705,10 +3691,16 @@ pre {
 .ft-axis-meter {
   position: relative;
   height: 6px;
-  margin-top: 7px;
   border-radius: 3px;
   background: var(--line);
   overflow: hidden;
+}
+
+.ft-big-meter {
+  width: min(420px, 100%);
+  height: 10px;
+  border-radius: 5px;
+  margin-top: 10px;
 }
 
 .ft-axis-meter-zero {
@@ -3735,11 +3727,18 @@ pre {
 .ft-meter-warn { background: var(--pause); }
 .ft-meter-crit { background: var(--stop); }
 
-/* Status is also carried by the "% FS" text under each card — never colour alone. */
+/* Status is also carried by the "% of full scale" text below — never colour alone. */
 .ft-value-warn { color: var(--pause); }
 .ft-value-crit { color: var(--stop); }
 
-/* Poll failure: keep the grid in place, dimmed, rather than collapsing it. */
+.ft-sub {
+  margin-top: 8px;
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+/* Poll failure: keep the readout in place, dimmed, rather than collapsing it. */
 .ft-reading-stale {
   opacity: 0.45;
 }
@@ -3750,106 +3749,36 @@ pre {
   white-space: nowrap;
 }
 
-/* Observation window: per-axis min/max/span accumulated client-side from the
-   polled readout. Columns line up with the axis cards above it. */
-/* Fixed layout so columns don't shuffle as the numbers change width 3x/sec. */
-.ft-obs-table {
-  width: 100%;
-  table-layout: fixed;
-  border-collapse: collapse;
-  font-variant-numeric: tabular-nums;
-  font-size: 0.8rem;
-}
-
-.ft-obs-table th:first-child,
-.ft-obs-table td:first-child { width: 52px; }
-
-.ft-obs-table th,
-.ft-obs-table td {
-  padding: 5px 4px;
-  text-align: right;
-  border-bottom: 1px solid var(--line);
-}
-
-.ft-obs-table thead th {
-  font-size: 0.7rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--muted);
-}
-
-.ft-obs-table tbody th {
-  text-align: left;
-  font-size: 0.65rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--muted);
-}
-
-.ft-obs-table tbody tr:last-child th,
-.ft-obs-table tbody tr:last-child td { border-bottom: none; }
-
-/* Span is the row that actually gets read — give it the weight. */
-.ft-obs-table tbody tr[data-stat-row="span"] td {
-  color: var(--ink);
-  font-weight: 700;
-}
-
-.ft-obs-unit {
-  display: block;
-  font-size: 0.6rem;
-  letter-spacing: 0;
-  text-transform: none;
-  opacity: 0.75;
-}
-
-/* Heading and the (client-side only) reset share a row to save vertical space. */
-.ft-head {
+.ft-actions {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
+  justify-content: center;
   gap: 12px;
+  margin-top: 14px;
 }
 
-.ft-obs-title {
-  margin: 14px 0 4px;
-  font-size: 0.7rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--muted);
-  border-top: 1px solid var(--line);
-  padding-top: 10px;
-}
-
-/* Verdict is carried by its wording, not by the colour alone. */
-.ft-obs-verdict {
-  margin: 8px 0 0;
-  font-size: 0.75rem;
-  color: var(--muted);
-}
-.ft-obs-live    { color: var(--run); }
-.ft-obs-frozen  { color: var(--stop); }
-
-.btn.ft-obs-reset {
+.btn.ft-action-btn {
   background: #4f6478;
-  flex-shrink: 0;
   min-height: 44px;
+  min-width: 130px;
 }
 
-/* 800x480 kiosk: all 6 axes on one row so the page fits without scrolling.
+/* htmx puts .htmx-request on the posting button; hx-disabled-elt holds it down.
+   ft_setup blocks ~10 s by design, so the busy label has to carry that wait. */
+.btn.ft-action-btn .ft-btn-busy { display: none; }
+.btn.ft-action-btn.htmx-request .ft-btn-label { display: none; }
+.btn.ft-action-btn.htmx-request .ft-btn-busy { display: inline; }
+.btn.ft-action-btn[disabled] { opacity: 0.65; }
+
+/* 800x480 kiosk: the whole page has to fit without scrolling.
    Must stay AFTER the base .ft-* rules above — the shared kiosk block near the
    top of this file loses to them on source order at equal specificity. */
 @media (max-width: 820px) {
   .ft-help-note { display: none; }
 
-  /* Both panels plus the 87px header have to clear 480px without scrolling, so
+  /* The panel plus the 87px header have to clear 480px without scrolling, so
      the page chrome (padding, headings, subtitles) is compressed here. Scoped to
      .ft-page/.ft-panel — the shared .panel/.settings-shell sizing is untouched. */
   .ft-page { padding: 10px; }
-  .ft-page .settings-sections { gap: 10px; }
   .ft-panel { padding: 10px 12px; }
   .ft-panel h2 { font-size: 1rem; margin-bottom: 6px; }
   .ft-panel > .panel-note { font-size: 0.72rem; margin-bottom: 8px; }
@@ -3860,25 +3789,12 @@ pre {
     margin-bottom: 8px;
   }
 
-  .ft-reading-grid {
-    grid-template-columns: repeat(6, 1fr);
-    gap: 6px;
-  }
-  .ft-axis-card { padding: 7px 4px; }
-  .ft-axis-label { font-size: 0.62rem; margin-bottom: 3px; }
-  .ft-axis-value { font-size: 1.05rem; }
-  .ft-axis-meter { height: 5px; margin-top: 5px; }
-  .ft-axis-unit { font-size: 0.6rem; margin-top: 3px; }
-
-  .ft-obs-table { font-size: 0.72rem; }
-  .ft-obs-table th,
-  .ft-obs-table td { padding: 3px 3px; }
-  .ft-obs-table thead th { font-size: 0.62rem; }
-  .ft-obs-table tbody th { font-size: 0.6rem; }
-  .ft-obs-unit { font-size: 0.55rem; }
-  .ft-obs-title { margin: 8px 0 2px; padding-top: 7px; font-size: 0.62rem; }
-  .ft-obs-verdict { margin-top: 6px; font-size: 0.68rem; }
-  .btn.ft-obs-reset { padding: 8px 12px; font-size: 0.75rem; }
+  .ft-readout-main { padding: 6px 0 2px; }
+  .ft-big-value { font-size: 3.2rem; }
+  .ft-big-unit { font-size: 1.05rem; margin-left: 6px; }
+  .ft-big-meter { margin-top: 8px; }
+  .ft-sub { margin-top: 6px; font-size: 0.72rem; }
+  .ft-actions { margin-top: 10px; }
 }
 
 /* ── Run history page ── */
@@ -3932,5 +3848,306 @@ pre {
   clip: rect(0,0,0,0);
   white-space: nowrap;
   border: 0;
+}
+
+
+/* ── Weld test (single-stud weld.lua bring-up) ──
+   Two fixed columns on the 800×480 kiosk: setup on the left, live feedback on
+   the right. Only the trace list scrolls; the page itself must not. */
+.wt-page {
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr);
+  gap: 12px;
+  height: 100%;
+  min-height: 0;
+}
+
+.wt-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  gap: 8px;
+}
+
+.wt-setup h2 { margin-bottom: 0; }
+
+.wt-params {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.wt-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.wt-field label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.wt-field input {
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 1.1rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  background: var(--drawer);
+}
+
+.wt-origin-note {
+  margin: 0;
+  font-size: 0.72rem;
+}
+
+.wt-arm-row { margin-top: auto; }
+
+/* Disarmed is the resting state and looks inert on purpose; armed is the only
+   thing on this page that turns red before anything moves. */
+.btn.wt-arm-btn {
+  width: 100%;
+  min-height: 44px;
+  justify-content: flex-start;
+  gap: 10px;
+  background: var(--drawer);
+  color: var(--muted);
+  border: 1px solid var(--line);
+  font-size: 0.82rem;
+}
+
+.wt-arm-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--line);
+  flex-shrink: 0;
+}
+
+.btn.wt-arm-btn.is-armed {
+  background: var(--err-bg);
+  border-color: var(--stop);
+  color: var(--stop);
+}
+
+.btn.wt-arm-btn.is-armed .wt-arm-dot {
+  background: var(--stop);
+  box-shadow: 0 0 0 3px rgba(180, 35, 47, 0.22);
+}
+
+.wt-actions {
+  display: grid;
+  grid-template-columns: 1.2fr 1.2fr 1fr;
+  gap: 8px;
+}
+
+.wt-actions .btn {
+  min-height: 48px;
+  justify-content: center;
+}
+
+/* Armed Run is red, not green — the colour has to disagree with "go". */
+.btn.run.wt-run-btn.is-armed {
+  background: var(--stop);
+}
+
+/* Six tracks so seven tiles land in three even rows: three spans of 2 (program,
+   line, force), then phase at 4 beside tool Z at 2, then two spans of 3. The wide
+   pair is the IO row, which carries the longest labels and is what an operator
+   reads when a run stalls at the weld. Phase gets its own near-full row because
+   its value is a sentence, not a number. */
+.wt-tiles {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.wt-tile {
+  grid-column: span 2;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--drawer);
+  border: 1px solid var(--line);
+  min-width: 0;
+}
+
+.wt-tile--wide  { grid-column: span 3; }
+.wt-tile--phase { grid-column: span 4; }
+
+/* Phase reads as prose, so it drops to a size that fits a clause on one line at
+   800px instead of the tabular-number size the metric tiles use. */
+.wt-tile-value--text {
+  font-size: 0.9rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wt-tile-label {
+  font-size: 0.62rem;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wt-tile-value {
+  font-size: 1.15rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+.wt-tile-sub {
+  font-size: 0.62rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* For a sub-line value that changes what the tile above it means — currently only
+   "collision guard: not applied", which turns a repeat press fault from "the fix
+   wasn't enough" into "the fix never ran". Colour only; the tile keeps its own
+   state, since the phase is still whatever it is. */
+.wt-sub-bad {
+  color: var(--stop);
+  font-weight: 700;
+}
+
+.wt-tile--run  { background: var(--ok-bg);  border-color: var(--ok-line); }
+.wt-tile--run  .wt-tile-value { color: var(--run); }
+.wt-tile--on   { background: var(--ok-bg);  border-color: var(--ok-line); }
+.wt-tile--on   .wt-tile-value { color: var(--run); }
+.wt-tile--off  .wt-tile-value { color: var(--muted); }
+.wt-tile--hot  { background: var(--err-bg); border-color: var(--err-line); }
+.wt-tile--hot  .wt-tile-value { color: var(--stop); }
+
+.wt-alert {
+  margin: 0;
+  font-size: 0.72rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wt-alert--warn  { color: var(--pause); font-weight: 600; }
+.wt-alert--error { color: var(--stop);  font-weight: 700; }
+
+/* The fault alert carries a Clear button, so it cannot use the nowrap/ellipsis
+   the plain alerts do — the control would be the part that got clipped. Laid out
+   as a row with the button pinned to the end, and the text allowed to shrink. */
+.wt-alert--action {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  white-space: normal;
+  overflow: visible;
+}
+.wt-alert--action > .btn { flex: 0 0 auto; }
+
+/* Small enough to sit in a one-line alert on the 800x480 panel, still a 32px
+   target — the same compromise .wt-trace-clear makes. */
+.btn.wt-clear-fault {
+  min-height: 32px;
+  padding: 4px 12px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  background: var(--err-bg);
+  color: var(--stop);
+  border: 1px solid var(--err-line);
+}
+
+.wt-trace-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+
+.wt-trace-title {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.wt-trace-peak {
+  margin-left: auto;
+  font-size: 0.72rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.wt-trace-peak strong { color: var(--ink); font-size: 0.85rem; }
+
+.btn.wt-trace-clear {
+  min-height: 32px;
+  padding: 4px 12px;
+  font-size: 0.72rem;
+  background: var(--drawer);
+  color: var(--muted);
+  border: 1px solid var(--line);
+}
+
+/* The one thing on this page allowed to scroll. It is a log; it has to. */
+.wt-trace {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+  background: var(--drawer);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.wt-trace-row {
+  display: flex;
+  gap: 10px;
+  padding: 3px 8px;
+  border-bottom: 1px solid rgba(196, 210, 223, 0.4);
+}
+.wt-trace-row:last-child { border-bottom: none; }
+
+.wt-trace-time {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.wt-trace-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wt-trace-row--run   .wt-trace-text { color: var(--run);   font-weight: 700; }
+.wt-trace-row--on    .wt-trace-text { color: var(--run);   font-weight: 700; }
+.wt-trace-row--off   .wt-trace-text { color: var(--muted); }
+.wt-trace-row--warn  .wt-trace-text { color: var(--pause); font-weight: 600; }
+.wt-trace-row--error .wt-trace-text { color: var(--stop);  font-weight: 700; }
+.wt-trace-row--line  .wt-trace-text { font-weight: 600; }
+
+.wt-trace-empty {
+  padding: 10px;
+  color: var(--muted);
+  font-style: italic;
 }
 

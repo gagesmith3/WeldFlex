@@ -107,25 +107,25 @@ def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
 
 
 XMLRPC_PORT = 20003
-CNDE_PORT = _env_port("WELDFLEX_CNDE_PORT", 20004)
+CNDE_PORT = _env_port("WELDFLEX_CNDE_PORT", 20005)
 CNDE_PERIOD_MS = _env_int("WELDFLEX_CNDE_PERIOD_MS", 20, 8, 1000)
 CNDE_FORCE_FRESH_S = _env_float("WELDFLEX_CNDE_FORCE_FRESH_S", 0.5)
 
 # Socket timeout for the XML-RPC channel. The SDK never sets one: RPC.__init__ probes
 # under socket.setdefaulttimeout(1) then restores it to None (Robot.py:2294-2297), so
 # without this every XML-RPC call can block indefinitely.
-XMLRPC_SOCKET_TIMEOUT_S = _env_float("WELDFLEX_XMLRPC_TIMEOUT_S", 4.0)
+XMLRPC_SOCKET_TIMEOUT_S = _env_float("WELDFLEX_XMLRPC_TIMEOUT_S", 12.0)
 
 HEARTBEAT_IDLE_S = _env_float("WELDFLEX_HEARTBEAT_IDLE_S", 1.0)
-HEARTBEAT_FAST_S = _env_float("WELDFLEX_HEARTBEAT_FAST_S", 0.25)
-PROBE_TIMEOUT_S = _env_float("WELDFLEX_PROBE_TIMEOUT_S", 6.0)
+HEARTBEAT_FAST_S = _env_float("WELDFLEX_HEARTBEAT_FAST_S", 0.5)
+PROBE_TIMEOUT_S = _env_float("WELDFLEX_PROBE_TIMEOUT_S", 12.0)
 
 # Consecutive probe failures before the link is declared faulted rather than degraded.
-FAIL_THRESHOLD = int(_env_float("WELDFLEX_FAIL_THRESHOLD", 8))
+FAIL_THRESHOLD = int(_env_float("WELDFLEX_FAIL_THRESHOLD", 30))
 # How long a snapshot may go unrefreshed during a long command before it is called stale.
 BUSY_STALE_S = _env_float("WELDFLEX_BUSY_STALE_S", 45.0)
 # How long a single SDK call may run before its worker is presumed poisoned.
-STUCK_AFTER_S = _env_float("WELDFLEX_STUCK_AFTER_S", 90.0)
+STUCK_AFTER_S = _env_float("WELDFLEX_STUCK_AFTER_S", 120.0)
 
 BACKOFF_START_S = 0.5
 BACKOFF_MAX_S = _env_float("WELDFLEX_BACKOFF_MAX_S", 10.0)
@@ -664,10 +664,12 @@ class RobotLink:
                     # and leave the link alone — retrying would just fail identically.
                     raise
                 last_exc = exc
-                self._invalidate(handle.gen, f"{label or 'call'}: {exc}")
-                if attempt == max(1, retries) - 1:
+                is_last_attempt = (attempt == max(1, retries) - 1)
+                if is_last_attempt:
+                    self._invalidate(handle.gen, f"{label or 'call'}: {exc}")
                     raise
-                # Wait for the supervisor to publish a replacement rather than racing it.
+                self._note_error(f"{label or 'call'} attempt {attempt + 1} failed: {exc}")
+                # Wait for the supervisor to publish a replacement if invalidated, or retry.
                 self._await_new_generation(handle.gen, grace)
 
         raise last_exc if last_exc is not None else RuntimeError("call failed")
@@ -900,11 +902,20 @@ class RobotLink:
 
         client = None
         try:
-            # The controller rejected the SDK's default 73-state subscription.
-            # Force is the only realtime value WeldFlex needs, so request that
-            # one signal before RPC.__init__ starts the receiver.
+            # Configure CNDE port (default 20005) and realtime state subscription
+            # to include key telemetry signals (force, program state, robot state, fault codes, mode)
             Robot.SetRobotRealtimeStateConfig(
-                [Robot.RobotState.FtSensorData], CNDE_PERIOD_MS
+                [
+                    Robot.RobotState.FtSensorData,
+                    Robot.RobotState.ProgramState,
+                    Robot.RobotState.RobotState,
+                    Robot.RobotState.MainCode,
+                    Robot.RobotState.SubCode,
+                    Robot.RobotState.RobotMode,
+                    Robot.RobotState.EmergencyStop,
+                    Robot.RobotState.MotionDone,
+                ],
+                CNDE_PERIOD_MS,
             )
             # Configure the SDK's class-level port before construction because
             # RPC.__init__ starts its receiver immediately.
@@ -1024,10 +1035,8 @@ class RobotLink:
         """
         proxy = client.robot
         t0 = time.monotonic()
-        proxy.GetControllerIP()
-        latency_ms = (time.monotonic() - t0) * 1000.0
-
         state_raw, state_src = self._read_program_state(client)
+        latency_ms = (time.monotonic() - t0) * 1000.0
 
         line = None
         try:
@@ -1048,14 +1057,18 @@ class RobotLink:
         }
 
     def _read_program_state(self, client: Any) -> tuple[int | None, str]:
-        """Prefer the controller's real state; fall back to the SDK's cache.
+        """Prefer the CNDE real-time stream when active; fall back to RPC query."""
+        try:
+            cnde = getattr(client, "_cnde_client", None)
+            streaming = bool(cnde is not None and getattr(cnde, "_robot_state_run_flag", False))
+            pkg = getattr(client, "robot_state_pkg", None)
+            if streaming and pkg is not None:
+                val = getattr(pkg, "program_state", 0)
+                if val != 0:
+                    return int(val), "cnde"
+        except Exception:  # noqa: BLE001
+            pass
 
-        The SDK's GetProgramState has its RPC call commented out (Robot.py:7168-7173)
-        and returns robot_state_pkg.robot_state, which only the CNDE stream ever writes.
-        CNDE does not connect on the FR-16, so that cache reads 0 forever — which is why
-        the program state always looked "stopped". We ask the controller directly and
-        only fall back when it has no such method.
-        """
         if self._raw_state_supported is not False:
             try:
                 resp = client.robot.GetProgramState()
@@ -1080,24 +1093,18 @@ class RobotLink:
         return None, "none"
 
     def _read_fault_codes(self, client: Any) -> tuple[int | None, int | None, str]:
-        """Controller fault codes: ask the controller, fall back to the SDK's cache.
+        """Prefer the CNDE real-time stream when active; fall back to RPC query."""
+        try:
+            cnde = getattr(client, "_cnde_client", None)
+            streaming = bool(cnde is not None and getattr(cnde, "_robot_state_run_flag", False))
+            pkg = getattr(client, "robot_state_pkg", None)
+            if streaming and pkg is not None:
+                main = getattr(pkg, "main_code", 0)
+                sub = getattr(pkg, "sub_code", 0)
+                return int(main) or None, int(sub) or None, "cnde"
+        except Exception:  # noqa: BLE001
+            pass
 
-        Same shape and same reason as _read_program_state. The SDK's
-        GetRobotErrorCode has its RPC call commented out (Robot.py:6147-6153) and
-        returns robot_state_pkg.main_code/sub_code, which only the CNDE stream
-        writes — and CNDE does not connect on the FR-16. So until this method
-        existed, a controller fault could not reach the UI at all: a collision
-        abort killed a running program and every page still read "no faults".
-        That is how the axis-3 collision that ended the 2026-07-29 press run
-        stayed invisible until someone walked to the pendant.
-
-        The raw response is flat, [err, main, sub], which is what the SDK's own
-        commented-out code unpacks.
-
-        Absence of a code is never reported as "no fault": if the raw call is
-        unavailable and CNDE is not streaming, the source is "none" and callers
-        show nothing rather than an all-clear.
-        """
         if self._raw_fault_supported is not False:
             try:
                 resp = client.robot.GetRobotErrorCode()
@@ -1106,8 +1113,6 @@ class RobotLink:
                     # 0 means "no fault" for both codes; normalise to None so every
                     # consumer's `if fault_main:` reads the same as it always did.
                     return int(resp[1]) or None, int(resp[2]) or None, "rpc"
-                # An unexpected reply is not proof the method is unavailable.
-                # Fall back for this sample and retry on the next heartbeat.
             except xmlrpc.client.Fault:
                 # Method genuinely absent on this controller — stop asking.
                 self._raw_fault_supported = False
@@ -1116,12 +1121,9 @@ class RobotLink:
             except Exception:  # noqa: BLE001
                 pass
 
-        # Only trust the cache when CNDE is actually streaming: the struct exists and
-        # reads all zeros whether or not anything ever filled it, so without this
-        # check a dead CNDE link would render as a confident "no faults".
         try:
             cnde = getattr(client, "_cnde_client", None)
-            streaming = bool(cnde is not None and cnde._robot_state_run_flag)
+            streaming = bool(cnde is not None and getattr(cnde, "_robot_state_run_flag", False))
             pkg = getattr(client, "robot_state_pkg", None)
             if streaming and pkg is not None:
                 return int(pkg.main_code) or None, int(pkg.sub_code) or None, "cache"

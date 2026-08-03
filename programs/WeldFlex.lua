@@ -7,6 +7,7 @@ offsetEnable = 1
 speed = 25 --{{SPEED}}
 SAFE_Z = 10.0 --{{SAFE_Z}}
 PART_Z = 0.0 --{{PART_Z}}
+HIGH_Z_CLEARANCE = 50.0 --{{HIGH_Z}}
 PRESS_LBF = 20.0 --{{PRESS_LBF}}
 STUD_TYPE = "M4" --{{STUD_TYPE}}
 SUBSTRATE = "Mild Steel" --{{SUBSTRATE}}
@@ -30,26 +31,45 @@ if USE_HOME_MOVE == 1 then
 end
 
 local jobAborted = false
+local lastWeldX = nil
+local lastWeldY = nil
 
 for cycleIndex = 1, cycleCount do --{{LOOP_START}}
     for _, stud in ipairs(studs) do
         -- Publish weld.lua input contract globals
-        weldX = stud.x
-        weldY = stud.y
+        weldX = stud.y
+        weldY = stud.x
         WELD_RUN = 1
         WELD_ARMED = 1
         WELD_SAFE_Z = SAFE_Z
         Z_CLEARANCE = SAFE_Z
         WELD_PART_Z = PART_Z
-        WELD_PRESS_LBF = PRESS_LBF
+        WELD_PRESS_LBF = stud.pressLbf or PRESS_LBF
         WELD_STUD_TYPE = STUD_TYPE
         WELD_SUBSTRATE = SUBSTRATE
 
-        -- Approach stud position at safe Z clearance above part
         APPROACH_Z = PART_Z + SAFE_Z
+        HIGH_Z = APPROACH_Z + HIGH_Z_CLEARANCE
+
+        -- 1. If coming from a previous stud, elevate straight UP to high Z level first
+        if lastWeldX ~= nil and lastWeldY ~= nil then
+            PointsOffsetEnable(1, lastWeldX, lastWeldY, HIGH_Z, 0, 0, 0)
+            Lin(zerozero, speed, -1, 0, 1)
+            PointsOffsetDisable()
+        end
+
+        -- 2. Traverse horizontally in X/Y to stud position at high Z level
+        PointsOffsetEnable(1, weldX, weldY, HIGH_Z, 0, 0, 0)
+        Lin(zerozero, speed, -1, 0, 1)
+        PointsOffsetDisable()
+
+        -- 3. Move vertically down into place Z level (APPROACH_Z) over stud
         PointsOffsetEnable(1, weldX, weldY, APPROACH_Z, 0, 0, 0)
         Lin(zerozero, speed, -1, 0, 1)
         PointsOffsetDisable()
+
+        lastWeldX = weldX
+        lastWeldY = weldY
 
         -- Execute single-stud weld sequence (search, press, weld, hold, retract, feed)
         WELD_FAULT = 0
@@ -74,11 +94,20 @@ end
 -- =========================================
 if USE_HOME_MOVE == 1 then
     APPROACH_Z = PART_Z + SAFE_Z
-    -- 1. Traverse at safe Z clearance to homewf XY
+    HIGH_Z = APPROACH_Z + HIGH_Z_CLEARANCE
+
+    -- 1. Elevate straight UP to high Z level at current position if returning from a stud
+    if lastWeldX ~= nil and lastWeldY ~= nil then
+        PointsOffsetEnable(1, lastWeldX, lastWeldY, HIGH_Z, 0, 0, 0)
+        Lin(zerozero, speed, -1, 0, 1)
+        PointsOffsetDisable()
+    end
+
+    -- 2. Traverse at safe Z clearance to homewf XY
     PointsOffsetEnable(1, 0, 0, APPROACH_Z, 0, 0, 0)
     Lin(homewf, speed, -1, 0, 1)
     PointsOffsetDisable()
 
-    -- 2. Descend to homewf
+    -- 3. Descend to homewf
     Lin(homewf, speed, -1, 0, 0)
 end

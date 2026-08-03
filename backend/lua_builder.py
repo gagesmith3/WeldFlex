@@ -107,6 +107,18 @@ def format_number(value: float | int) -> str:
     return f"{as_float:.3f}".rstrip("0").rstrip(".")
 
 
+def format_lua_string(value: str) -> str:
+    """Format a string for Lua with proper double-quote and backslash escaping."""
+    escaped = (
+        str(value)
+        .replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+    )
+    return f'"{escaped}"'
+
+
 def _stud_rows(studs: Sequence[dict], indent: str) -> list[str]:
     if not studs:
         return [f"{indent}-- (no studs defined for this part)"]
@@ -140,6 +152,15 @@ PRESSURE_LBF_MAP = {
 }
 
 
+def _parse_pressure(val: float | int | str | None) -> float:
+    if val is None or str(val).strip() == "":
+        return 20.0
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return PRESSURE_LBF_MAP.get(str(val).lower().strip(), 20.0)
+
+
 def build_weldflex_lua(
     studs: Sequence[dict],
     cycles: int,
@@ -150,7 +171,8 @@ def build_weldflex_lua(
     boundary_ms: int | None = None,
     safe_z: float | int | None = None,
     part_z: float | int | None = None,
-    pressure_setting: str | None = None,
+    high_z: float | int | None = None,
+    pressure_setting: str | float | int | None = None,
     stud_type: str | None = None,
     substrate: str | None = None,
     speed: float | int | None = None,
@@ -170,7 +192,8 @@ def build_weldflex_lua(
     dwell_ms = default_boundary_ms(gate_mode) if boundary_ms is None else int(boundary_ms)
     safe_z_val = 10.0 if safe_z is None else float(safe_z)
     part_z_val = 0.0 if part_z is None else float(part_z)
-    press_lbf_val = PRESSURE_LBF_MAP.get(str(pressure_setting).lower(), 20.0) if pressure_setting else 20.0
+    high_z_val = 50.0 if high_z is None else float(high_z)
+    press_lbf_val = _parse_pressure(pressure_setting)
     stud_type_val = stud_type or "M4"
     substrate_val = substrate or "Mild Steel"
     speed_val = max(1, min(100, int(speed))) if speed is not None else 25
@@ -194,12 +217,14 @@ def build_weldflex_lua(
             out.append(f"{indent}SAFE_Z = {format_number(safe_z_val)}")
         elif "--{{PART_Z}}" in line:
             out.append(f"{indent}PART_Z = {format_number(part_z_val)}")
+        elif "--{{HIGH_Z}}" in line:
+            out.append(f"{indent}HIGH_Z_CLEARANCE = {format_number(high_z_val)}")
         elif "--{{PRESS_LBF}}" in line:
             out.append(f"{indent}PRESS_LBF = {format_number(press_lbf_val)}")
         elif "--{{STUD_TYPE}}" in line:
-            out.append(f'{indent}STUD_TYPE = "{stud_type_val}"')
+            out.append(f"{indent}STUD_TYPE = {format_lua_string(stud_type_val)}")
         elif "--{{SUBSTRATE}}" in line:
-            out.append(f'{indent}SUBSTRATE = "{substrate_val}"')
+            out.append(f"{indent}SUBSTRATE = {format_lua_string(substrate_val)}")
         elif "--{{GATE}}" in line:
             gate_line = len(out) + 1
             out.extend(

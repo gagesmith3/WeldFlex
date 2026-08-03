@@ -7,11 +7,10 @@ Raspberry Pi kiosk.
 ## Transport and Ownership
 
 - Commands and core state use the controller's XML-RPC endpoint on TCP `20003`.
-  Continuous force attempts the separate CNDE stream on TCP `20004`, configured
-  by `WELDFLEX_CNDE_PORT`. The vendored SDK defaults to `20005`; WeldFlex sets
-  the port and a one-signal `FtSensorData` subscription before its client is
-  constructed. The controller must acknowledge that subscription before CNDE is
-  trusted as a force source.
+  Continuous real-time telemetry uses the CNDE stream on TCP `20005`, configured
+  by `WELDFLEX_CNDE_PORT`. WeldFlex configures real-time subscriptions (`FtSensorData`,
+  `ProgramState`, `RobotState`, `MainCode`, `SubCode`, `RobotMode`, `EmergencyStop`, `MotionDone`)
+  before the client is constructed so telemetry reads perform 0-latency non-blocking reads from `robot_state_pkg`.
 - `backend/robot_link.py` owns the connection lifecycle. It builds and retires
   clients on the supervisor thread, but the `robot-sdk-*` worker is the only
   thread allowed to invoke either SDK methods or `client.robot` raw XML-RPC

@@ -9,7 +9,7 @@ let _state = {
   part_z: 0.0,
   stud_type: 'M4',
   substrate: 'Mild Steel',
-  pressure_setting: 'high',
+  pressure_setting: 20.0,
   isDirty: false,
 };
 
@@ -109,20 +109,29 @@ function buildGrid() {
     g.appendChild(svgEl('line', {x1:i, y1:0,    x2:i,    y2:SIZE, stroke:color, 'stroke-width':w}));
     g.appendChild(svgEl('line', {x1:0, y1:i,    x2:SIZE, y2:i,    stroke:color, 'stroke-width':w}));
 
-    // Label shows physical coordinate (mirrored from SVG position)
+    // Labels for X and Y axes
     if (major && i > 0 && i < SIZE) {
-      const physVal = BED - i;
-      // X-axis label (bottom of SVG = physical Y=0 row)
+      // X-axis label (bottom edge: i=0 is 508, i=508 is 0 at zerozero)
+      const physX = BED - i;
       const tx = svgEl('text', {
         x: i + 2, y: SIZE - 3,
         fill:'#9ab0c4', 'font-size':'7', 'font-family':'monospace',
       });
-      tx.textContent = `${physVal}`;
+      tx.textContent = `${physX}`;
       g.appendChild(tx);
+
+      // Y-axis label (left edge: i=0 is 508, i=508 is 0 at zerozero)
+      const physY = BED - i;
+      const ty = svgEl('text', {
+        x: 3, y: i - 2,
+        fill:'#9ab0c4', 'font-size':'7', 'font-family':'monospace',
+      });
+      ty.textContent = `${physY}`;
+      g.appendChild(ty);
     }
   }
 
-  // Origin marker at SVG bottom-right (physical 0,0)
+  // Origin marker at SVG bottom-right (physical X=0, Y=0)
   const ox = svgEl('text', {
     x: SIZE - 3, y: SIZE - 3,
     'text-anchor': 'end',
@@ -223,7 +232,7 @@ function loadPart(id, name, idx) {
         _state.part_z = data.recipe.part_z !== undefined ? data.recipe.part_z : 0.0;
         _state.stud_type = data.recipe.stud_type || 'M4';
         _state.substrate = data.recipe.substrate || 'Mild Steel';
-        _state.pressure_setting = data.recipe.pressure_setting || 'high';
+        _state.pressure_setting = data.recipe.pressure_setting !== undefined ? (parseFloat(data.recipe.pressure_setting) || 20.0) : 20.0;
       }
       renderPoints();
       renderStudList();
@@ -401,7 +410,7 @@ function pdSave() {
   const part_z = _state.part_z !== undefined ? _state.part_z : 0.0;
   const stud_type = _state.stud_type || 'M4';
   const substrate = _state.substrate || 'Mild Steel';
-  const pressure_setting = _state.pressure_setting || 'high';
+  const pressure_setting = _state.pressure_setting !== undefined ? _state.pressure_setting : 20.0;
 
   const body = new URLSearchParams({
     recipe_name: name,
@@ -511,9 +520,9 @@ function renderStudList() {
       <span class="pd-drag-handle" title="Drag to reorder">⋮⋮</span>
       <span class="pd-stud-num">${p.id}</span>
       <span class="pd-stud-label">X</span>
-      <input class="pd-stud-input" type="number" step="1" value="${p.x}" data-pid="${p.id}" data-axis="x">
+      <input class="pd-stud-input" type="number" min="0" max="508" step="1" value="${p.x}" data-pid="${p.id}" data-axis="x">
       <span class="pd-stud-label">Y</span>
-      <input class="pd-stud-input" type="number" step="1" value="${p.y}" data-pid="${p.id}" data-axis="y">
+      <input class="pd-stud-input" type="number" min="0" max="508" step="1" value="${p.y}" data-pid="${p.id}" data-axis="y">
       <button class="pd-stud-delete-btn" data-pid="${p.id}" title="Remove stud">×</button>
     </div>
   `).join('');
@@ -640,7 +649,7 @@ function pdOpenJobSettingsModal() {
   const partZ = _state.part_z !== undefined ? _state.part_z : 0.0;
   const studType = _state.stud_type || 'M4';
   const substrate = _state.substrate || 'Mild Steel';
-  const pressure = _state.pressure_setting || 'high';
+  const pressure = _state.pressure_setting || '20.0';
 
   const mSafeZ = document.getElementById('pd-modal-safe-z');
   const mPartZ = document.getElementById('pd-modal-part-z');
@@ -673,7 +682,7 @@ function pdSaveJobSettingsModal() {
   if (mPartZ !== undefined) _state.part_z = parseFloat(mPartZ) || 0.0;
   if (mStudType !== undefined) _state.stud_type = mStudType;
   if (mSubstrate !== undefined) _state.substrate = mSubstrate;
-  if (mPressure !== undefined) _state.pressure_setting = mPressure;
+  if (mPressure !== undefined) _state.pressure_setting = parseFloat(mPressure) || 20.0;
 
   pdCloseJobSettingsModal();
   pdSetDirty(true);

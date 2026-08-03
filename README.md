@@ -26,6 +26,7 @@ Robot connection ownership, telemetry sources, freshness, and recovery:
 
 ```
 cd venv/Scripts && activate.bat
+cd 
 python backend\app.py
 ```
 

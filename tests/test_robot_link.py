@@ -239,7 +239,11 @@ def test_open_configures_cnde_port_before_creating_sdk_client(monkeypatch):
     link._attempt_open()
 
     assert observed_ports == [CNDE_PORT]
-    assert configured[0][0][0].name == "FtSensorData"
+    assert CNDE_PORT == 20005
+    state_names = [s.name for s in configured[0][0]]
+    assert "FtSensorData" in state_names
+    assert "ProgramState" in state_names
+    assert "MainCode" in state_names
     assert configured[0][1] == CNDE_PERIOD_MS
 
 
@@ -269,3 +273,37 @@ def test_malformed_raw_fault_reply_does_not_disable_future_samples():
 
     assert (main, sub, source) == (None, None, "none")
     assert link._raw_fault_supported is True
+
+
+def test_read_program_state_and_fault_codes_prefer_cnde_stream():
+    link = RobotLink("127.0.0.1")
+    cnde = SimpleNamespace(_robot_state_run_flag=True)
+    pkg = SimpleNamespace(program_state=2, main_code=102, sub_code=4)
+    client = SimpleNamespace(_cnde_client=cnde, robot_state_pkg=pkg)
+
+    state, st_src = link._read_program_state(client)
+    main, sub, flt_src = link._read_fault_codes(client)
+
+    assert (state, st_src) == (2, "cnde")
+    assert (main, sub, flt_src) == (102, 4, "cnde")
+
+
+def test_call_retries_transient_error_without_invalidating_generation():
+    link = RobotLink("127.0.0.1")
+    handle = _ClientHandle(gen=1, rpc=object(), ip="127.0.0.1")
+    link._handle = handle
+
+    attempt_counter = [0]
+
+    def flakey_fn(rpc):
+        attempt_counter[0] += 1
+        if attempt_counter[0] == 1:
+            raise OSError("Transient socket glitch")
+        return [0, "success"]
+
+    res = link.call(flakey_fn, timeout=1.0, retries=2, label="test_call")
+
+    assert res == [0, "success"]
+    assert attempt_counter[0] == 2
+    assert link._handle is handle  # Handle was NOT invalidated on attempt 1
+

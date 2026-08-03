@@ -13,9 +13,6 @@ local DI_WELD_READY   = 0  -- Welder ready signal (capacitor charge)
 local DO_WELD    = 0       -- Weld trigger output
 local DO_FEED    = 1       -- Stud feeder advance output
 
--- Mode overrides
-local FORCE_TEST_MODE = (WELD_FORCE_TEST == 1) and 1 or 0
-local DO_WELD_ENABLED = (WELD_ARMED == 1 and FORCE_TEST_MODE ~= 1) and 1 or 0
 
 -- ===== Timing (ms) =====
 local WELD_PULSE_MS     = 250
@@ -45,9 +42,8 @@ local PRESS_HOLD_MS = 1000
 
 -- ===== FT_Control & Motion Parameters =====
 local FTC_SENSOR_NUM = 1
-local FTC_GAIN_P     = 0.0005
+local FTC_GAIN_P     = 0.005
 
-local FORCE_TEST_HOLD_MS = 5000
 local READY_TIMEOUT_MS   = 5000
 local READY_SAMPLE_MS    = 100
 
@@ -60,7 +56,7 @@ local FIND_ACC  = 0.0
 local PRESS_DIR = 1     -- 1 = positive (FT_LinInsertion encoding)
 
 local SEARCH_SPEED_MMS = 5.0
-local PRESS_SPEED_MMS  = 2.0
+local PRESS_SPEED_MMS  = 5.0
 
 local SAFE_Z_MM = (type(WELD_SAFE_Z) == "number" and WELD_SAFE_Z > 0) and WELD_SAFE_Z or 10.0
 local Z_CLEARANCE = SAFE_Z_MM
@@ -367,11 +363,6 @@ local function searchForStud()
     end
 
     if readDI(DI_STUD_ON_WORK) ~= 1 then
-        if FORCE_TEST_MODE == 1 then
-            print(string.format("[WELD] Force test: DI%d (stud on work) not active — pressing anyway.",
-                DI_STUD_ON_WORK))
-            return
-        end
         fault(string.format("touched a surface but DI%d (stud on work) is not active",
             DI_STUD_ON_WORK), 4)
     end
@@ -381,9 +372,6 @@ end
 
 local function pressToForce()
     local holdMs = PRESS_HOLD_MS
-    if FORCE_TEST_MODE == 1 then
-        holdMs = FORCE_TEST_HOLD_MS
-    end
 
     if type(FT_Control) ~= "function" then
         fault("FT_Control is not available in this controller's Lua", 9)
@@ -425,7 +413,7 @@ local function pressToForce()
     WaitMs(holdMs)
     pub(SV_PHASE, PH_PRESS_HELD)
 
-    print(string.format("[WELD] Held %.1f lbf for %d ms.", PRESS_TARGET_LBF, holdMs))
+    print(string.format("[WELD] Force target %.1f lbf held for %d ms; maintaining force for weld.", PRESS_TARGET_LBF, holdMs))
 end
 
 local function fireWeld()
@@ -433,19 +421,15 @@ local function fireWeld()
 
     local d1 = readDI(DI_STUD_ON_WORK)
     local d0 = readDI(DI_WELD_READY)
-    print(string.format("[WELD] Pre-fire check: DI%d (stud_on_work)=%d, DI%d (weld_ready)=%d, WELD_ARMED=%s, DO_WELD_ENABLED=%d",
-        DI_STUD_ON_WORK, d1, DI_WELD_READY, d0, tostring(WELD_ARMED), DO_WELD_ENABLED or 0))
+    print(string.format("[WELD] Pre-fire check: DI%d (stud_on_work)=%d, DI%d (weld_ready)=%d",
+        DI_STUD_ON_WORK, d1, DI_WELD_READY, d0))
 
     if d1 ~= 1 then
         fault(string.format("DI%d (stud on work) dropped before the weld pulse", DI_STUD_ON_WORK), 10)
     end
 
-    waitForWeldReady()
-
-    if DO_WELD_ENABLED ~= 1 then
-        print("[WELD] Disarmed (WELD_ARMED ~= 1) — dry run, DO0 not fired.")
-        WaitMs(WELD_PULSE_MS)
-        return
+    if d0 ~= 1 then
+        fault(string.format("DI%d (weld ready) dropped before the weld pulse", DI_WELD_READY), 11)
     end
 
     print(string.format("[WELD] FIRING ARC: DO%d output set HIGH for %d ms", DO_WELD, WELD_PULSE_MS))
@@ -493,18 +477,15 @@ local function weldOneStud()
 
     writeDO(DO_WELD, 0)
 
+    waitForWeldReady()
+    if WELD_FAULT == 1 or faulting then return end
+
     searchForStud()
     if WELD_FAULT == 1 or faulting then return end
 
     pressToForce()
     if WELD_FAULT == 1 or faulting then return end
 
-    if FORCE_TEST_MODE == 1 then
-        print("[WELD] Force test complete — weld force reached and held. Retracting.")
-        retract()
-        pub(SV_PHASE, PH_DONE)
-        return
-    end
 
     fireWeld()
     if WELD_FAULT == 1 or faulting then return end

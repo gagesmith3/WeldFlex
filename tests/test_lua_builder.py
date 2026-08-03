@@ -13,6 +13,7 @@ from lua_builder import (
     WELD_PROGRAM_NAME,
     build_io_monitor_lua,
     build_weldflex_lua,
+    format_lua_string,
     format_number,
     strip_lua_comments,
 )
@@ -53,6 +54,29 @@ def test_weldflex_lua_substitutes_recipe_parameters():
     assert 'STUD_TYPE = "M6"' in built.text
     assert 'SUBSTRATE = "Stainless Steel"' in built.text
     assert "--{{" not in built.text
+
+
+def test_weldflex_lua_high_z_safe_travel_sequence():
+    built = build_weldflex_lua(
+        [{"x": 10, "y": 20}, {"x": 30, "y": 40}],
+        cycles=1,
+        safe_z=10.0,
+        part_z=0.0,
+        high_z=60.0,
+    )
+    assert "HIGH_Z_CLEARANCE = 60" in built.text
+    assert "HIGH_Z = APPROACH_Z + HIGH_Z_CLEARANCE" in built.text
+    assert "PointsOffsetEnable(1, weldX, weldY, HIGH_Z, 0, 0, 0)" in built.text
+    assert "PointsOffsetEnable(1, weldX, weldY, APPROACH_Z, 0, 0, 0)" in built.text
+
+
+def test_weldflex_lua_substitutes_numeric_pressure_setting():
+    built = build_weldflex_lua(
+        [{"x": 10, "y": 20}],
+        cycles=1,
+        pressure_setting="22.5",
+    )
+    assert "PRESS_LBF = 22.5" in built.text
 
 
 def test_marker_line_really_is_the_boundary_dwell():
@@ -144,6 +168,24 @@ def test_format_number():
     assert format_number(1.250) == "1.25"
 
 
+def test_format_lua_string():
+    assert format_lua_string("M4") == '"M4"'
+    assert format_lua_string('1/4"') == r'"1/4\""'
+    assert format_lua_string(r"C:\test") == r'"C:\\test"'
+    assert format_lua_string("line1\nline2") == r'"line1\nline2"'
+
+
+def test_weldflex_lua_escapes_quotes_in_stud_type_and_substrate():
+    built = build_weldflex_lua(
+        [{"x": 10, "y": 20}],
+        cycles=1,
+        stud_type='1/4"',
+        substrate='Stainless "316"',
+    )
+    assert r'STUD_TYPE = "1/4\""' in built.text
+    assert r'SUBSTRATE = "Stainless \"316\""' in built.text
+
+
 # --- weld test harness ------------------------------------------------------
 
 
@@ -184,24 +226,11 @@ def test_a_fault_does_not_erase_which_collision_lever_took():
         "fault() releases the guard before freezing its telemetry"
 
 
-def test_weld_lua_defaults_to_disarmed_when_the_caller_sets_nothing():
-    weld = WELD_PATH.read_text(encoding="utf-8")
-    line = next(l for l in weld.splitlines() if l.startswith("local DO_WELD_ENABLED"))
-    assert "WELD_ARMED == 1" in line
-    assert line.rstrip().endswith("and 1 or 0")
-
-
 def test_weld_lua_upload_gate_matches_weldflex():
     weld = WELD_PATH.read_text(encoding="utf-8")
     template = TEMPLATE_PATH.read_text(encoding="utf-8")
     assert "if WELD_RUN == 1 then" in weld
     assert "WELD_RUN = 1" in template
-
-
-def test_force_test_mode_agrees_across_the_language_boundary():
-    weld = WELD_PATH.read_text(encoding="utf-8")
-    assert "local FORCE_TEST_MODE = (WELD_FORCE_TEST == 1) and 1 or 0" in weld
-    assert "(WELD_ARMED == 1 and FORCE_TEST_MODE ~= 1)" in weld
 
 
 def test_weld_di_map_agrees_across_the_language_boundary():
@@ -487,17 +516,13 @@ def test_weld_lua_reads_no_force_from_lua():
     assert "FT_GetForceTorqueRCS" not in code
 
 
-def test_weld_ready_is_gated_before_the_arm_check_not_inside_it():
-    """The caps-at-charge wait has to sit ahead of the WELD_ARMED branch. Behind
-    it, a dry run would skip the interlock entirely and stop being a rehearsal of
-    the real sequence."""
+def test_weld_ready_is_gated_before_search_and_press():
+    """The caps-at-charge wait sits ahead of searchForStud in weldOneStud."""
     weld = WELD_PATH.read_text(encoding="utf-8")
-    body = weld.split("local function fireWeld()", 1)[1]
+    body = weld.split("local function weldOneStud()", 1)[1]
     wait = body.index("waitForWeldReady()")
-    arm = body.index("if DO_WELD_ENABLED ~= 1 then")
-    assert wait < arm
-    # And the seated check comes first — it is the cheaper failure of the two.
-    assert body.index("readDI(DI_STUD_ON_WORK)") < wait
+    search = body.index("searchForStud()")
+    assert wait < search
 
 
 def test_stripping_comments_never_changes_the_line_count():

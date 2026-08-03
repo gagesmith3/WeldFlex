@@ -28,6 +28,7 @@ from lua_builder import (
     build_io_monitor_lua,
     format_number,
     strip_lua_comments,
+    _parse_pressure,
 )
 from robot_service import STATE_MAP as ROBOT_STATE_MAP, WeldFlexRobotService
 
@@ -165,7 +166,7 @@ def _recipes_enrich(recipes):
             'part_z': float(r.get('part_z', 0.0)),
             'stud_type': r.get('stud_type') or 'M4',
             'substrate': r.get('substrate') or 'Mild Steel',
-            'pressure_setting': r.get('pressure_setting') or 'high',
+            'pressure_setting': _parse_pressure(r.get('pressure_setting')),
         })
     return result
 
@@ -399,9 +400,10 @@ def ui_recipes_save():
 
     stud_type = (request.form.get('stud_type') or 'M4').strip()
     substrate = (request.form.get('substrate') or 'Mild Steel').strip()
-    pressure_setting = (request.form.get('pressure_setting') or 'high').strip()
-    if pressure_setting not in ('low', 'mid', 'high'):
-        pressure_setting = 'high'
+    try:
+        pressure_setting = float(request.form.get('pressure_setting') or 20.0)
+    except (ValueError, TypeError):
+        pressure_setting = _parse_pressure(request.form.get('pressure_setting'))
 
     studs_json = (request.form.get('studs_json') or '').strip()
     studs_text = (request.form.get('studs_text') or '').strip()
@@ -1077,7 +1079,16 @@ def _weld_test_toast(ok: bool, title: str, payload: dict):
 # Idle: just the two interlock levels. Each slot is its own GetSysVarValue RPC
 # inside the sample, and nothing else changes while no program is running.
 _WELD_SV_IDLE = (WELD_SV_PHASE, WELD_SV_STUD_ON_WORK, WELD_SV_WELD_READY)
-_WELD_SV_RUNNING = (WELD_SV_PHASE, WELD_SV_STUD_ON_WORK, WELD_SV_WELD_READY)
+_WELD_SV_RUNNING = (
+    WELD_SV_PHASE,
+    WELD_SV_LAST_RET,
+    WELD_SV_PRESS_Z0,
+    WELD_SV_PRESS_TRAVEL,
+    WELD_SV_PRESS_GUARD,
+    WELD_SV_STUD_ON_WORK,
+    WELD_SV_WELD_READY,
+    WELD_SV_PRESS_LBF,
+)
 
 
 def _start_weld_telemetry(interval_ms: int, slots: tuple[int, ...] = _WELD_SV_IDLE) -> None:

@@ -26,19 +26,13 @@ Layers, strictly one-way:
   such map existed.
 - `.claude/skills/deployment-targets/` — Windows dev box vs. Raspberry Pi kiosk.
 
-## Three things that are not built yet
+## Two things that are not built yet
 
 Do not write code, docs, or commit messages that assume these work:
 
-1. **Nothing welds.** `programs/weld.lua` now exists — search, press to force,
-   pulse, hold, retract, feed — but `WeldFlex.lua`'s cycle loop still never calls
-   it. The loop moves to each stud and dwells, so a *job* is still a complete
-   dry-run motion driver. weld.lua is reachable only from `/operator/weld-test`,
-   one stud at a time, and is disarmed unless the caller sets `WELD_ARMED = 1`.
-   (`programs/weld_wf.lua`, the 0-byte placeholder, has been deleted.)
-2. **No return-to-home.** The program just ends after the last cycle.
-3. **`pause_points` is a dead field.** Every recipe carries it; nothing reads it.
+1. **No return-to-home.** The program just ends after the last cycle.
+2. **`pause_points` is a dead field.** Every recipe carries it; nothing reads it.
    Per-stud operator waits do not exist. The per-cycle `gate_mode` is a different
    feature and does not cover this.
 
-Owner is building 1 and 2; 3 is deferred to a later refactor.
+Owner is building 1; 2 is deferred to a later refactor.

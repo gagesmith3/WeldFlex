@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
 import tempfile
 import threading
 import time
@@ -34,7 +35,14 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
-from lua_builder import GATE_MODES, PROGRAM_NAME, build_weldflex_lua
+from lua_builder import (
+    GATE_MODES,
+    PROGRAM_NAME,
+    WELD_PATH,
+    WELD_PROGRAM_NAME,
+    build_weldflex_lua,
+    strip_lua_comments,
+)
 
 log = logging.getLogger("weldflex.job")
 
@@ -219,6 +227,11 @@ class _Session:
     program: str = PROGRAM_NAME
     gate_mode: str = "pause"
     cycles_target: int = 0
+    safe_z: float = 10.0
+    part_z: float = 0.0
+    pressure_setting: str = "high"
+    stud_type: str = "M4"
+    substrate: str = "Mild Steel"
     started_at: str | None = None
     started_ts: float | None = None
     ended_at: str | None = None
@@ -278,6 +291,11 @@ class JobManager:
         studs: Sequence[dict],
         cycles: int,
         gate_mode: str = "pause",
+        safe_z: float = 10.0,
+        part_z: float = 0.0,
+        pressure_setting: str = "high",
+        stud_type: str = "M4",
+        substrate: str = "Mild Steel",
     ) -> JobSnapshot:
         """Queue a part for running. Rejected while a job is still active.
 
@@ -300,6 +318,11 @@ class JobManager:
                 studs=list(studs),
                 gate_mode=gate_mode,
                 cycles_target=cycles,
+                safe_z=float(safe_z),
+                part_z=float(part_z),
+                pressure_setting=str(pressure_setting),
+                stud_type=str(stud_type),
+                substrate=str(substrate),
             )
             snap = self._snapshot_locked()
         log.info("job loaded run_id=%s part=%r cycles=%d gate=%s studs=%d",
@@ -530,18 +553,37 @@ class JobManager:
                 studs = list(sess.studs)
                 cycles = sess.cycles_target
                 gate_mode = sess.gate_mode
+                safe_z = sess.safe_z
+                part_z = sess.part_z
+                pressure_setting = sess.pressure_setting
+                stud_type = sess.stud_type
+                substrate = sess.substrate
 
-            built = build_weldflex_lua(studs, cycles, gate_mode)
+            built = build_weldflex_lua(
+                studs,
+                cycles,
+                gate_mode=gate_mode,
+                safe_z=safe_z,
+                part_z=part_z,
+                pressure_setting=pressure_setting,
+                stud_type=stud_type,
+                substrate=substrate,
+            )
 
             tmp_dir = tempfile.mkdtemp()
             tmp_path = os.path.join(tmp_dir, built.program_name)
+            weld_tmp_path = os.path.join(tmp_dir, WELD_PROGRAM_NAME)
             try:
+                # Upload weld.lua sub-process first so NewDofile executes the latest code.
+                weld_text = strip_lua_comments(WELD_PATH.read_text(encoding="utf-8"))
+                Path(weld_tmp_path).write_text(weld_text, encoding="utf-8")
+                self._robot.upload_program(weld_tmp_path, replace=True)
+
                 Path(tmp_path).write_text(built.text, encoding="utf-8")
                 uploaded = self._robot.upload_program(tmp_path, replace=True)
             finally:
                 try:
-                    os.remove(tmp_path)
-                    os.rmdir(tmp_dir)
+                    shutil.rmtree(tmp_dir, ignore_errors=True)
                 except OSError:
                     pass
 
@@ -623,10 +665,13 @@ class JobManager:
         self, sess: _Session, snap: Any, program_state: str, events: list
     ) -> tuple | None:
         """One monitor tick. Returns a deferred action for the caller to run unlocked."""
-        # The link is gone. Liberty never noticed this and kept reporting "running"
-        # against a dead robot.
+        # The link is degraded or faulted. Allow a 10s grace period for transient RPC stalls during motion.
         if getattr(snap, "state", None) == "faulted":
-            return ("finish", JobState.INTERRUPTED.value, "Lost connection to the robot")
+            since = getattr(snap, "since_ts", None)
+            fault_duration = (time.time() - since) if since is not None else 999.0
+            if fault_duration >= 10.0:
+                return ("finish", JobState.INTERRUPTED.value, "Lost connection to the robot")
+            return None
 
         if program_state == "running":
             sess.seen_running = True

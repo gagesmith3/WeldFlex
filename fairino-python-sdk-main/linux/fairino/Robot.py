@@ -1508,6 +1508,7 @@ class FRCNDEClient:
         self._recv_thread = None
         self._stop_event = threading.Event()
         self._recv_mutex = threading.Lock()
+        self._state_callback = None
         self._send_count = 0
         self._robot_state_period = DEFAULT_CNDE_PERIOD  # 使用全局默认周期
         self._config_states = []
@@ -1577,6 +1578,10 @@ class FRCNDEClient:
         self._recv_thread.daemon = True
         self._recv_thread.start()
         return 0
+
+    def set_state_callback(self, callback):
+        """Call ``callback(robot_state_pkg)`` after each complete output frame."""
+        self._state_callback = callback
 
     def close(self) -> int:
         """关闭CNDE连接"""
@@ -1923,6 +1928,14 @@ class FRCNDEClient:
                 state_ptr_index += cnde_size
 
         # print(f"[解析结束] 最终偏移: {state_ptr_index}/{data_len}")
+        if state_ptr_index != data_len:
+            return
+        callback = self._state_callback
+        if callback is not None:
+            try:
+                callback(self._robot_state_pkg)
+            except Exception as e:
+                print(f"CNDE state callback failed: {e}")
 
     def _parse_and_set_field(self, data: bytes, field_name: str, cnde_type: str, struct_type: str, cnde_size: int):
         """
@@ -2262,8 +2275,8 @@ class RPC():
         self._udp_count = 0
         self._udp_count_lock = threading.Lock()
 
-        # CNDE客户端（20005端口）- 完全取代20004端口功能
-        print("使用20005 CNDE端口获取状态数据（已取代20004端口）")
+        # CNDE client. RPC.ROBOT_CNDE_PORT may be configured before construction.
+        print(f"Using CNDE port {self.ROBOT_CNDE_PORT} for state data")
         self._com_err_flag = [0]
         # 传入IP地址以支持多机器人隔离配置，传入self以支持断线重连
         self._cnde_client = FRCNDEClient(self.robot_state_pkg, self._com_err_flag, self.ip_address, self)

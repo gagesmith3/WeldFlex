@@ -20,6 +20,51 @@
         {% include "partials/studs_input.html" %}
       </div>
 
+      <div class="parts-job-settings-block">
+        <h4 class="parts-settings-heading">Job Parameters</h4>
+        <div class="parts-settings-grid">
+          <div class="parts-field-group">
+            <label for="safe_z" class="parts-field-label">Safe Z Level (mm)</label>
+            <input type="number" id="safe_z" name="safe_z" step="0.1"
+                   value="{{ recipe.safe_z if recipe and recipe.safe_z is not none else 10.0 }}"
+                   class="parts-setting-input">
+          </div>
+          <div class="parts-field-group">
+            <label for="part_z" class="parts-field-label">Part Z Level (mm)</label>
+            <input type="number" id="part_z" name="part_z" step="0.1"
+                   value="{{ recipe.part_z if recipe and recipe.part_z is not none else 0.0 }}"
+                   class="parts-setting-input">
+          </div>
+          <div class="parts-field-group">
+            <label for="stud_type" class="parts-field-label">Stud Selector</label>
+            <select id="stud_type" name="stud_type" class="parts-setting-select">
+              {% set cur_stud = recipe.stud_type if recipe else 'M4' %}
+              {% for opt in ['M3', 'M4', 'M5', 'M6', 'M8', '1/4"'] %}
+                <option value="{{ opt }}" {% if cur_stud == opt %}selected{% endif %}>{{ opt }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="parts-field-group">
+            <label for="substrate" class="parts-field-label">Substrate</label>
+            <select id="substrate" name="substrate" class="parts-setting-select">
+              {% set cur_sub = recipe.substrate if recipe else 'Mild Steel' %}
+              {% for opt in ['Mild Steel', 'Stainless Steel', 'Aluminum', 'Galvanized'] %}
+                <option value="{{ opt }}" {% if cur_sub == opt %}selected{% endif %}>{{ opt }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="parts-field-group">
+            <label for="pressure_setting" class="parts-field-label">Pressure Setting</label>
+            <select id="pressure_setting" name="pressure_setting" class="parts-setting-select">
+              {% set cur_press = recipe.pressure_setting if recipe else 'high' %}
+              <option value="low" {% if cur_press == 'low' %}selected{% endif %}>Low (17 lbf)</option>
+              <option value="mid" {% if cur_press == 'mid' %}selected{% endif %}>Mid (18.5 lbf)</option>
+              <option value="high" {% if cur_press == 'high' %}selected{% endif %}>High (20 lbf)</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
       <div class="parts-run-row">
         {{ action_button('Delete', variant='recipe-delete', icon='trash_2',
              class_name='js-delete-btn',
@@ -30,7 +75,7 @@
         <div class="parts-run-right">
           {{ action_button('Save', variant='recipe-save', icon='save',
                hx_post='/ui/recipes/save',
-               hx_include='#recipe_name, #studs_text, #coord-table-body input',
+               hx_include='#recipe_name, #studs_text, #coord-table-body input, #safe_z, #part_z, #stud_type, #substrate, #pressure_setting',
                hx_target='#toast-rack',
                hx_on_after_request="if(event.detail.successful){syncPartsEditorUrl()}") }}
           {{ action_button('Run', variant='run', icon='play',

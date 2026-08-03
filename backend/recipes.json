@@ -1,42 +1,56 @@
 [
   {
     "id": "70f16782-b217-4a67-8f98-2d4385e0149b",
-    "name": "kyle",
+    "name": "basic",
     "studs": [
       {
-        "x": 25,
+        "x": 75,
         "y": 25
       },
       {
-        "x": 50,
+        "x": 75,
         "y": 50
       },
       {
         "x": 75,
         "y": 75
+      },
+      {
+        "x": 75,
+        "y": 100
       }
     ],
+    "safe_z": 10.0,
+    "part_z": 0.0,
+    "stud_type": "M4",
+    "substrate": "Mild Steel",
+    "pressure_setting": "low",
     "created_at": "2026-06-24T14:32:50.743941+00:00",
-    "updated_at": "2026-06-24T14:33:23.502893+00:00",
-    "times_ran": 8,
-    "avg_cycle_time": 6.85,
-    "last_run": "2026-07-28T13:27:23",
+    "updated_at": "2026-07-31T19:34:22.378921+00:00",
+    "times_ran": 14,
+    "avg_cycle_time": 10.97,
+    "last_run": "2026-07-31T15:35:05",
     "pause_points": []
   },
   {
     "id": "8732e869-91a7-4478-a9ca-f9dcd643dfe6",
-    "name": "new test",
+    "name": "single",
     "studs": [
       {
         "x": 100,
-        "y": 100
+        "y": 200
       }
     ],
+    "safe_z": 10.0,
+    "part_z": 0.0,
+    "stud_type": "M4",
+    "substrate": "Mild Steel",
+    "pressure_setting": "high",
     "created_at": "2026-07-28T17:04:11.455564+00:00",
-    "updated_at": "2026-07-28T17:04:16.672126+00:00",
-    "times_ran": 10,
-    "avg_cycle_time": 2.55,
-    "last_run": "2026-07-28T14:56:43",
+    "updated_at": "2026-07-31T19:09:31.109727+00:00",
+    "times_ran": 11,
+    "avg_cycle_time": 3.51,
+    "last_run": "2026-07-31T15:10:01",
     "pause_points": []
   }
 ]

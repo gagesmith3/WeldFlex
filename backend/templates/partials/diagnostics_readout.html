@@ -129,6 +129,15 @@
         <strong{% if status.worker_restarts %} class="diag-code-num-error"{% endif %}>{{ status.worker_restarts }}</strong>
       </div>
       <div class="row"><span>Threads</span><strong>{{ status.threads.count }}</strong></div>
+      {# CNDE force streaming needs this thread alive — if it's missing, the
+         controller rejected the FtSensorData config handshake and no force
+         frame will ever arrive, silently, even though the link looks healthy. #}
+      <div class="row">
+        <span>CNDE thread</span>
+        <strong{% if 'CNDERecvThread' not in status.threads.sdk %} class="diag-code-num-error"{% endif %}>
+          {{ 'alive' if 'CNDERecvThread' in status.threads.sdk else 'not running' }}
+        </strong>
+      </div>
       <div class="row"><span>State source</span><strong>{{ status.program_state_source }}</strong></div>
     </div>
   </div>

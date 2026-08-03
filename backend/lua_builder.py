@@ -21,7 +21,26 @@ TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "programs" / PROGRAM_NAME
 WELD_PROGRAM_NAME = "weld.lua"
 WELD_PATH = TEMPLATE_PATH.parent / WELD_PROGRAM_NAME
 
-WELD_TEST_PROGRAM_NAME = "weld_test.lua"
+# The no-motion DI monitor and its harness. Same two-file shape as weld.lua: the
+# monitor is upload-gated so the controller's post-upload check (which executes
+# top-level Lua) cannot start its loop, and the generated harness is the caller
+# that sets the sentinel.
+IO_MONITOR_PROGRAM_NAME = "io_monitor.lua"
+IO_MONITOR_PATH = TEMPLATE_PATH.parent / IO_MONITOR_PROGRAM_NAME
+IO_MONITOR_RUN_PROGRAM_NAME = "io_monitor_run.lua"
+
+# Monitor window bounds in ms. Mirrors MONITOR_MAX_MS in programs/io_monitor.lua,
+# which clamps the same value controller-side; asserted by tests.
+IO_MONITOR_MAX_MS = 300000
+IO_MONITOR_DEFAULT_MS = 45000
+
+# Ceiling on the force-ladder rung a caller may ask for, in lbf. Mirrors
+# PRESS_TARGET_MAX_LBF in programs/weld.lua, which clamps the same value on the
+# controller side — this copy exists so a bad number is refused before it is
+# uploaded, with a message, instead of silently pressing at the 20 lbf default.
+# Nothing enforces the two copies agree across the language boundary, so
+# tests/test_lua_builder.py asserts it.
+PRESS_LBF_MAX = 25.0
 
 GATE_MODES = ("none", "pause", "di")
 
@@ -114,6 +133,13 @@ def _indent_of(line: str) -> str:
     return line[: len(line) - len(line.lstrip())]
 
 
+PRESSURE_LBF_MAP = {
+    "low": 17.0,
+    "mid": 18.5,
+    "high": 20.0,
+}
+
+
 def build_weldflex_lua(
     studs: Sequence[dict],
     cycles: int,
@@ -122,6 +148,12 @@ def build_weldflex_lua(
     gate_di: int | None = None,
     gate_timeout_ms: int | None = None,
     boundary_ms: int | None = None,
+    safe_z: float | int | None = None,
+    part_z: float | int | None = None,
+    pressure_setting: str | None = None,
+    stud_type: str | None = None,
+    substrate: str | None = None,
+    speed: float | int | None = None,
 ) -> BuiltProgram:
     """Substitute the template's markers and report the generated line numbers."""
     if gate_mode not in GATE_MODES:
@@ -136,6 +168,12 @@ def build_weldflex_lua(
     template_lines = path.read_text(encoding="utf-8").splitlines()
 
     dwell_ms = default_boundary_ms(gate_mode) if boundary_ms is None else int(boundary_ms)
+    safe_z_val = 10.0 if safe_z is None else float(safe_z)
+    part_z_val = 0.0 if part_z is None else float(part_z)
+    press_lbf_val = PRESSURE_LBF_MAP.get(str(pressure_setting).lower(), 20.0) if pressure_setting else 20.0
+    stud_type_val = stud_type or "M4"
+    substrate_val = substrate or "Mild Steel"
+    speed_val = max(1, min(100, int(speed))) if speed is not None else 25
 
     out: list[str] = []
     loop_start_line = cycle_marker_line = gate_line = 0
@@ -150,6 +188,18 @@ def build_weldflex_lua(
         elif "--{{BOUNDARY_MS}}" in line:
             out.append(f"{indent}BOUNDARY_MS = {dwell_ms}")
             boundary_seen = True
+        elif "--{{SPEED}}" in line:
+            out.append(f"{indent}speed = {speed_val}")
+        elif "--{{SAFE_Z}}" in line:
+            out.append(f"{indent}SAFE_Z = {format_number(safe_z_val)}")
+        elif "--{{PART_Z}}" in line:
+            out.append(f"{indent}PART_Z = {format_number(part_z_val)}")
+        elif "--{{PRESS_LBF}}" in line:
+            out.append(f"{indent}PRESS_LBF = {format_number(press_lbf_val)}")
+        elif "--{{STUD_TYPE}}" in line:
+            out.append(f'{indent}STUD_TYPE = "{stud_type_val}"')
+        elif "--{{SUBSTRATE}}" in line:
+            out.append(f'{indent}SUBSTRATE = "{substrate_val}"')
         elif "--{{GATE}}" in line:
             gate_line = len(out) + 1
             out.extend(
@@ -226,17 +276,51 @@ _ASSIGNMENT_RE = re.compile(r"^(\w+)\s*=\s*(-?\d+(?:\.\d+)?)\s*(?:--.*)?$")
 
 
 @dataclass(frozen=True)
-class BuiltWeldTest:
-    """Generated harness text plus what it was built to do."""
+class BuiltIoMonitor:
+    """Generated io_monitor.lua caller plus the window it was built for."""
 
     text: str
-    frame: dict[str, str]
-    weld_x: float
-    weld_y: float
-    armed: bool
-    force_test: bool
-    program_name: str = WELD_TEST_PROGRAM_NAME
-    weld_program_name: str = WELD_PROGRAM_NAME
+    duration_ms: int
+    program_name: str = IO_MONITOR_RUN_PROGRAM_NAME
+    monitor_program_name: str = IO_MONITOR_PROGRAM_NAME
+
+
+def build_io_monitor_lua(duration_ms: int = IO_MONITOR_DEFAULT_MS) -> BuiltIoMonitor:
+    """Build the caller that runs programs/io_monitor.lua once.
+
+    Deliberately has no frame globals, no offsets and no motion instruction of
+    any kind. This is the whole point of the file: the two weld interlocks were
+    previously only observable by starting a weld test, which moves the arm to
+    answer a wiring question. Anything that adds a move here gives that back.
+    """
+    if not (0 < int(duration_ms) <= IO_MONITOR_MAX_MS):
+        raise ValueError(
+            f"monitor window must be above 0 and no more than {IO_MONITOR_MAX_MS} ms, "
+            f"got {duration_ms}"
+        )
+
+    lines = [
+        "-- Auto-generated by WeldFlex — DI monitor caller.",
+        "-- Uploaded fresh on every run and replaced in place. Never edit on the",
+        "-- controller; edit backend/lua_builder.py instead.",
+        "--",
+        f"-- Runs one pass of /fruser/{IO_MONITOR_PROGRAM_NAME}, which reads the two weld",
+        "-- interlock inputs into system variables 6 and 7 so the Weld Test page can",
+        "-- show them live. NO MOTION: this file and the one it calls issue no move,",
+        "-- no force instruction and no digital output.",
+        "",
+        "-- How long to watch, in ms. io_monitor.lua clamps this.",
+        f"IO_MONITOR_MS = {int(duration_ms)}",
+        "",
+        "-- Upload gate: the controller's post-upload check executes top-level Lua,",
+        "-- so io_monitor.lua stays define-only unless its caller publishes this.",
+        "IO_MONITOR_RUN = 1",
+        "",
+        f'NewDofile("/fruser/{IO_MONITOR_PROGRAM_NAME}", 1, 1)',
+        "DofileEnd()",
+    ]
+
+    return BuiltIoMonitor(text="\n".join(lines) + "\n", duration_ms=int(duration_ms))
 
 
 def strip_lua_comments(text: str) -> str:
@@ -246,10 +330,6 @@ def strip_lua_comments(text: str) -> str:
     Every other Lua file this app uploads is under 2 KB, so size is the first
     thing worth ruling out when a transfer is refused.
 
-    Blanked, not deleted, on purpose: the weld-test trace reads GetCurrentLine
-    against weld.lua's line numbers, so a stripped copy that renumbered the file
-    would make the one signal this page exists to collect unreadable.
-
     Only lines whose first token is `--` are touched. Trailing comments are left
     alone rather than parsed, because telling a real comment from `--` inside a
     string literal needs a lexer, and being wrong corrupts the program.
@@ -257,111 +337,3 @@ def strip_lua_comments(text: str) -> str:
     return "\n".join("" if line.lstrip().startswith("--") else line
                      for line in text.splitlines()) + "\n"
 
-
-def read_frame_globals(template_path: str | os.PathLike | None = None) -> dict[str, str]:
-    """Pull the frame/motion globals out of the WeldFlex.lua template.
-
-    Values are returned as source text, not numbers, so `Z_CLEARANCE = 10` stays
-    `10` in the generated file instead of becoming `10.0`.
-    """
-    path = Path(template_path) if template_path else TEMPLATE_PATH
-    if not path.is_file():
-        raise FileNotFoundError(f"Lua template not found: {path}")
-
-    found: dict[str, str] = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        # The loop is the end of the declaration block; anything after it is body.
-        if line.startswith("for "):
-            break
-        match = _ASSIGNMENT_RE.match(line)
-        if match and match.group(1) in FRAME_GLOBALS:
-            found[match.group(1)] = match.group(2)
-
-    missing = [name for name in FRAME_GLOBALS if name not in found]
-    if missing:
-        raise RuntimeError(
-            f"{path.name} is missing frame global(s) the weld test harness needs: "
-            f"{', '.join(missing)}"
-        )
-    return found
-
-
-def build_weld_test_lua(
-    weld_x: float,
-    weld_y: float,
-    armed: bool = False,
-    force_test: bool = False,
-    template_path: str | os.PathLike | None = None,
-) -> BuiltWeldTest:
-    """Build a harness that welds exactly one stud at (weld_x, weld_y).
-
-    `armed=False` publishes WELD_ARMED = 0, which runs the whole search / press /
-    hold / retract / feed sequence with weld.lua's DO0 pulse suppressed. That is
-    the default because an unset or mistyped arm flag must never be the thing
-    that strikes an arc.
-
-    `force_test=True` publishes WELD_FORCE_TEST = 1: search, press to weld force,
-    hold it long enough to watch, retract — DI1 reported but not enforced, WELD
-    and FEED never reached. For proving the press before the welder is in the
-    loop. weld.lua forces DO0 off in this mode regardless of WELD_ARMED, and an
-    armed force test is refused here too rather than silently disarmed.
-    """
-    if armed and force_test:
-        raise ValueError("a force test cannot be armed — drop one of the two flags")
-
-    frame = read_frame_globals(template_path)
-    x = format_number(weld_x)
-    y = format_number(weld_y)
-    armed_flag = 1 if armed else 0
-
-    lines = [
-        f"-- Auto-generated by WeldFlex — single-stud weld test harness.",
-        f"-- Uploaded fresh on every run and replaced in place. Never edit on the",
-        f"-- controller; edit backend/lua_builder.py instead.",
-        "--",
-        f"-- Runs one pass of /fruser/{WELD_PROGRAM_NAME} at a single point, so the",
-        "-- weld sub-process can be exercised without loading a part or a cycle count.",
-        "",
-        "-- Frame selection, copied from WeldFlex.lua so the test approaches in the",
-        "-- same frame a production cycle does.",
-    ]
-    lines += [f"{name} = {frame[name]}" for name in FRAME_GLOBALS]
-    lines += [
-        "",
-        "-- weld.lua's input contract. weldX/weldY are globals because a NewDofile'd",
-        "-- chunk cannot see the caller's locals.",
-        f"weldX = {x}",
-        f"weldY = {y}",
-        "",
-        (
-            "-- 1 = fire DO0 for real. 0 = run everything else and suppress the pulse."
-            if armed_flag
-            else "-- 0 = run everything else and suppress the weld pulse (dry run)."
-        ),
-        f"WELD_ARMED = {armed_flag}",
-        "",
-        "-- 1 = press verification only: hold weld force, then retract; the weld",
-        "-- pulse and feed are never reached and DO0 is forced off.",
-        f"WELD_FORCE_TEST = {1 if force_test else 0}",
-        "",
-        "-- Upload gate: the controller's post-upload check executes top-level Lua,",
-        "-- so weld.lua stays define-only unless its caller publishes WELD_RUN = 1.",
-        "WELD_RUN = 1",
-        "",
-        "-- Park over the test point at the safe Z, exactly as the cycle loop does.",
-        "PointsOffsetEnable(1, weldX, weldY, Z_CLEARANCE, 0, 0, 0)",
-        "PTP(zerozero, speed, -1, 0)",
-        "PointsOffsetDisable()",
-        "",
-        f'NewDofile("/fruser/{WELD_PROGRAM_NAME}", 1, 1)',
-        "DofileEnd()",
-    ]
-
-    return BuiltWeldTest(
-        text="\n".join(lines) + "\n",
-        frame=frame,
-        weld_x=float(weld_x),
-        weld_y=float(weld_y),
-        armed=bool(armed),
-        force_test=bool(force_test),
-    )

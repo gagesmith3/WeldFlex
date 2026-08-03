@@ -5,6 +5,11 @@ let _state = {
   activePart:   null,  // display name
   selectedPoint: null,
   points: [],
+  safe_z: 10.0,
+  part_z: 0.0,
+  stud_type: 'M4',
+  substrate: 'Mild Steel',
+  pressure_setting: 'high',
   isDirty: false,
 };
 
@@ -53,6 +58,29 @@ function pdInit() {
   const deleteModal = document.getElementById('pd-delete-modal');
   if (deleteModal) deleteModal.addEventListener('click', e => {
     if (e.target === deleteModal) pdCancelDelete();
+  });
+
+  const renameInput = document.getElementById('pd-rename-input');
+  if (renameInput) {
+    renameInput.addEventListener('keydown', e => {
+      if (e.key === 'Enter')  pdConfirmRename();
+      if (e.key === 'Escape') pdCancelRename();
+    });
+  }
+
+  const renameModal = document.getElementById('pd-rename-modal');
+  if (renameModal) renameModal.addEventListener('click', e => {
+    if (e.target === renameModal) pdCancelRename();
+  });
+
+  const settingsModal = document.getElementById('pd-settings-modal');
+  if (settingsModal) settingsModal.addEventListener('click', e => {
+    if (e.target === settingsModal) pdCloseJobSettingsModal();
+  });
+
+  const reportsModal = document.getElementById('pd-reports-modal');
+  if (reportsModal) reportsModal.addEventListener('click', e => {
+    if (e.target === reportsModal) pdCloseJobReportsModal();
   });
 }
 
@@ -168,10 +196,17 @@ function fetchParts() {
     });
 }
 
+function pdParamChanged() {
+  pdSetDirty(true);
+}
+
 function loadPart(id, name, idx) {
   _state.activeId   = id;
   _state.activePart = name;
   _state.selectedPoint = null;
+
+  const titleEl = document.getElementById('pd-canvas-part-title');
+  if (titleEl) titleEl.textContent = name;
 
   document.querySelectorAll('.pd-part-item').forEach(el => {
     el.classList.toggle('active', el.dataset.partId === id);
@@ -182,6 +217,14 @@ function loadPart(id, name, idx) {
     .then(data => {
       if (!data.ok) { _state.points = []; }
       else          { _state.points = data.points.map((p, i) => ({ ...p, id: i + 1 })); }
+      if (data.recipe) {
+        _currentRecipe = data.recipe;
+        _state.safe_z = data.recipe.safe_z !== undefined ? data.recipe.safe_z : 10.0;
+        _state.part_z = data.recipe.part_z !== undefined ? data.recipe.part_z : 0.0;
+        _state.stud_type = data.recipe.stud_type || 'M4';
+        _state.substrate = data.recipe.substrate || 'Mild Steel';
+        _state.pressure_setting = data.recipe.pressure_setting || 'high';
+      }
       renderPoints();
       renderStudList();
       setCoords(null);
@@ -318,6 +361,9 @@ function pdStartNewPart(name) {
   _state.points        = [];
   _state.selectedPoint = null;
 
+  const titleEl = document.getElementById('pd-canvas-part-title');
+  if (titleEl) titleEl.textContent = name;
+
   document.querySelectorAll('.pd-part-item').forEach(el => el.classList.remove('active'));
   renderPoints();
   renderStudList();
@@ -351,7 +397,21 @@ function pdSave() {
   if (!name) return;
 
   const studs_json = JSON.stringify(_state.points.map(p => ({ x: p.x, y: p.y })));
-  const body = new URLSearchParams({ recipe_name: name, studs_json });
+  const safe_z = _state.safe_z !== undefined ? _state.safe_z : 10.0;
+  const part_z = _state.part_z !== undefined ? _state.part_z : 0.0;
+  const stud_type = _state.stud_type || 'M4';
+  const substrate = _state.substrate || 'Mild Steel';
+  const pressure_setting = _state.pressure_setting || 'high';
+
+  const body = new URLSearchParams({
+    recipe_name: name,
+    studs_json,
+    safe_z,
+    part_z,
+    stud_type,
+    substrate,
+    pressure_setting,
+  });
   if (_state.activeId) body.set('recipe_id', _state.activeId);
 
   const saveBtn = document.getElementById('pd-save-btn');
@@ -406,6 +466,8 @@ function pdConfirmDelete() {
         _state.activePart    = null;
         _state.points        = [];
         _state.selectedPoint = null;
+        const titleEl = document.getElementById('pd-canvas-part-title');
+        if (titleEl) titleEl.textContent = 'No Part Selected';
         renderPoints();
         renderStudList();
         setCoords(null);
@@ -429,6 +491,8 @@ function setCoords(p) {
 
 // ── Stud list ─────────────────────────────────────────────────────────────────
 
+let _draggedStudIdx = null;
+
 function renderStudList() {
   const el    = document.getElementById('pd-stud-list');
   const badge = document.getElementById('pd-stud-count');
@@ -441,8 +505,10 @@ function renderStudList() {
     return;
   }
 
-  el.innerHTML = _state.points.map(p => `
-    <div class="pd-stud-row${_state.selectedPoint === p.id ? ' selected' : ''}" data-pid="${p.id}">
+  el.innerHTML = _state.points.map((p, idx) => `
+    <div class="pd-stud-row${_state.selectedPoint === p.id ? ' selected' : ''}"
+         data-pid="${p.id}" data-idx="${idx}" draggable="true">
+      <span class="pd-drag-handle" title="Drag to reorder">⋮⋮</span>
       <span class="pd-stud-num">${p.id}</span>
       <span class="pd-stud-label">X</span>
       <input class="pd-stud-input" type="number" step="1" value="${p.x}" data-pid="${p.id}" data-axis="x">
@@ -452,7 +518,7 @@ function renderStudList() {
     </div>
   `).join('');
 
-  el.querySelectorAll('.pd-stud-row').forEach(row => {
+  el.querySelectorAll('.pd-stud-row').forEach((row, idx) => {
     row.addEventListener('click', () => {
       const pid = parseInt(row.dataset.pid);
       const p   = _state.points.find(pt => pt.id === pid);
@@ -462,10 +528,65 @@ function renderStudList() {
       renderStudList();
       setCoords(_state.selectedPoint ? p : null);
     });
+
+    row.addEventListener('dragstart', e => {
+      _draggedStudIdx = idx;
+      row.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', String(idx));
+    });
+
+    row.addEventListener('dragover', e => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      row.classList.add('drag-over');
+    });
+
+    row.addEventListener('dragenter', e => {
+      e.preventDefault();
+      row.classList.add('drag-over');
+    });
+
+    row.addEventListener('dragleave', () => {
+      row.classList.remove('drag-over');
+    });
+
+    row.addEventListener('drop', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      row.classList.remove('drag-over');
+      const fromIdx = _draggedStudIdx;
+      const toIdx = idx;
+      if (fromIdx === null || fromIdx === toIdx) return;
+
+      const [moved] = _state.points.splice(fromIdx, 1);
+      _state.points.splice(toIdx, 0, moved);
+      _state.points.forEach((pt, i) => { pt.id = i + 1; });
+
+      _draggedStudIdx = null;
+      renderPoints();
+      renderStudList();
+      pdSetDirty(true);
+    });
+
+    row.addEventListener('dragend', () => {
+      _draggedStudIdx = null;
+      el.querySelectorAll('.pd-stud-row').forEach(r => {
+        r.classList.remove('dragging', 'drag-over');
+      });
+    });
   });
 
   el.querySelectorAll('.pd-stud-input').forEach(input => {
     input.addEventListener('click', e => e.stopPropagation());
+    input.addEventListener('focus', e => {
+      const row = e.target.closest('.pd-stud-row');
+      if (row) row.setAttribute('draggable', 'false');
+    });
+    input.addEventListener('blur', e => {
+      const row = e.target.closest('.pd-stud-row');
+      if (row) row.setAttribute('draggable', 'true');
+    });
     input.addEventListener('change', () => {
       const pid  = parseInt(input.dataset.pid);
       const axis = input.dataset.axis;
@@ -506,3 +627,118 @@ function svgEl(tag, attrs = {}) {
   for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
   return el;
 }
+
+// ── Job Settings & Reports Modals ─────────────────────────────────────────────
+
+function pdOpenJobSettingsModal() {
+  const modal = document.getElementById('pd-settings-modal');
+  if (!modal) return;
+  const nameEl = document.getElementById('pd-modal-settings-part-name');
+  if (nameEl) nameEl.textContent = _state.activePart || 'Untitled';
+
+  const safeZ = _state.safe_z !== undefined ? _state.safe_z : 10.0;
+  const partZ = _state.part_z !== undefined ? _state.part_z : 0.0;
+  const studType = _state.stud_type || 'M4';
+  const substrate = _state.substrate || 'Mild Steel';
+  const pressure = _state.pressure_setting || 'high';
+
+  const mSafeZ = document.getElementById('pd-modal-safe-z');
+  const mPartZ = document.getElementById('pd-modal-part-z');
+  const mStudType = document.getElementById('pd-modal-stud-type');
+  const mSubstrate = document.getElementById('pd-modal-substrate');
+  const mPressure = document.getElementById('pd-modal-pressure');
+
+  if (mSafeZ) mSafeZ.value = safeZ;
+  if (mPartZ) mPartZ.value = partZ;
+  if (mStudType) mStudType.value = studType;
+  if (mSubstrate) mSubstrate.value = substrate;
+  if (mPressure) mPressure.value = pressure;
+
+  modal.removeAttribute('hidden');
+}
+
+function pdCloseJobSettingsModal() {
+  const modal = document.getElementById('pd-settings-modal');
+  if (modal) modal.setAttribute('hidden', '');
+}
+
+function pdSaveJobSettingsModal() {
+  const mSafeZ = document.getElementById('pd-modal-safe-z')?.value;
+  const mPartZ = document.getElementById('pd-modal-part-z')?.value;
+  const mStudType = document.getElementById('pd-modal-stud-type')?.value;
+  const mSubstrate = document.getElementById('pd-modal-substrate')?.value;
+  const mPressure = document.getElementById('pd-modal-pressure')?.value;
+
+  if (mSafeZ !== undefined) _state.safe_z = parseFloat(mSafeZ) || 10.0;
+  if (mPartZ !== undefined) _state.part_z = parseFloat(mPartZ) || 0.0;
+  if (mStudType !== undefined) _state.stud_type = mStudType;
+  if (mSubstrate !== undefined) _state.substrate = mSubstrate;
+  if (mPressure !== undefined) _state.pressure_setting = mPressure;
+
+  pdCloseJobSettingsModal();
+  pdSetDirty(true);
+  pdSave();
+}
+
+function pdOpenJobReportsModal() {
+  const modal = document.getElementById('pd-reports-modal');
+  if (!modal) return;
+  const nameEl = document.getElementById('pd-report-part-name');
+  if (nameEl) nameEl.textContent = _state.activePart || 'Untitled';
+
+  const studsEl = document.getElementById('pd-report-studs');
+  if (studsEl) studsEl.textContent = _state.points ? `${_state.points.length} stud${_state.points.length !== 1 ? 's' : ''}` : '0 studs';
+
+  const r = _currentRecipe || {};
+  const runsEl = document.getElementById('pd-report-runs');
+  if (runsEl) runsEl.textContent = r.times_ran !== undefined ? `${r.times_ran} run${r.times_ran !== 1 ? 's' : ''}` : '0 runs';
+
+  const avgEl = document.getElementById('pd-report-avg-time');
+  if (avgEl) avgEl.textContent = r.avg_cycle_time ? `${r.avg_cycle_time.toFixed(1)}s` : '—';
+
+  const lastEl = document.getElementById('pd-report-last-run');
+  if (lastEl) lastEl.textContent = r.updated_label || r.last_run || 'Never';
+
+  modal.removeAttribute('hidden');
+}
+
+function pdCloseJobReportsModal() {
+  const modal = document.getElementById('pd-reports-modal');
+  if (modal) modal.setAttribute('hidden', '');
+}
+
+// ── Rename Part ───────────────────────────────────────────────────────────────
+
+function pdOpenRenameModal() {
+  if (!_state.activeId && !_state.activePart) return;
+  const modal = document.getElementById('pd-rename-modal');
+  const input = document.getElementById('pd-rename-input');
+  if (!modal || !input) return;
+  input.value = _state.activePart || '';
+  modal.removeAttribute('hidden');
+  input.focus();
+  input.select();
+}
+
+function pdCancelRename() {
+  const modal = document.getElementById('pd-rename-modal');
+  const input = document.getElementById('pd-rename-input');
+  if (modal) modal.setAttribute('hidden', '');
+  if (input) input.value = '';
+}
+
+function pdConfirmRename() {
+  const input = document.getElementById('pd-rename-input');
+  if (!input) return;
+  const newName = input.value.trim();
+  if (!newName) return;
+
+  _state.activePart = newName;
+  const titleEl = document.getElementById('pd-canvas-part-title');
+  if (titleEl) titleEl.textContent = newName;
+
+  pdCancelRename();
+  pdSetDirty(true);
+  pdSave();
+}
+

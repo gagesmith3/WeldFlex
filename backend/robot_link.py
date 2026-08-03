@@ -90,7 +90,26 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def _env_port(name: str, default: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+    return value if 1 <= value <= 65535 else default
+
+
+def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+    return value if minimum <= value <= maximum else default
+
+
 XMLRPC_PORT = 20003
+CNDE_PORT = _env_port("WELDFLEX_CNDE_PORT", 20004)
+CNDE_PERIOD_MS = _env_int("WELDFLEX_CNDE_PERIOD_MS", 20, 8, 1000)
+CNDE_FORCE_FRESH_S = _env_float("WELDFLEX_CNDE_FORCE_FRESH_S", 0.5)
 
 # Socket timeout for the XML-RPC channel. The SDK never sets one: RPC.__init__ probes
 # under socket.setdefaulttimeout(1) then restores it to None (Robot.py:2294-2297), so
@@ -102,7 +121,7 @@ HEARTBEAT_FAST_S = _env_float("WELDFLEX_HEARTBEAT_FAST_S", 0.25)
 PROBE_TIMEOUT_S = _env_float("WELDFLEX_PROBE_TIMEOUT_S", 6.0)
 
 # Consecutive probe failures before the link is declared faulted rather than degraded.
-FAIL_THRESHOLD = int(_env_float("WELDFLEX_FAIL_THRESHOLD", 3))
+FAIL_THRESHOLD = int(_env_float("WELDFLEX_FAIL_THRESHOLD", 8))
 # How long a snapshot may go unrefreshed during a long command before it is called stale.
 BUSY_STALE_S = _env_float("WELDFLEX_BUSY_STALE_S", 45.0)
 # How long a single SDK call may run before its worker is presumed poisoned.
@@ -295,6 +314,25 @@ class ConnSnapshot:
 
 
 @dataclass(frozen=True)
+class ForceSnapshot:
+    """Latest complete CNDE force frame, independent of browser polling."""
+
+    values: tuple[float, float, float, float, float, float] | None = None
+    received_monotonic: float | None = None
+    generation: int | None = None
+    source: str = "none"
+
+    def age_s(self) -> float | None:
+        if self.received_monotonic is None:
+            return None
+        return max(0.0, time.monotonic() - self.received_monotonic)
+
+    def is_fresh(self, max_age_s: float = CNDE_FORCE_FRESH_S) -> bool:
+        age = self.age_s()
+        return self.values is not None and age is not None and age <= max_age_s
+
+
+@dataclass(frozen=True)
 class _ClientHandle:
     gen: int
     rpc: Any
@@ -315,18 +353,34 @@ class _SdkWorker:
 
     def __init__(self, name: str) -> None:
         self.name = name
-        self._queue: queue.SimpleQueue = queue.SimpleQueue()
+        self._queue: queue.PriorityQueue = queue.PriorityQueue()
+        self._submit_lock = threading.Lock()
+        self._sequence = 0
+        self._coalesced: dict[str, concurrent.futures.Future] = {}
         self._active: tuple[str, float] | None = None
         self._retired = False
         self._thread = threading.Thread(target=self._run, name=name, daemon=True)
         self._thread.start()
 
-    def submit(self, fn: Callable[[], Any], label: str = "") -> concurrent.futures.Future:
+    def submit(
+        self,
+        fn: Callable[[], Any],
+        label: str = "",
+        priority: int = 0,
+        coalesce_key: str | None = None,
+    ) -> concurrent.futures.Future:
         future: concurrent.futures.Future = concurrent.futures.Future()
-        if self._retired:
-            future.set_exception(RuntimeError(f"SDK worker {self.name} is retired"))
-            return future
-        self._queue.put((future, fn, label))
+        with self._submit_lock:
+            if self._retired:
+                future.set_exception(RuntimeError(f"SDK worker {self.name} is retired"))
+                return future
+            if coalesce_key is not None:
+                existing = self._coalesced.get(coalesce_key)
+                if existing is not None and not existing.done():
+                    return existing
+                self._coalesced[coalesce_key] = future
+            self._sequence += 1
+            self._queue.put((priority, self._sequence, future, fn, label, coalesce_key))
         return future
 
     def active(self) -> tuple[str, float] | None:
@@ -342,8 +396,13 @@ class _SdkWorker:
 
     def retire(self) -> None:
         """Stop accepting work and exit once the current call returns (if it ever does)."""
-        self._retired = True
-        self._queue.put(None)
+        with self._submit_lock:
+            self._retired = True
+            self._sequence += 1
+            # Commands, core probes, and detailed telemetry use priorities 0, 1, and
+            # 2. Retire only after accepting work has drained, matching SimpleQueue's
+            # former sentinel behavior.
+            self._queue.put((99, self._sequence, None, None, "", None))
 
     def alive(self) -> bool:
         return self._thread.is_alive()
@@ -351,9 +410,9 @@ class _SdkWorker:
     def _run(self) -> None:
         while True:
             item = self._queue.get()
-            if item is None:
+            _, _, future, fn, label, coalesce_key = item
+            if future is None:
                 return
-            future, fn, label = item
             if not future.set_running_or_notify_cancel():
                 continue
             self._active = (label or "call", time.monotonic())
@@ -363,6 +422,10 @@ class _SdkWorker:
                 future.set_exception(exc)
             finally:
                 self._active = None
+                if coalesce_key is not None:
+                    with self._submit_lock:
+                        if self._coalesced.get(coalesce_key) is future:
+                            del self._coalesced[coalesce_key]
 
 
 class RobotLink:
@@ -395,6 +458,7 @@ class RobotLink:
         self._next_attempt_ts: float | None = None
         self._raw_state_supported: bool | None = None
         self._raw_fault_supported: bool | None = None
+        self._force_snapshot = ForceSnapshot()
 
         self._snapshot = ConnSnapshot(ip=self._ip)
 
@@ -519,6 +583,14 @@ class RobotLink:
         with self._state_lock:
             return self._snapshot
 
+    def force_snapshot(self) -> ForceSnapshot:
+        """Return the latest CNDE frame without performing robot I/O."""
+        with self._state_lock:
+            snapshot = self._force_snapshot
+            if snapshot.generation != self._gen:
+                return ForceSnapshot()
+            return snapshot
+
     def thread_report(self) -> dict[str, Any]:
         """Live thread census — the only way to see a thread leak in the field."""
         names = sorted(t.name for t in threading.enumerate())
@@ -538,6 +610,8 @@ class RobotLink:
         timeout: float,
         retries: int = 3,
         label: str = "",
+        priority: int = 0,
+        coalesce_key: str | None = None,
     ) -> Any:
         """Run an SDK call on the worker thread against the current client.
 
@@ -561,7 +635,13 @@ class RobotLink:
                 raise RuntimeError(f"Robot not connected ({snap.state}): {detail}")
 
             try:
-                future = self._worker.submit(lambda: fn(handle.rpc), label=label or "call")
+                key = None if coalesce_key is None else f"{coalesce_key}:{handle.gen}"
+                future = self._worker.submit(
+                    lambda: fn(handle.rpc),
+                    label=label or "call",
+                    priority=priority,
+                    coalesce_key=key,
+                )
                 result = future.result(timeout=timeout)
                 if has_conn_error(result):
                     raise SdkCommError("SDK reported communication failure")
@@ -820,8 +900,24 @@ class RobotLink:
 
         client = None
         try:
+            # The controller rejected the SDK's default 73-state subscription.
+            # Force is the only realtime value WeldFlex needs, so request that
+            # one signal before RPC.__init__ starts the receiver.
+            Robot.SetRobotRealtimeStateConfig(
+                [Robot.RobotState.FtSensorData], CNDE_PERIOD_MS
+            )
+            # Configure the SDK's class-level port before construction because
+            # RPC.__init__ starts its receiver immediately.
+            Robot.RPC.ROBOT_CNDE_PORT = CNDE_PORT
             client = Robot.RPC(ip)
             harden_client(client, ip)
+            cnde = getattr(client, "_cnde_client", None)
+            if cnde is not None:
+                cnde.set_state_callback(lambda state: self._on_cnde_state(client, state))
+            # Capability is controller-session specific. A reconnect may target
+            # newer firmware or recover an RPC method that failed transiently.
+            self._raw_state_supported = None
+            self._raw_fault_supported = None
             # Robot.RPC() blocks for seconds and cannot be interrupted. If the operator
             # retargeted or disconnected while we were in there, drop this client now
             # rather than spending another probe timeout proving an address nobody wants.
@@ -838,14 +934,20 @@ class RobotLink:
             return
 
         with self._state_lock:
-            self._gen += 1
-            self._handle = _ClientHandle(gen=self._gen, rpc=client, ip=ip)
-            self._attempts = 0
-            self._consecutive_failures = 0
-            self._backoff = BACKOFF_START_S
-            self._next_attempt_ts = None
-            self._last_success_ts = time.time()
-            self._record_probe_locked(reading)
+            superseded = self._pending_ip is not None or not self._enabled or self._ip != ip
+            if not superseded:
+                self._gen += 1
+                self._handle = _ClientHandle(gen=self._gen, rpc=client, ip=ip)
+                self._attempts = 0
+                self._consecutive_failures = 0
+                self._backoff = BACKOFF_START_S
+                self._next_attempt_ts = None
+                self._last_success_ts = time.time()
+                self._force_snapshot = ForceSnapshot()
+                self._record_probe_locked(reading)
+        if superseded:
+            self._teardown_raw(client, close_rpc=False)
+            return
         self._set_state(ConnState.CONNECTED, None)
 
     def _schedule_retry(self, reason: str) -> None:
@@ -868,6 +970,10 @@ class RobotLink:
             return
 
         with self._state_lock:
+            if self._handle is None or self._handle.gen != handle.gen:
+                # The request completed after a reconnect or retarget. Its data
+                # belongs to a retired socket and must not refresh the new link.
+                return
             self._last_success_ts = time.time()
             self._consecutive_failures = 0
             self._record_probe_locked(reading)
@@ -876,14 +982,33 @@ class RobotLink:
     def _run_probe(self, client: Any) -> dict[str, Any]:
         """Probe the controller for telemetry.
 
-        During a fast heartbeat for an active job we run the lightweight probe
-        directly on the supervisor thread so live line/fault updates still flow
-        even while the SDK worker is occupied with another command.
+        The SDK worker is the exclusive owner of the client's XML-RPC proxy.
+        Fast heartbeats may queue behind an in-flight command, but they must
+        never call the same proxy from the supervisor thread: xmlrpc.client
+        cannot safely interleave request/response pairs on one connection.
         """
-        if self._fast_heartbeat and self._worker.is_busy():
-            return self._probe_body(client)
-        future = self._worker.submit(lambda: self._probe_body(client), label="probe")
+        future = self._worker.submit(
+            lambda: self._probe_body(client), label="probe", priority=1
+        )
         return future.result(timeout=PROBE_TIMEOUT_S)
+
+    def _on_cnde_state(self, client: Any, state: Any) -> None:
+        """Copy a fully decoded CNDE force frame for every in-process consumer."""
+        try:
+            values = tuple(float(state.ft_sensor_data[index]) for index in range(6))
+        except (AttributeError, IndexError, TypeError, ValueError):
+            return
+
+        with self._state_lock:
+            handle = self._handle
+            if handle is None or handle.rpc is not client:
+                return
+            self._force_snapshot = ForceSnapshot(
+                values=values,
+                received_monotonic=time.monotonic(),
+                generation=handle.gen,
+                source="cnde",
+            )
 
     def _probe_body(self, client: Any) -> dict[str, Any]:
         """One real XML-RPC round trip, plus the state the UI needs.
@@ -944,7 +1069,7 @@ class RobotLink:
             except RobotUnreachable:
                 raise
             except Exception:  # noqa: BLE001
-                self._raw_state_supported = False
+                pass
 
         try:
             pkg = getattr(client, "robot_state_pkg", None)
@@ -981,16 +1106,15 @@ class RobotLink:
                     # 0 means "no fault" for both codes; normalise to None so every
                     # consumer's `if fault_main:` reads the same as it always did.
                     return int(resp[1]) or None, int(resp[2]) or None, "rpc"
-                # Answered in a shape we don't understand — don't guess, and don't
-                # keep paying for it on every heartbeat.
-                self._raw_fault_supported = False
+                # An unexpected reply is not proof the method is unavailable.
+                # Fall back for this sample and retry on the next heartbeat.
             except xmlrpc.client.Fault:
                 # Method genuinely absent on this controller — stop asking.
                 self._raw_fault_supported = False
             except RobotUnreachable:
                 raise
             except Exception:  # noqa: BLE001
-                self._raw_fault_supported = False
+                pass
 
         # Only trust the cache when CNDE is actually streaming: the struct exists and
         # reads all zeros whether or not anything ever filled it, so without this

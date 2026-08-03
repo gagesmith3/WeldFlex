@@ -15,13 +15,17 @@ Job Manager → hit Run → it runs the requested cycles → it completes.
 > are all still to be built. See
 > [Not yet implemented](docs/ARCHITECTURE.md#not-yet-implemented).
 
-Full picture — the four layers, how a part becomes a program, job states, and the
+Full picture — the four layers, how a part becomes a program,
+ job states, and the
 current gaps: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 Intent spec: [orderofevent.md](orderofevent.md).
+Robot connection ownership, telemetry sources, freshness, and recovery:
+[docs/ROBOT_TELEMETRY.md](docs/ROBOT_TELEMETRY.md).
 
 ## Run Flask App
 
 ```
+cd venv/Scripts && activate.bat
 python backend\app.py
 ```
 

@@ -1,7 +1,13 @@
 {% if ok %}
 <div class="ft-status-bar {% if active %}ft-active{% else %}ft-inactive{% endif %}">
   <div class="ft-status-dot"></div>
-  <span>Sensor {% if active %}Active{% else %}Inactive — not configured, or robot unreachable{% endif %}</span>
+  <span>
+    {% if active %}
+      Sensor active · {{ 'live CNDE stream' if source == 'cnde' else 'idle XML-RPC fallback' }}{% if age_s is not none %} · {{ '%.0f'|format(age_s * 1000) }} ms old{% endif %}
+    {% else %}
+      Inactive — not configured, or robot unreachable
+    {% endif %}
+  </span>
 </div>
 {% else %}
 <div class="ft-status-bar ft-inactive">

@@ -8,20 +8,24 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
-from flask import Flask, make_response, render_template, request, jsonify
+from flask import Flask, jsonify, make_response, redirect, render_template, request
 from markupsafe import Markup
 from job_manager import JobError, JobManager
 from lua_builder import (
     GATE_MODES,
+    IO_MONITOR_DEFAULT_MS,
+    IO_MONITOR_PATH,
+    IO_MONITOR_PROGRAM_NAME,
     WELD_PATH,
     WELD_PROGRAM_NAME,
-    build_weld_test_lua,
+    build_io_monitor_lua,
     format_number,
     strip_lua_comments,
 )
@@ -153,7 +157,16 @@ def _recipes_enrich(recipes):
             label = datetime.fromisoformat(ts).strftime('%b %d, %Y')
         except Exception:
             label = 'Never'
-        result.append({**r, 'studs_count': len(studs), 'updated_label': label})
+        result.append({
+            **r,
+            'studs_count': len(studs),
+            'updated_label': label,
+            'safe_z': float(r.get('safe_z', 10.0)),
+            'part_z': float(r.get('part_z', 0.0)),
+            'stud_type': r.get('stud_type') or 'M4',
+            'substrate': r.get('substrate') or 'Mild Steel',
+            'pressure_setting': r.get('pressure_setting') or 'high',
+        })
     return result
 
 def _parse_studs(text):
@@ -247,6 +260,7 @@ _ICONS = {
     "clipboard":        '<rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>',
     "repeat":           '<path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/>',
     "wifi":             '<path d="M5 13a10 10 0 0 1 14 0"/><path d="M8.5 16.5a5 5 0 0 1 7 0"/><path d="M2 8.82a15 15 0 0 1 20 0"/><line x1="12" y1="20" x2="12.01" y2="20"/>',
+    "bar_chart_2":      '<line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>',
     "zap":              '<path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/>',
 }
 
@@ -269,6 +283,18 @@ def landing():
 @app.route("/operator")
 def operator():
     return render_template("operator.html", page_title="Operator")
+
+@app.route("/manager")
+def manager_root():
+    return redirect("/manager/part-designer")
+
+@app.route("/manager/part-designer")
+def manager_part_designer_page():
+    return render_template("manager.html", page_title="Part Designer", active_tab="part-designer")
+
+@app.route("/manager/settings")
+def manager_settings_page():
+    return render_template("manager.html", page_title="Settings", active_tab="settings")
 
 @app.route("/operator/admin")
 def admin():
@@ -334,10 +360,13 @@ def parts():
     recipe_name = request.args.get('recipe_name', None)
     with _rec_lock:
         all_recipes = _recipes_load()
+    enriched = _recipes_enrich(all_recipes)
     studs_text = ''
+    recipe = None
     if recipe_name is not None:
-        match = next((r for r in all_recipes if r['name'] == recipe_name), None)
+        match = next((r for r in enriched if r['name'] == recipe_name), None)
         if match:
+            recipe = match
             raw = match.get('studs', '')
             if isinstance(raw, list):
                 studs_text = '\n'.join(f"{s['x']},{s['y']}" for s in raw)
@@ -345,7 +374,8 @@ def parts():
                 studs_text = raw
     return render_template('parts.html',
                            page_title='Parts',
-                           recipes=_recipes_enrich(all_recipes),
+                           recipes=enriched,
+                           recipe=recipe,
                            recipe_name=recipe_name,
                            studs_text=studs_text)
 
@@ -356,6 +386,23 @@ def ui_recipes_save():
     if not name:
         return render_template('partials/command_result.html', ok=False,
                                title='Save Recipe', payload={'error': 'Recipe name is required'})
+
+    try:
+        safe_z = float(request.form.get('safe_z') or 10.0)
+    except ValueError:
+        safe_z = 10.0
+
+    try:
+        part_z = float(request.form.get('part_z') or 0.0)
+    except ValueError:
+        part_z = 0.0
+
+    stud_type = (request.form.get('stud_type') or 'M4').strip()
+    substrate = (request.form.get('substrate') or 'Mild Steel').strip()
+    pressure_setting = (request.form.get('pressure_setting') or 'high').strip()
+    if pressure_setting not in ('low', 'mid', 'high'):
+        pressure_setting = 'high'
+
     studs_json = (request.form.get('studs_json') or '').strip()
     studs_text = (request.form.get('studs_text') or '').strip()
     if studs_json:
@@ -375,9 +422,14 @@ def ui_recipes_save():
             existing = next((r for r in recipes if r['name'] == name), None)
         now = datetime.now(timezone.utc).isoformat()
         if existing:
-            existing['name']       = name
-            existing['studs']      = studs
-            existing['updated_at'] = now
+            existing['name']             = name
+            existing['studs']            = studs
+            existing['safe_z']           = safe_z
+            existing['part_z']           = part_z
+            existing['stud_type']        = stud_type
+            existing['substrate']       = substrate
+            existing['pressure_setting'] = pressure_setting
+            existing['updated_at']       = now
             saved_id = existing['id']
         else:
             saved_id = str(uuid.uuid4())
@@ -385,6 +437,11 @@ def ui_recipes_save():
                 'id': saved_id,
                 'name': name,
                 'studs': studs,
+                'safe_z': safe_z,
+                'part_z': part_z,
+                'stud_type': stud_type,
+                'substrate': substrate,
+                'pressure_setting': pressure_setting,
                 'created_at': now,
                 'updated_at': now,
                 'times_ran': 0,
@@ -441,13 +498,18 @@ def ui_manager_part_points():
     name      = request.args.get('name', '').strip()
     with _rec_lock:
         recipes = _recipes_load()
+    enriched = _recipes_enrich(recipes)
     if recipe_id:
-        recipe = next((r for r in recipes if r.get('id') == recipe_id), None)
+        recipe = next((r for r in enriched if r.get('id') == recipe_id), None)
     else:
-        recipe = next((r for r in recipes if r['name'] == name), None)
+        recipe = next((r for r in enriched if r['name'] == name), None)
     if not recipe:
         return jsonify({'ok': False, 'error': 'Not found'}), 404
-    return jsonify({'ok': True, 'points': recipe.get('studs', [])})
+    return jsonify({
+        'ok': True,
+        'points': recipe.get('studs', []),
+        'recipe': recipe
+    })
 
 @app.context_processor
 def inject_defaults():
@@ -498,11 +560,23 @@ def ui_job_load():
     gate_mode = (request.form.get("gate_mode") or GATE_MODE).strip()
     with _rec_lock:
         recipes = _recipes_load()
-    recipe = next((r for r in recipes if r.get("id") == part_id), None)
+    enriched = _recipes_enrich(recipes)
+    recipe = next((r for r in enriched if r.get("id") == part_id), None)
     if not recipe:
         return jsonify({"ok": False, "error": "Part not found"}), 404
     try:
-        job.load(part_id, recipe["name"], recipe.get("studs", []), cycles, gate_mode)
+        job.load(
+            part_id,
+            recipe["name"],
+            recipe.get("studs", []),
+            cycles,
+            gate_mode=gate_mode,
+            safe_z=recipe.get("safe_z", 10.0),
+            part_z=recipe.get("part_z", 0.0),
+            pressure_setting=recipe.get("pressure_setting", "high"),
+            stud_type=recipe.get("stud_type", "M4"),
+            substrate=recipe.get("substrate", "Mild Steel"),
+        )
     except JobError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 409
     return jsonify({"ok": True})
@@ -727,8 +801,9 @@ def ui_ft_zero():
 @app.route("/ui/ft/reading")
 def ui_ft_reading():
     try:
+        ustate = robot.get_universal_state()
         reading = robot.ft_read()
-        fz = reading["fz"] * FT_FZ_DISPLAY_SIGN
+        fz = (ustate.fz_lbf / N_TO_LBF) if ustate.fz_lbf is not None else (reading["fz"] * FT_FZ_DISPLAY_SIGN)
         frac = min(abs(fz) / FT_FZ_FULL_SCALE_N, 1.0)
         if frac >= FT_CRIT_FRAC:
             level = "crit"
@@ -739,14 +814,16 @@ def ui_ft_reading():
         return render_template(
             "partials/ft_reading.html", ok=True, active=reading["active"],
             lbf=fz * N_TO_LBF, fz_n=fz, pct=round(frac * 100), level=level,
-            sign="pos" if fz >= 0 else "neg",
+            sign="pos" if fz >= 0 else "neg", source=reading["source"],
+            age_s=reading["age_s"],
         )
     except Exception as e:
         # Polled 3x/sec — render the same shape with placeholder values so a
         # transient failure doesn't collapse the layout out from under the operator.
         return render_template(
             "partials/ft_reading.html", ok=False, error=str(e), active=False,
-            lbf=None, fz_n=None, pct=0, level="ok", sign="pos",
+            lbf=None, fz_n=None, pct=0, level="ok", sign="pos", source=None,
+            age_s=None,
         )
 
 # ---------------------------------------------------------------------------
@@ -765,8 +842,9 @@ def ui_ft_reading():
 # ---------------------------------------------------------------------------
 
 WELD_TEST_POLL_MS = int(os.getenv("WELDFLEX_WELD_TEST_POLL_MS", "400"))
-# Idle polling still costs three RPCs a tick, so back off hard when nothing is running.
+# Idle sampling still costs robot I/O, so back off hard when nothing is running.
 WELD_TEST_IDLE_POLL_MS = int(os.getenv("WELDFLEX_WELD_TEST_IDLE_POLL_MS", "1200"))
+WELD_TEST_STARTUP_GRACE_S = 3.0
 # The two weld interlock inputs, and they are not interchangeable:
 #   DI1 — stud on work: continuity welder -> work surface -> gun.
 #   DI0 — ready / caps at charge: the welder itself is able to fire.
@@ -792,6 +870,9 @@ WELD_SV_LAST_RET = 2     # raw return of the last FT_* instruction
 WELD_SV_PRESS_Z0 = 3     # base-frame tool Z at contact, mm
 WELD_SV_PRESS_TRAVEL = 4 # travel the press achieved, mm (only set if it finished)
 WELD_SV_PRESS_GUARD = 5  # which collision-threshold instruction the press got
+WELD_SV_STUD_ON_WORK = 6 # DI1 level, published by weld.lua's controller-side GetDI
+WELD_SV_WELD_READY = 7   # DI0 level, published by weld.lua's controller-side GetDI
+WELD_SV_PRESS_LBF = 8    # press target this run used, lbf — the force-ladder rung
 
 # weld.lua's PRESS_MAX_MM — the travel FT_LinInsertion is allowed past contact.
 # Mirrored here so the page can show travel against its budget. That reading
@@ -863,11 +944,16 @@ _WELD_GUARD_CODES = {
     1: "custom thresholds",
     2: "custom + level",
     3: "level only",
+    4: "not needed at this force",
     9: "not applied",
 }
 
 
 _WELD_GUARD_NOT_APPLIED = 9
+
+# The codes that mean collision detection was genuinely modified for the press.
+# Everything outside this set left the monitor at whatever the pendant configured.
+_WELD_GUARD_APPLIED_CODES = frozenset({1, 2, 3})
 
 
 def _weld_guard_state(value: float | None) -> dict | None:
@@ -882,7 +968,13 @@ def _weld_guard_state(value: float | None) -> dict | None:
     code = int(value)
     return {
         "label": _WELD_GUARD_CODES.get(code, f"unknown ({code})"),
-        "applied": code != _WELD_GUARD_NOT_APPLIED,
+        # True only when collision detection was actually changed. Code 4 reports
+        # a guard that declined — the press target was below weld.lua's
+        # PRESS_GUARD_MIN_N, so detection was deliberately left alone. That is a
+        # different answer from 9 ("the instruction does not exist"), but it is
+        # equally not a guard that ran, and a faulted press at code 4 is telling
+        # you the rung was low enough that the monitor was never the suspect.
+        "applied": code in _WELD_GUARD_APPLIED_CODES,
     }
 
 
@@ -908,6 +1000,13 @@ def _weld_ret_label(value: float | None) -> str | None:
         return None
     code = int(value)
     return _WELD_RET_CODES.get(code, str(code))
+
+
+def _weld_di_level(value: float | None) -> int | None:
+    """A controller-published DI level, with -1/unset kept visibly unknown."""
+    if value in (0, 1):
+        return int(value)
+    return None
 
 
 def _weld_press_travel(z0: float | None, final: float | None,
@@ -954,10 +1053,19 @@ def _weld_press_travel(z0: float | None, final: float | None,
 _weld_test: dict = {
     "last_run": None,
     "armed": False,
-    "weld_x": 0.0,
-    "weld_y": 0.0,
+    # Not 0,0 — the taught zerozero point itself is not a usable test target, and
+    # an operator who taps Start on a freshly loaded page should get a move to
+    # clear space rather than a press at the origin.
+    "weld_x": 100.0,
+    "weld_y": 100.0,
+    # None = press at weld.lua's production 20 lbf. Remembered between runs so
+    # walking the ladder up does not mean retyping the rung every time, but never
+    # defaulted to a value — a blank field has to mean "full force" only because
+    # that is what weld.lua does, not because this page prefilled it.
+    "press_lbf": None,
     "error": None,
     "hint_on": False,
+    "hint_started_ts": None,
 }
 _weld_test_lock = threading.Lock()
 
@@ -966,274 +1074,56 @@ def _weld_test_toast(ok: bool, title: str, payload: dict):
     return render_template("partials/command_result.html", ok=ok, title=title, payload=payload)
 
 
-@app.route("/operator/weld-test")
-def weld_test_page():
-    with _weld_test_lock:
-        state = dict(_weld_test)
-    return render_template(
-        "weld_test.html",
-        page_title="Weld Test",
-        stud_di=WELD_STUD_DI,
-        ready_di=WELD_READY_DI,
-        weld_x=format_number(state["weld_x"]),
-        weld_y=format_number(state["weld_y"]),
-        armed=state["armed"],
-    )
+# Idle: just the two interlock levels. Each slot is its own GetSysVarValue RPC
+# inside the sample, and nothing else changes while no program is running.
+_WELD_SV_IDLE = (WELD_SV_PHASE, WELD_SV_STUD_ON_WORK, WELD_SV_WELD_READY)
+_WELD_SV_RUNNING = (WELD_SV_PHASE, WELD_SV_STUD_ON_WORK, WELD_SV_WELD_READY)
 
 
-@app.route("/ui/weld-test/run", methods=["POST"])
-def ui_weld_test_run():
-    armed = (request.form.get("armed") or "0") == "1"
-    force_test = (request.form.get("force_test") or "0") == "1"
-    # The Force Test button includes the same params block as Run, so a leftover
-    # armed=1 can ride along with it. Force test wins: it exists to be safe to
-    # press while nothing is wired, so it must never inherit an arc.
-    if force_test:
-        armed = False
-    try:
-        weld_x = float(request.form.get("weld_x") or 0)
-        weld_y = float(request.form.get("weld_y") or 0)
-    except ValueError:
-        return _weld_test_toast(False, "Weld Test", {"error": "X and Y offsets must be numbers."})
+def _start_weld_telemetry(interval_ms: int, slots: tuple[int, ...] = _WELD_SV_IDLE) -> None:
+    """Retime the sampler behind the weld-test readout.
 
-    # The job manager and this page both drive ProgramLoad/ProgramRun. If both
-    # owned the controller at once the manager would be counting cycles against
-    # line numbers from a program it did not build.
-    if job.snapshot().active:
-        return _weld_test_toast(False, "Weld Test", {
-            "error": "A job is loaded — stop and clear it before running the weld test."
-        })
-
-    try:
-        built = build_weld_test_lua(weld_x, weld_y, armed=armed, force_test=force_test)
-
-        tmp_dir = tempfile.mkdtemp()
-        try:
-            # weld.lua goes up first. The harness's NewDofile resolves at run time,
-            # so a stale copy left on the controller is what would run otherwise.
-            #
-            # Comments are blanked before sending: the repo file is 13 KB and more
-            # than half of that is header the controller never reads. Line numbers
-            # are preserved, so the trace on this page still lines up with the file
-            # you have open.
-            weld_tmp = Path(tmp_dir) / WELD_PROGRAM_NAME
-            weld_tmp.write_text(
-                strip_lua_comments(WELD_PATH.read_text(encoding="utf-8")), encoding="utf-8"
-            )
-            robot.upload_program(str(weld_tmp), replace=True)
-
-            harness_tmp = Path(tmp_dir) / built.program_name
-            harness_tmp.write_text(built.text, encoding="utf-8")
-            uploaded = robot.upload_program(str(harness_tmp), replace=True)
-        finally:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-
-        # Activate the FT sensor before every run so the readout is live from
-        # the moment the program starts. A controller reboot or fault-clear
-        # deactivates it, and weld.lua's FindSurface will fault without it.
-        robot.ft_setup()
-
-        # Armed before every run, not once: a controller reboot or fault-clear
-        # may reset it, and the first live run (2026-07-28) died on a latched
-        # axis-2 joint-overspeed fault thrown during FT_FindSurface's descent —
-        # which then blocked every raw RPC read with code 14 until cleared.
-        robot.joint_overspeed_protect()
-        robot.run_program(uploaded)
-        robot.set_running_hint(True)
-    except Exception as e:
-        with _weld_test_lock:
-            _weld_test["error"] = str(e)
-        app.logger.exception("weld test failed to start")
-        return _weld_test_toast(False, "Weld Test", {"error": str(e)})
-
-    with _weld_test_lock:
-        _weld_test.update({
-            "last_run": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "armed": armed,
-            "weld_x": weld_x,
-            "weld_y": weld_y,
-            "error": None,
-            "hint_on": True,
-        })
-    app.logger.info(
-        "weld test running x=%s y=%s armed=%s force_test=%s", weld_x, weld_y, armed, force_test
-    )
-    if force_test:
-        title = "Weld Test — force test"
-    elif armed:
-        title = "Weld Test — armed"
-    else:
-        title = "Weld Test — dry run"
-    return _weld_test_toast(True, title, {})
-
-
-@app.route("/ui/weld-test/stop", methods=["POST"])
-def ui_weld_test_stop():
-    errors = []
-    try:
-        robot.stop_program()
-    except Exception as e:
-        errors.append(str(e))
-    # Hand the cell back even if the stop reported an error: run_program left the
-    # controller in auto and nothing else takes it out again.
-    try:
-        robot.set_manual_mode()
-    except Exception as e:
-        errors.append(str(e))
-
-    robot.set_running_hint(False)
-    with _weld_test_lock:
-        _weld_test["hint_on"] = False
-
-    ok = not errors
-    return _weld_test_toast(ok, "Stop", {} if ok else {"error": " · ".join(errors)})
-
-
-@app.route("/ui/weld-test/reset-errors", methods=["POST"])
-def ui_weld_test_reset_errors():
-    """Clear a latched controller fault without walking to the pendant.
-
-    Duplicated from the diagnostics page on purpose. A latched fault blocks every
-    raw RPC read with code 14 (live 2026-07-28), so after a press aborts, this
-    page's own force and DI tiles stay dead until it is cleared — the operator
-    would be looking at a blank readout with no way to act on it from here.
+    `slots` is widened to `_WELD_SV_RUNNING` while a test is actually running, so
+    the press diagnostics cost robot I/O only for the seconds they are meaningful.
+    The tables that decode them (`_WELD_PHASES`, `_WELD_GUARD_CODES` and their
+    label helpers) mirror constants in programs/weld.lua, and a test asserts the
+    two sides agree.
     """
-    try:
-        robot.reset_errors()
-    except Exception as e:
-        return _weld_test_toast(False, "Clear fault", {"error": str(e)})
-    return _weld_test_toast(True, "Clear fault", {})
-
-
-@app.route("/ui/weld-test/telemetry")
-def ui_weld_test_telemetry():
-    snap = robot.snapshot()
-    program_state = ROBOT_STATE_MAP.get(snap.program_state_raw, "unknown")
-    running = program_state == "running"
-    current_line = snap.current_line
-    fault_main = snap.fault_main
-    fault_sub = snap.fault_sub
-
-    # run_program turns the fast-probe hint on; drop it once the program is done so
-    # an idle page isn't holding the heartbeat at its faster rate forever.
-    if not running:
-        with _weld_test_lock:
-            was_on = _weld_test["hint_on"]
-            _weld_test["hint_on"] = False
-        if was_on:
-            robot.set_running_hint(False)
-
-    fz_lbf = None
-    stud_on_work = None
-    weld_ready = None
-    probe_error = None
-    ft_busy = False
-    weld_phase = None
-    weld_ret = None
-    weld_guard = None
-    tcp_z = None
-    press_travel = None
-    if snap.connected:
-        try:
-            probe = robot.weld_probe(
-                WELD_STUD_DI, WELD_READY_DI,
-                sysvar_slots=(
-                    WELD_SV_PHASE, WELD_SV_LAST_RET,
-                    WELD_SV_PRESS_Z0, WELD_SV_PRESS_TRAVEL,
-                    WELD_SV_PRESS_GUARD,
-                ),
-            )
-            stud_on_work = probe["stud_on_work"]
-            weld_ready = probe["weld_ready"]
-            tcp_z = probe["tcp_z"]
-            if probe.get("program_state_raw") is not None:
-                program_state = ROBOT_STATE_MAP.get(int(probe["program_state_raw"]), "unknown")
-                running = program_state == "running"
-            if probe.get("line") is not None:
-                current_line = probe["line"]
-            if probe.get("fault_main") is not None:
-                fault_main = probe["fault_main"]
-            if probe.get("fault_sub") is not None:
-                fault_sub = probe["fault_sub"]
-            weld_phase = _weld_phase_label(probe["sysvars"].get(WELD_SV_PHASE))
-            weld_ret = _weld_ret_label(probe["sysvars"].get(WELD_SV_LAST_RET))
-            weld_guard = _weld_guard_state(probe["sysvars"].get(WELD_SV_PRESS_GUARD))
-            press_travel = _weld_press_travel(
-                probe["sysvars"].get(WELD_SV_PRESS_Z0),
-                probe["sysvars"].get(WELD_SV_PRESS_TRAVEL),
-                tcp_z,
-            )
-            if probe["ft_err"] == 0:
-                fz_lbf = (probe["fz"] or 0.0) * FT_FZ_DISPLAY_SIGN * N_TO_LBF
-            elif running and probe["ft_err"] == FT_RPC_BUSY_CODE:
-                ft_busy = True
-            else:
-                probe_error = f"FT_GetForceTorqueRCS failed (code {probe['ft_err']})"
-
-        except Exception as e:
-            probe_error = str(e)
-    else:
-        probe_error = "Robot offline"
-
-    with _weld_test_lock:
-        state = dict(_weld_test)
-
-    return render_template(
-        "partials/weld_test_telemetry.html",
-        poll_ms=WELD_TEST_POLL_MS if running else WELD_TEST_IDLE_POLL_MS,
-        program_state=program_state,
-        running=running,
-        current_line=current_line,
-        line_edge_seq=snap.line_edge_seq,
-        fz_lbf=fz_lbf,
-        stud_on_work=stud_on_work,
-        stud_di=WELD_STUD_DI,
-        weld_ready=weld_ready,
-        ready_di=WELD_READY_DI,
-        fault_main=fault_main,
-        fault_sub=fault_sub,
-        probe_error=probe_error,
-        ft_busy=ft_busy,
-        weld_phase=weld_phase,
-        weld_ret=weld_ret,
-        weld_guard=weld_guard,
-        tcp_z=tcp_z,
-        press_travel=press_travel,
-        armed=state["armed"],
-        last_run=state["last_run"],
-        run_error=state["error"],
+    robot.start_weld_telemetry(
+        WELD_STUD_DI,
+        WELD_READY_DI,
+        slots,
+        interval_s=interval_ms / 1000.0,
     )
+
+
+
 
 
 def _connection_snapshot() -> dict:
     """Shape the link snapshot for the connection chips.
 
-    A pure cache read, so this costs nothing no matter how many pages are polling it —
-    the robot is contacted once per heartbeat by the supervisor, not once per request.
-    Being offline is data here, not an exception.
+    Pure cache read from UniversalRobotState.
     """
+    ustate = robot.get_universal_state()
     snap = robot.snapshot()
     detail = None
-    if snap.state == "connected" and snap.busy:
-        detail = snap.busy_label
-    elif snap.state == "connecting" and snap.attempts > 1:
+    if ustate.state == "connected" and ustate.busy:
+        detail = ustate.busy_label
+    elif ustate.state == "connecting" and snap.attempts > 1:
         detail = f"attempt {snap.attempts}"
-    elif snap.state == "degraded":
+    elif ustate.state == "degraded":
         age = snap.age_s()
         detail = f"{age:.0f}s ago" if age is not None else "no reply"
-    # No detail for "faulted" on purpose. The retry countdown ticked once a second
-    # and the chip is the only thing in the sticky header that can change height,
-    # so it shoved the whole operator page down. The countdown is still on the
-    # diagnostics readout, where the layout can afford it.
-    elif snap.state == "disconnected":
+    elif ustate.state == "disconnected":
         detail = "manual"
 
     return {
-        "state": snap.state,
-        "online": snap.connected,
-        "busy": snap.busy,
+        "state": ustate.state,
+        "online": ustate.connected,
+        "busy": ustate.busy,
         "detail": detail,
-        "program_state": ROBOT_STATE_MAP.get(snap.program_state_raw, "unknown"),
+        "program_state": ustate.program_state,
         "ip": snap.ip,
         "error": snap.last_error,
     }

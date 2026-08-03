@@ -13,12 +13,28 @@
     </div>
   </div>
 
-  <!-- ── Center: canvas ───────────────────────────────────────── -->
+  <!-- ── Center: canvas & toolbar ────────────────────────────── -->
   <div class="pd-canvas-area">
-    <button type="button" class="pd-tool-btn save pd-hidden pd-save-float" id="pd-save-btn" onclick="pdSave()">
-      {{ icon_safe('save', width=13, height=13) }}
-      Save
-    </button>
+    <div class="pd-canvas-header">
+      <div class="pd-title-wrap" onclick="pdOpenRenameModal()" title="Click to rename part">
+        <span class="pd-canvas-part-title" id="pd-canvas-part-title">No Part Selected</span>
+        <button type="button" class="pd-icon-btn pd-rename-btn" title="Rename part">
+          {{ icon_safe('pen_tool', width=12, height=12) }}
+        </button>
+      </div>
+      <div class="pd-header-right-tools">
+        <button type="button" class="pd-tool-btn save pd-hidden" id="pd-save-btn" onclick="pdSave()">
+          {{ icon_safe('save', width=13, height=13) }}
+          Save
+        </button>
+        <button type="button" class="pd-icon-btn" title="Reports" onclick="pdOpenJobReportsModal()">
+          {{ icon_safe('bar_chart_2', width=14, height=14) }}
+        </button>
+        <button type="button" class="pd-icon-btn" title="Settings" onclick="pdOpenJobSettingsModal()">
+          {{ icon_safe('settings', width=14, height=14) }}
+        </button>
+      </div>
+    </div>
     <div class="pd-canvas-stage">
       <svg id="pd-bed" viewBox="0 0 508 508" preserveAspectRatio="xMidYMid meet"
            xmlns="http://www.w3.org/2000/svg">
@@ -76,6 +92,96 @@
     <div class="wf-modal-actions">
       <button type="button" class="btn wf-cancel" onclick="pdCancelDelete()">Cancel</button>
       <button type="button" class="btn stop" id="pd-delete-confirm-btn" onclick="pdConfirmDelete()" disabled>Delete</button>
+    </div>
+  </div>
+</div>
+
+<!-- Rename Part modal -->
+<div id="pd-rename-modal" class="wf-modal-overlay" hidden>
+  <div class="wf-modal">
+    <p class="wf-modal-msg">Rename Part</p>
+    <input type="text" id="pd-rename-input" class="pd-create-input"
+           placeholder="New part name…" maxlength="64" autocomplete="off">
+    <div class="wf-modal-actions">
+      <button type="button" class="btn wf-cancel" onclick="pdCancelRename()">Cancel</button>
+      <button type="button" class="btn run" onclick="pdConfirmRename()">Save Name</button>
+    </div>
+  </div>
+</div>
+
+<!-- Job Settings modal -->
+<div id="pd-settings-modal" class="wf-modal-overlay" hidden>
+  <div class="wf-modal pd-modal-wide">
+    <p class="wf-modal-msg">Job Settings — <span id="pd-modal-settings-part-name">Part</span></p>
+    <div class="pd-modal-form-grid">
+      <div class="pd-param-group">
+        <label for="pd-modal-safe-z" class="pd-param-label">Safe Z Level (mm)</label>
+        <input type="number" id="pd-modal-safe-z" class="pd-param-input" step="0.1" value="10.0">
+      </div>
+      <div class="pd-param-group">
+        <label for="pd-modal-part-z" class="pd-param-label">Part Z Level (mm)</label>
+        <input type="number" id="pd-modal-part-z" class="pd-param-input" step="0.1" value="0.0">
+      </div>
+      <div class="pd-param-group">
+        <label for="pd-modal-stud-type" class="pd-param-label">Stud Selector</label>
+        <select id="pd-modal-stud-type" class="pd-param-select">
+          <option value="M3">M3</option>
+          <option value="M4">M4</option>
+          <option value="M5">M5</option>
+          <option value="M6">M6</option>
+          <option value="M8">M8</option>
+          <option value='1/4"'>1/4"</option>
+        </select>
+      </div>
+      <div class="pd-param-group">
+        <label for="pd-modal-substrate" class="pd-param-label">Substrate Material</label>
+        <select id="pd-modal-substrate" class="pd-param-select">
+          <option value="Mild Steel">Mild Steel</option>
+          <option value="Stainless Steel">Stainless Steel</option>
+          <option value="Aluminum">Aluminum</option>
+          <option value="Galvanized">Galvanized</option>
+        </select>
+      </div>
+      <div class="pd-param-group">
+        <label for="pd-modal-pressure" class="pd-param-label">Pressure Setting</label>
+        <select id="pd-modal-pressure" class="pd-param-select">
+          <option value="low">Low (17 lbf)</option>
+          <option value="mid">Mid (18.5 lbf)</option>
+          <option value="high">High (20 lbf)</option>
+        </select>
+      </div>
+    </div>
+    <div class="wf-modal-actions">
+      <button type="button" class="btn wf-cancel" onclick="pdCloseJobSettingsModal()">Cancel</button>
+      <button type="button" class="btn run" onclick="pdSaveJobSettingsModal()">Apply & Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Job Reports modal -->
+<div id="pd-reports-modal" class="wf-modal-overlay" hidden>
+  <div class="wf-modal pd-modal-wide">
+    <p class="wf-modal-msg">Job Report — <span id="pd-report-part-name">Part</span></p>
+    <div class="pd-report-grid">
+      <div class="pd-report-card">
+        <span class="pd-report-label">Stud Count</span>
+        <strong class="pd-report-value" id="pd-report-studs">—</strong>
+      </div>
+      <div class="pd-report-card">
+        <span class="pd-report-label">Lifetime Runs</span>
+        <strong class="pd-report-value" id="pd-report-runs">—</strong>
+      </div>
+      <div class="pd-report-card">
+        <span class="pd-report-label">Avg Cycle Time</span>
+        <strong class="pd-report-value" id="pd-report-avg-time">—</strong>
+      </div>
+      <div class="pd-report-card">
+        <span class="pd-report-label">Last Run</span>
+        <strong class="pd-report-value" id="pd-report-last-run">—</strong>
+      </div>
+    </div>
+    <div class="wf-modal-actions">
+      <button type="button" class="btn wf-cancel" onclick="pdCloseJobReportsModal()">Close</button>
     </div>
   </div>
 </div>

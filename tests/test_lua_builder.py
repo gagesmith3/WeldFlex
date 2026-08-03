@@ -3,15 +3,17 @@ import re
 import pytest
 
 from lua_builder import (
-    FRAME_GLOBALS,
     GATE_DI_OPT_ABORT,
+    IO_MONITOR_DEFAULT_MS,
+    IO_MONITOR_MAX_MS,
+    IO_MONITOR_PATH,
+    PRESS_LBF_MAX,
     TEMPLATE_PATH,
     WELD_PATH,
     WELD_PROGRAM_NAME,
-    build_weld_test_lua,
+    build_io_monitor_lua,
     build_weldflex_lua,
     format_number,
-    read_frame_globals,
     strip_lua_comments,
 )
 
@@ -32,6 +34,24 @@ def test_studs_and_cycle_count_are_substituted():
     assert built.stud_count == 3
     assert built.cycles == 7
     # Nothing unsubstituted may reach the controller.
+    assert "--{{" not in built.text
+
+
+def test_weldflex_lua_substitutes_recipe_parameters():
+    built = build_weldflex_lua(
+        [{"x": 10, "y": 20}],
+        cycles=1,
+        safe_z=15.5,
+        part_z=2.0,
+        pressure_setting="low",
+        stud_type="M6",
+        substrate="Stainless Steel",
+    )
+    assert "SAFE_Z = 15.5" in built.text
+    assert "PART_Z = 2" in built.text
+    assert "PRESS_LBF = 17" in built.text
+    assert 'STUD_TYPE = "M6"' in built.text
+    assert 'SUBSTRATE = "Stainless Steel"' in built.text
     assert "--{{" not in built.text
 
 
@@ -127,90 +147,61 @@ def test_format_number():
 # --- weld test harness ------------------------------------------------------
 
 
-def test_frame_globals_come_from_the_template_not_a_copy():
-    """The harness must approach in the frame a real cycle uses. If WeldFlex.lua's
-    tool/wobj ever change, the test has to move with them or it is testing a
-    different machine setup than production."""
-    frame = read_frame_globals()
-    assert set(frame) == set(FRAME_GLOBALS)
-    template = TEMPLATE_PATH.read_text(encoding="utf-8")
-    for name, value in frame.items():
-        assert f"{name} = {value}" in template
+def test_the_press_force_ceiling_agrees_across_the_language_boundary():
+    """lua_builder refuses what weld.lua would clamp. If the two drift apart the
+    host starts accepting a rung the controller quietly presses at 20 lbf
+    instead — the operator asks for one force and gets another, with nothing
+    reporting the substitution.
+    """
+    weld = WELD_PATH.read_text(encoding="utf-8")
+    m = re.search(r"^local PRESS_TARGET_MAX_LBF\s*=\s*([\d.]+)", weld, re.M)
+    assert m, "weld.lua no longer declares PRESS_TARGET_MAX_LBF"
+    assert float(m.group(1)) == PRESS_LBF_MAX
 
 
-def test_harness_publishes_welds_contract_and_calls_weld_lua():
-    built = build_weld_test_lua(12.5, -3, armed=False)
-    assert "weldX = 12.5" in built.text
-    assert "weldY = -3" in built.text
-    assert f'NewDofile("/fruser/{WELD_PROGRAM_NAME}", 1, 1)' in built.text
-    assert "DofileEnd()" in built.text
-    # weld.lua expects the torch already parked over the stud at the safe Z.
-    assert "PointsOffsetEnable(1, weldX, weldY, Z_CLEARANCE, 0, 0, 0)" in built.text
-    assert "PTP(zerozero, speed, -1, 0)" in built.text
-    assert "--{{" not in built.text
+def test_the_press_guard_declines_below_its_own_threshold():
+    """weld.lua only widens collision detection for a press that needs it."""
+    weld = WELD_PATH.read_text(encoding="utf-8")
+    assert re.search(r"^local PRESS_GUARD_MIN_N\s*=\s*([\d.]+)", weld, re.M), \
+        "weld.lua no longer gates the collision guard on the press target"
+    assert re.search(r"^local pressNeedsGuard\s*=\s*PRESS_TARGET_N\s*>=\s*PRESS_GUARD_MIN_N",
+                     weld, re.M), "the guard is no longer gated on the press target"
 
 
-def test_declarations_precede_the_move_that_uses_them():
-    lines = build_weld_test_lua(1, 2).text.splitlines()
-    move = next(i for i, l in enumerate(lines) if l.startswith("PointsOffsetEnable"))
-    for name in ("weldX", "weldY", "Z_CLEARANCE", "speed"):
-        decl = next(i for i, l in enumerate(lines) if l.startswith(f"{name} ="))
-        assert decl < move, f"{name} is declared after the move that reads it"
+def test_a_fault_does_not_erase_which_collision_lever_took():
+    """fault() runs forceControlOff() on its way out, which releases the collision
+    guard. The release used to publish GUARD_RELEASED unconditionally, so every
+    faulted press reported "released" for the one slot that says whether the fix
+    applied at all — destroying the evidence on the only runs anyone reads it on.
+    """
+    weld = WELD_PATH.read_text(encoding="utf-8")
+    assert re.search(r"^local faulting = false", weld, re.M), \
+        "weld.lua no longer tracks whether a fault is unwinding"
 
-
-def test_disarmed_is_the_default():
-    assert build_weld_test_lua(0, 0).armed is False
-    assert "WELD_ARMED = 0" in build_weld_test_lua(0, 0).text
-    assert "WELD_ARMED = 1" in build_weld_test_lua(0, 0, armed=True).text
+    code = strip_lua_comments(weld)
+    body = code.split("local function fault(msg, site)", 1)[1].split("\nend", 1)[0]
+    assert body.index("faulting = true") < body.index("forceControlOff()"), \
+        "fault() releases the guard before freezing its telemetry"
 
 
 def test_weld_lua_defaults_to_disarmed_when_the_caller_sets_nothing():
-    """The harness always publishes WELD_ARMED, but WeldFlex.lua does not call
-    weld.lua yet. Whatever calls it next must not strike an arc by omission.
-
-    Asserted as two properties rather than one exact expression: the gate has
-    picked up extra conjuncts before (force-test mode added one) and pinning the
-    whole line just made this test stale without ever testing the invariant.
-    """
     weld = WELD_PATH.read_text(encoding="utf-8")
     line = next(l for l in weld.splitlines() if l.startswith("local DO_WELD_ENABLED"))
-    # Requiring equality with 1 is what makes an unset global fall through to
-    # disarmed; the `and 1 or 0` tail keeps the result a number rather than nil.
     assert "WELD_ARMED == 1" in line
     assert line.rstrip().endswith("and 1 or 0")
 
 
-def test_weld_lua_upload_gate_matches_the_harness():
-    """The controller's post-upload check executes the uploaded file's top level
-    (observed live 2026-07-28: it refused weld.lua with requireContract's own
-    error string). weld.lua therefore acts only when the caller publishes
-    WELD_RUN = 1, and the harness is that caller. The sentinel name lives in both
-    files with nothing enforcing agreement across the language boundary — drift
-    would make every upload of weld.lua fail again."""
+def test_weld_lua_upload_gate_matches_weldflex():
     weld = WELD_PATH.read_text(encoding="utf-8")
+    template = TEMPLATE_PATH.read_text(encoding="utf-8")
     assert "if WELD_RUN == 1 then" in weld
-    assert "WELD_RUN = 1" in build_weld_test_lua(0, 0).text
+    assert "WELD_RUN = 1" in template
 
 
-def test_force_test_mode_agrees_across_the_language_boundary_and_cannot_arm():
-    """WELD_FORCE_TEST proves the 20 lbf press before the welder is in the loop.
-    Like WELD_RUN, the sentinel lives in both files with nothing enforcing
-    agreement, so assert both sides. And a force test must be impossible to arm
-    at every layer: the builder refuses the combination outright, and weld.lua
-    forces DO0 off even if a caller sets both flags by hand."""
-    built = build_weld_test_lua(0, 0, force_test=True)
-    assert "WELD_FORCE_TEST = 1" in built.text
-    assert built.force_test is True
-    assert built.armed is False
-    # Default stays off — a plain dry run must exercise the full interlock path.
-    assert "WELD_FORCE_TEST = 0" in build_weld_test_lua(0, 0).text
-
+def test_force_test_mode_agrees_across_the_language_boundary():
     weld = WELD_PATH.read_text(encoding="utf-8")
     assert "local FORCE_TEST_MODE = (WELD_FORCE_TEST == 1) and 1 or 0" in weld
     assert "(WELD_ARMED == 1 and FORCE_TEST_MODE ~= 1)" in weld
-
-    with pytest.raises(ValueError):
-        build_weld_test_lua(0, 0, armed=True, force_test=True)
 
 
 def test_weld_di_map_agrees_across_the_language_boundary():
@@ -239,6 +230,59 @@ def test_weld_di_map_agrees_across_the_language_boundary():
     assert lua_const("DI_WELD_READY") == "0"
     assert py_default("WELD_STUD_DI", "WELDFLEX_WELD_STUD_DI") == lua_const("DI_STUD_ON_WORK")
     assert py_default("WELD_READY_DI", "WELDFLEX_WELD_READY_DI") == lua_const("DI_WELD_READY")
+
+    # Third copy: io_monitor.lua reads the same two inputs into the same two
+    # slots. It is the file an operator uses to decide which physical wire is
+    # which, so it drifting from weld.lua would answer that question wrongly —
+    # the worst possible failure for this particular file.
+    monitor = IO_MONITOR_PATH.read_text(encoding="utf-8")
+
+    def monitor_const(name):
+        m = re.search(rf"^local {name}\s*=\s*(\d+)", monitor, re.M)
+        assert m, f"io_monitor.lua no longer declares {name}"
+        return m.group(1)
+
+    for name in ("DI_STUD_ON_WORK", "DI_WELD_READY", "SV_STUD_ON_WORK", "SV_WELD_READY"):
+        assert monitor_const(name) == lua_const(name), \
+            f"{name} drifted between weld.lua and io_monitor.lua"
+
+
+def test_the_io_monitor_issues_no_motion():
+    """The monitor exists so a wiring question does not require moving the arm.
+
+    Asserted rather than trusted to review: this file is reached from a button an
+    operator presses to check a wire, and a move sneaking into it would be a
+    surprise arm motion from a control that promises none. Covers both the
+    monitor and the generated caller that runs it.
+    """
+    monitor = strip_lua_comments(IO_MONITOR_PATH.read_text(encoding="utf-8"))
+    caller = build_io_monitor_lua().text
+
+    forbidden = ("PTP(", "Lin(", "Arc(", "Circle(", "Spline", "MoveL", "MoveJ",
+                 "PointsOffsetEnable", "FT_Control", "FT_LinInsertion",
+                 "FT_FindSurface", "SetDO", "SPLCSetDO", "SetToolDO")
+    for token in forbidden:
+        assert token not in monitor, f"io_monitor.lua issues {token} — it must not move or actuate"
+        assert token not in caller, f"the monitor caller issues {token} — it must not move or actuate"
+
+
+def test_the_io_monitor_window_is_bounded_on_both_sides():
+    """An unbounded loop would be the nicer control, but the controller's
+    post-upload check executes top-level Lua and it is not established whether
+    that follows a NewDofile. If it does, an unbounded monitor would hang the
+    upload of its own caller with nothing able to interrupt it.
+    """
+    monitor = IO_MONITOR_PATH.read_text(encoding="utf-8")
+    m = re.search(r"^local MONITOR_MAX_MS\s*=\s*(\d+)", monitor, re.M)
+    assert m, "io_monitor.lua no longer clamps the monitor window"
+    assert int(m.group(1)) == IO_MONITOR_MAX_MS, "monitor ceiling drifted from lua_builder"
+
+    for bad in (0, -1, IO_MONITOR_MAX_MS + 1):
+        with pytest.raises(ValueError):
+            build_io_monitor_lua(bad)
+
+    assert f"IO_MONITOR_MS = {IO_MONITOR_DEFAULT_MS}" in build_io_monitor_lua().text
+    assert "IO_MONITOR_RUN = 1" in build_io_monitor_lua().text
 
 
 def test_weld_phase_codes_agree_across_the_language_boundary():
@@ -307,6 +351,9 @@ def test_weld_telemetry_slots_and_press_budget_agree_across_the_language_boundar
         ("SV_PRESS_Z0", "WELD_SV_PRESS_Z0"),
         ("SV_PRESS_TRAVEL", "WELD_SV_PRESS_TRAVEL"),
         ("SV_PRESS_GUARD", "WELD_SV_PRESS_GUARD"),
+        ("SV_STUD_ON_WORK", "WELD_SV_STUD_ON_WORK"),
+        ("SV_WELD_READY", "WELD_SV_WELD_READY"),
+        ("SV_PRESS_LBF", "WELD_SV_PRESS_LBF"),
     ):
         assert lua_number(lua_name) == py_number(py_name), f"{lua_name} slot drifted"
 
@@ -314,7 +361,7 @@ def test_weld_telemetry_slots_and_press_budget_agree_across_the_language_boundar
     # not a drift bug but it is still a silently dead telemetry channel.
     slots = [lua_number(n) for n in
              ("SV_PHASE", "SV_LAST_RET", "SV_PRESS_Z0", "SV_PRESS_TRAVEL",
-              "SV_PRESS_GUARD")]
+              "SV_PRESS_GUARD", "SV_STUD_ON_WORK", "SV_WELD_READY", "SV_PRESS_LBF")]
     assert all(1 <= s <= 20 for s in slots), f"system variable slot out of range: {slots}"
     assert len(set(slots)) == len(slots), f"two telemetry values share a slot: {slots}"
 
@@ -475,10 +522,3 @@ def test_stripping_leaves_trailing_comments_alone():
     assert "-- gone" not in out
 
 
-def test_missing_frame_global_is_a_hard_error(tmp_path):
-    source = TEMPLATE_PATH.read_text(encoding="utf-8").splitlines()
-    stripped = [l for l in source if not l.startswith("wobj =")]
-    bad = tmp_path / "WeldFlex.lua"
-    bad.write_text("\n".join(stripped) + "\n", encoding="utf-8")
-    with pytest.raises(RuntimeError, match=r"missing frame global.*wobj"):
-        build_weld_test_lua(0, 0, template_path=bad)

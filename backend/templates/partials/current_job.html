@@ -75,23 +75,11 @@
       <strong class="metric-value">{{ job.part_name or '—' }}</strong>
     </div>
     <div class="metric-card">
-      <div class="metric-icon">{{ icon_safe('activity', fallback='circle', width=14, height=14) }}</div>
-      <span class="metric-label">State</span>
-      <strong class="metric-value">
-        <span class="state-badge state-badge--{{ state }}">{{ state }}</span>
-      </strong>
-    </div>
-    <div class="metric-card">
       <div class="metric-icon">{{ icon_safe('repeat', fallback='circle', width=14, height=14) }}</div>
       <span class="metric-label">Cycles</span>
       <strong class="metric-value">
         {{ (job.cycles_done ~ ' / ' ~ job.cycles_target) if job.cycles_target else '— / —' }}
       </strong>
-    </div>
-    <div class="metric-card">
-      <div class="metric-icon">{{ icon_safe('wifi', fallback='circle', width=14, height=14) }}</div>
-      <span class="metric-label">Connection</span>
-      <strong class="metric-value">{{ 'Online' if conn.online else 'Offline' }}</strong>
     </div>
   </div>
 

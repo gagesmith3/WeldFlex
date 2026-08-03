@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import os
 import tempfile
+import threading
 import time
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable
 
 from robot_link import (
     ConnSnapshot,
     ConnState,
+    ForceSnapshot,
     RobotLink,
     has_conn_error,
     is_conn_code,
@@ -44,6 +47,138 @@ JOG_DIRECTION = {"negative": 0, "positive": 1}
 JOG_MOTION_TIMEOUT_S = 5.0
 JOG_MOTION_POLL_S = 0.02
 JOG_MOTION_SETTLE_S = 0.05
+WELD_TELEMETRY_FRESH_S = 1.0
+WELD_TELEMETRY_CALL_TIMEOUT_S = 3.0
+
+_WELD_PHASES = {
+    10: "entered",
+    20: "search: approaching",
+    21: "search: contact",
+    30: "press: force control on",
+    31: "press: driving in",
+    32: "press: holding",
+    33: "press: held",
+    40: "weld",
+    50: "retracting",
+    60: "done",
+}
+
+_WELD_FAULT_BASE = 90
+_WELD_FAULT_SITES = {
+    1: "FT_FindSurface refused the approach",
+    4: "DI1 (stud on work) not active",
+    5: "FT_LinInsertion refused the press",
+    9: "FT_Control unavailable or refused",
+    10: "DI1 dropped before the weld pulse",
+    11: "DI0 (caps at charge) never came up",
+}
+
+_WELD_GUARD_CODES = {
+    0: "released",
+    1: "custom thresholds",
+    2: "custom + level",
+    3: "level only",
+    4: "not needed at this force",
+    9: "not applied",
+}
+_WELD_GUARD_APPLIED_CODES = frozenset({1, 2, 3})
+
+
+@dataclass(frozen=True)
+class UniversalRobotState:
+    """Single, authoritative source of truth for all robot state and telemetry across WeldFlex."""
+
+    # Connection & Link Health
+    connected: bool = False
+    state: str = "disconnected"
+    busy: bool = False
+    busy_label: str | None = None
+    mode: str = "unknown"
+    program_state_raw: int | None = None
+    program_state: str = "unknown"
+    current_line: int | None = None
+
+    # Safety & Diagnostics
+    fault_main: int | None = None
+    fault_sub: int | None = None
+    fault_source: str = "none"
+    has_fault: bool = False
+    probe_error: str | None = None
+    run_error: str | None = None
+
+    # Mechanical & Sensor State
+    tcp_pose: tuple[float, float, float, float, float, float] | None = None
+    tcp_z: float | None = None
+    fz_lbf: float | None = None
+    force_fresh: bool = False
+
+    # Hardware IO Interlocks
+    stud_on_work: int | None = None  # 1 = SEATED, 0 = OPEN, None = unknown
+    weld_ready: int | None = None    # 1 = READY, 0 = CHARGING, None = unknown
+    di_live: bool = False
+
+    # Controller System Variables (s_var_1 .. s_var_8)
+    weld_phase_code: int | None = None
+    weld_phase_label: str | None = None
+    last_ft_return: int | None = None
+    contact_z: float | None = None
+    press_travel_mm: float | None = None
+    collision_guard_code: int | None = None
+    collision_guard_label: str | None = None
+    collision_guard_applied: bool = False
+    target_press_lbf: float | None = None
+
+    sampled_ts: float = 0.0
+    generation: int | None = None
+
+    def age_s(self) -> float | None:
+        if not self.sampled_ts:
+            return None
+        return max(0.0, time.time() - self.sampled_ts)
+
+    def is_fresh(self, max_age_s: float = WELD_TELEMETRY_FRESH_S) -> bool:
+        age = self.age_s()
+        return self.connected and age is not None and age <= max_age_s
+
+
+@dataclass(frozen=True)
+class WeldTelemetrySnapshot:
+    """Latest detailed weld-test sample, owned by the service rather than a browser poll."""
+
+    active: bool = False
+    sampled_ts: float | None = None
+    generation: int | None = None
+    error: str | None = None
+    ft_err: int | None = None
+    fz: float | None = None
+    stud_di: int | None = None
+    stud_on_work: int | None = None
+    ready_di: int | None = None
+    weld_ready: int | None = None
+    sysvars: tuple[tuple[int, float | None], ...] = ()
+    tcp_z: float | None = None
+    program_state_raw: int | None = None
+    line: int | None = None
+    fault_main: int | None = None
+    fault_sub: int | None = None
+
+    def age_s(self) -> float | None:
+        if self.sampled_ts is None:
+            return None
+        return max(0.0, time.time() - self.sampled_ts)
+
+    def is_fresh(self, max_age_s: float = WELD_TELEMETRY_FRESH_S) -> bool:
+        age = self.age_s()
+        # Keep the last complete sample visible through one failed attempt. A
+        # transient timeout must not erase useful live diagnostics before the
+        # cache has actually gone stale.
+        return age is not None and age <= max_age_s
+
+    def sysvar(self, slot: int) -> float | None:
+        for saved_slot, value in self.sysvars:
+            if saved_slot == slot:
+                return value
+        return None
 
 
 def _upload_hint(err_code: int, path: Path, detail: Any = None) -> str:
@@ -88,6 +223,12 @@ class WeldFlexRobotService:
     def __init__(self, robot_ip: str) -> None:
         self._link = RobotLink(robot_ip)
         self._start_time = time.time()
+        self._weld_telemetry_lock = threading.Lock()
+        self._weld_telemetry = WeldTelemetrySnapshot()
+        self._weld_telemetry_epoch = 0
+        self._weld_telemetry_stop: threading.Event | None = None
+        self._weld_telemetry_thread: threading.Thread | None = None
+        self._weld_telemetry_config: tuple[int, int, tuple[int, ...], float] | None = None
 
     # --- connection surface (delegated to the link) ---
 
@@ -100,6 +241,7 @@ class WeldFlexRobotService:
         self._link.start(connect=True)
 
     def shutdown(self, timeout: float = 5.0) -> None:
+        self.stop_weld_telemetry()
         self._link.shutdown(timeout=timeout)
 
     def connect(self) -> None:
@@ -118,6 +260,119 @@ class WeldFlexRobotService:
     def snapshot(self) -> ConnSnapshot:
         return self._link.snapshot()
 
+    def force_snapshot(self) -> ForceSnapshot:
+        """Latest CNDE force data for any page, without controller I/O."""
+        return self._link.force_snapshot()
+
+    def get_universal_state(self) -> UniversalRobotState:
+        """Consolidated, authoritative single source of truth for all robot state and telemetry."""
+        snap = self.snapshot()
+        force = self.force_snapshot()
+        with self._weld_telemetry_lock:
+            telemetry = self._weld_telemetry
+
+        connected = snap.connected
+        state = snap.state
+        busy = snap.busy
+        busy_label = snap.busy_label
+        prog_raw = snap.program_state_raw
+        program_state = STATE_MAP.get(prog_raw, "unknown") if prog_raw is not None else "unknown"
+        line = snap.current_line
+
+        fault_main = snap.fault_main
+        fault_sub = snap.fault_sub
+        fault_source = snap.fault_source
+        has_fault = fault_main is not None and fault_main != 0
+
+        try:
+            ft = self.ft_read()
+            fz_lbf = ft["fz"] * -1.0 * 0.2248089431 if ft.get("fz") is not None else None
+            force_fresh = bool(ft.get("active"))
+        except Exception:
+            fz_lbf = None
+            force_fresh = False
+
+        sv_phase = telemetry.sysvar(1)
+        sv_ret = telemetry.sysvar(2)
+        sv_z0 = telemetry.sysvar(3)
+        sv_travel = telemetry.sysvar(4)
+        sv_guard = telemetry.sysvar(5)
+        sv_stud = telemetry.sysvar(6)
+        sv_ready = telemetry.sysvar(7)
+        sv_press_lbf = telemetry.sysvar(8)
+
+        phase_code = None
+        packed_di1 = None
+        packed_di0 = None
+        if sv_phase is not None:
+            raw_val = int(sv_phase)
+            phase_code = raw_val % 100
+            d1 = (raw_val // 100) % 10
+            d0 = (raw_val // 1000) % 10
+            packed_di1 = None if d1 == 9 else d1
+            packed_di0 = None if d0 == 9 else d0
+
+        phase_label = None
+        if phase_code is not None:
+            if phase_code >= _WELD_FAULT_BASE:
+                site = phase_code - _WELD_FAULT_BASE
+                phase_label = f"FAULT: {_WELD_FAULT_SITES.get(site, f'site {site}')}"
+            else:
+                phase_label = _WELD_PHASES.get(phase_code, f"unknown ({phase_code})")
+
+        guard_code = int(sv_guard) if sv_guard is not None else None
+        guard_label = _WELD_GUARD_CODES.get(guard_code, f"unknown ({guard_code})") if guard_code is not None else None
+        guard_applied = guard_code in _WELD_GUARD_APPLIED_CODES if guard_code is not None else False
+
+        def _di_level(val: float | None) -> int | None:
+            if val is None or val < 0:
+                return None
+            return 1 if int(val) == 1 else 0
+
+        stud_on_work = _di_level(sv_stud) if sv_stud is not None else packed_di1
+        weld_ready = _di_level(sv_ready) if sv_ready is not None else packed_di0
+        di_live = program_state == "running"
+
+        probe_err = None
+        if not connected:
+            probe_err = "Robot offline"
+        elif not force_fresh and di_live:
+            probe_err = "No force — CNDE stream is stale or has not produced a frame"
+
+        sampled_ts = telemetry.sampled_ts or snap.last_success_ts or time.time()
+
+        return UniversalRobotState(
+            connected=connected,
+            state=state,
+            busy=busy,
+            busy_label=busy_label,
+            program_state_raw=prog_raw,
+            program_state=program_state,
+            current_line=line,
+            fault_main=fault_main,
+            fault_sub=fault_sub,
+            fault_source=fault_source,
+            has_fault=has_fault,
+            probe_error=probe_err,
+            tcp_z=telemetry.tcp_z,
+            fz_lbf=fz_lbf,
+            force_fresh=force_fresh,
+            stud_on_work=stud_on_work,
+            weld_ready=weld_ready,
+            di_live=di_live,
+            weld_phase_code=phase_code,
+            weld_phase_label=phase_label,
+            last_ft_return=int(sv_ret) if sv_ret is not None else None,
+            contact_z=sv_z0 if (sv_z0 is not None and sv_z0 != 0) else None,
+            press_travel_mm=sv_travel if (sv_travel is not None and sv_travel != 0) else None,
+            collision_guard_code=guard_code,
+            collision_guard_label=guard_label,
+            collision_guard_applied=guard_applied,
+            target_press_lbf=sv_press_lbf if (sv_press_lbf is not None and sv_press_lbf > 0) else None,
+            sampled_ts=sampled_ts,
+            generation=snap.generation,
+        )
+
     def set_running_hint(self, running: bool) -> None:
         """Tell the link to probe faster while a program runs, for live line tracking."""
         self._link.set_heartbeat_hint(running)
@@ -125,12 +380,130 @@ class WeldFlexRobotService:
     def thread_report(self) -> dict[str, Any]:
         return self._link.thread_report()
 
+    # --- detailed weld telemetry ---
+
+    def start_weld_telemetry(
+        self,
+        stud_di: int,
+        ready_di: int,
+        sysvar_slots: tuple[int, ...],
+        interval_s: float,
+    ) -> None:
+        """Start one detailed sampler for the active weld-test run.
+
+        Browser polls read ``weld_telemetry_snapshot`` only. The sampler is the
+        single producer, and its calls still pass through RobotLink's SDK worker.
+        """
+        config = (
+            int(stud_di),
+            int(ready_di),
+            tuple(int(slot) for slot in sysvar_slots),
+            max(0.05, float(interval_s)),
+        )
+        with self._weld_telemetry_lock:
+            thread = self._weld_telemetry_thread
+            if thread is not None and thread.is_alive() and self._weld_telemetry_config == config:
+                return
+
+            if self._weld_telemetry_stop is not None:
+                self._weld_telemetry_stop.set()
+            self._weld_telemetry_epoch += 1
+            epoch = self._weld_telemetry_epoch
+            stop = threading.Event()
+            self._weld_telemetry_stop = stop
+            self._weld_telemetry_config = config
+            self._weld_telemetry = WeldTelemetrySnapshot(active=True)
+            thread = threading.Thread(
+                target=self._weld_telemetry_loop,
+                args=(epoch, stop, config),
+                daemon=True,
+                name="weld-telemetry",
+            )
+            self._weld_telemetry_thread = thread
+        thread.start()
+
+    def stop_weld_telemetry(self) -> None:
+        """Stop detailed sampling and retain the last reading as visibly stale data."""
+        with self._weld_telemetry_lock:
+            self._weld_telemetry_epoch += 1
+            if self._weld_telemetry_stop is not None:
+                self._weld_telemetry_stop.set()
+            self._weld_telemetry_stop = None
+            self._weld_telemetry_thread = None
+            self._weld_telemetry_config = None
+            self._weld_telemetry = replace(self._weld_telemetry, active=False)
+
+    def weld_telemetry_snapshot(self) -> WeldTelemetrySnapshot:
+        """Return the latest detailed telemetry cache without doing robot I/O."""
+        with self._weld_telemetry_lock:
+            return self._weld_telemetry
+
+    def _weld_telemetry_loop(
+        self,
+        epoch: int,
+        stop: threading.Event,
+        config: tuple[int, int, tuple[int, ...], float],
+    ) -> None:
+        stud_di, ready_di, sysvar_slots, interval_s = config
+        while not stop.is_set():
+            before = self.snapshot()
+            try:
+                probe = self.weld_probe(stud_di, ready_di, sysvar_slots)
+                after = self.snapshot()
+                if before.generation != after.generation:
+                    raise RuntimeError("Robot connection changed during weld telemetry sample")
+                reading = WeldTelemetrySnapshot(
+                    active=True,
+                    sampled_ts=time.time(),
+                    generation=after.generation,
+                    ft_err=probe["ft_err"],
+                    fz=probe["fz"],
+                    stud_di=probe["stud_di"],
+                    stud_on_work=probe["stud_on_work"],
+                    ready_di=probe["ready_di"],
+                    weld_ready=probe["weld_ready"],
+                    sysvars=tuple(
+                        (slot, probe["sysvars"].get(slot)) for slot in sysvar_slots
+                    ),
+                    tcp_z=probe["tcp_z"],
+                    program_state_raw=probe["program_state_raw"],
+                    line=probe["line"],
+                    fault_main=probe["fault_main"],
+                    fault_sub=probe["fault_sub"],
+                )
+            except Exception as exc:  # noqa: BLE001 - sampling failures are telemetry data
+                reading = None
+                error = str(exc)
+
+            with self._weld_telemetry_lock:
+                if epoch != self._weld_telemetry_epoch:
+                    return
+                if reading is not None:
+                    self._weld_telemetry = reading
+                else:
+                    self._weld_telemetry = replace(
+                        self._weld_telemetry, active=True, error=error
+                    )
+            stop.wait(interval_s)
+
     # --- SDK call plumbing ---
 
-    def _call(self, fn: Callable[[Any], Any], timeout: float = SDK_TIMEOUT_S, retries: int = 3) -> Any:
+    def _call(
+        self,
+        fn: Callable[[Any], Any],
+        timeout: float = SDK_TIMEOUT_S,
+        retries: int = 3,
+        priority: int = 0,
+        coalesce_key: str | None = None,
+    ) -> Any:
         """Run an SDK call on the link's worker thread with a hard timeout."""
         return self._link.call(
-            fn, timeout=timeout, retries=retries, label=getattr(fn, "__name__", "call")
+            fn,
+            timeout=timeout,
+            retries=retries,
+            label=getattr(fn, "__name__", "call"),
+            priority=priority,
+            coalesce_key=coalesce_key,
         )
 
     # Kept as staticmethods for the documented wrapper pattern; the implementations
@@ -254,7 +627,7 @@ class WeldFlexRobotService:
     def run_program(self, program_name: str) -> None:
         """Run a Lua program already stored on the robot under /fruser/."""
         self._call(lambda r: r.Mode(MODE_AUTO))
-        time.sleep(2)
+        time.sleep(0.5)
         load_resp = self._call(lambda r: r.ProgramLoad(f"/fruser/{program_name}"))
         load_err, _ = self._unpack(load_resp)
         if load_err != 0:
@@ -300,7 +673,9 @@ class WeldFlexRobotService:
 
     def jog_pose(self) -> list:
         """Current TCP pose [x, y, z, rx, ry, rz] for the jog position readout."""
-        resp = self._call(lambda r: r.GetActualTCPPose(1), retries=1)
+        resp = self._call(
+            lambda r: r.GetActualTCPPose(1), retries=1, priority=2, coalesce_key="jog-pose"
+        )
         err_code, pose = self._unpack(resp)
         if err_code != 0 or pose is None:
             raise RuntimeError(f"GetActualTCPPose failed (code {err_code})")
@@ -335,6 +710,15 @@ class WeldFlexRobotService:
             raise RuntimeError(f"SetToolCoord failed (code {apply_code})")
         return list(tcp_pose)
 
+    def set_anticollision(self, mode: int = 0, level: list | None = None, config: int = 0) -> None:
+        """Set joint collision detection level on controller (mode 0, level 10 = Collision OFF)."""
+        if level is None:
+            level = [10.0, 10.0, 10.0, 10.0, 10.0, 10.0]
+        err = self._call(lambda r: r.SetAnticollision(mode, level, config))
+        err_code, _ = self._unpack(err)
+        if err_code != 0:
+            logger.warning(f"SetAnticollision failed (code {err_code})")
+
     def ft_setup(self) -> None:
         """Full init sequence per SDK example: configure → reset → activate → zero.
         Takes ~10 s due to required waits between commands."""
@@ -358,6 +742,42 @@ class WeldFlexRobotService:
 
         self._call(_sequence, timeout=30.0)
 
+    def ft_config(self) -> dict:
+        """The controller's own force-sensor configuration, including its number.
+
+        Read-only, idle-safe, and the answer to weld.lua's FTC_SENSOR_NUM — which
+        is currently the guessed value 1. FT_Control takes a `sensor_num`, and a
+        wrong one does not fail loudly: the regulator starts, regulates on
+        nothing, and the insertion drives in under position control until
+        something stops it. That is indistinguishable from the collision-threshold
+        story the STAGE 2 investigation has been chasing.
+
+        `FT_GetConfig` returns [number, company, device, softversion, bus]
+        (Robot.py:7439-7443). `number` is the sensor number the WebApp assigned;
+        `company` should read 24 (XJC) and `device` 0 on this cell, matching what
+        ft_setup writes — if they do not, this is reporting a different sensor
+        than the one WeldFlex configured and the number is not usable.
+
+        Call it while nothing is running. It is a plain XML-RPC read, but the FT
+        interfaces return code 14 for the whole time a controller-side force task
+        owns the sensor.
+        """
+        resp = self._call(lambda r: r.FT_GetConfig())
+        err_code, values = self._unpack(resp)
+        if err_code != 0:
+            raise RuntimeError(f"FT_GetConfig failed (code {err_code})")
+        if not isinstance(values, (list, tuple)) or len(values) < 3:
+            raise RuntimeError(f"FT_GetConfig returned an unexpected shape: {values!r}")
+        return {
+            "number": int(values[0]),
+            "company": int(values[1]),
+            "device": int(values[2]),
+            # Documented as unused and defaulted to 0; carried through rather than
+            # dropped so an unexpected value is visible instead of silently lost.
+            "softversion": int(values[3]) if len(values) > 3 else None,
+            "bus": int(values[4]) if len(values) > 4 else None,
+        }
+
     def ft_deactivate(self) -> None:
         err = self._call(lambda r: r.FT_Activate(0))
         err_code, _ = self._unpack(err)
@@ -371,29 +791,53 @@ class WeldFlexRobotService:
             raise RuntimeError(f"FT_SetZero failed (code {err_code})")
 
     def ft_read(self) -> dict:
-        """Force/torque via raw XML-RPC, bypassing the SDK's local-cache read.
+        """Latest CNDE force frame, with raw XML-RPC only as an idle fallback.
 
-        The SDK's FT_GetForceTorqueRCS and ft_sensor_active both read
-        robot_state_pkg, which only the CNDE stream (port 20005) ever writes —
-        and CNDE never connects on this FR-16 firmware, so the cache is zeroed
-        forever and the sensor always looked inactive. Same bypass as
-        robot_link's _read_program_state. The raw response is flat:
-        [err, fx, fy, fz, tx, ty, tz].
+        The CNDE cache is updated by its receiver thread, so it remains available
+        while a controller-side force task owns the sensor. Raw XML-RPC force
+        reads return code 14 in that window and are deliberately not attempted
+        while a program is running.
         """
-        resp = self._call(lambda r: r.robot.FT_GetForceTorqueRCS(0), retries=1)
-        if isinstance(resp, (list, tuple)) and len(resp) >= 7:
-            err_code, values = int(resp[0]), resp[1:7]
-        else:
-            err_code, values = self._unpack(resp)
-        if err_code != 0 or values is None:
-            raise RuntimeError(f"FT_GetForceTorqueRCS failed (code {err_code})")
+        cached = self.force_snapshot()
+        if cached.is_fresh():
+            fx, fy, fz, mx, my, mz = cached.values
+            return {
+                "fx": fx, "fy": fy, "fz": fz,
+                "mx": mx, "my": my, "mz": mz,
+                "active": True,
+                "source": cached.source,
+                "age_s": cached.age_s(),
+            }
+
+        # Fallback XML-RPC read if CNDE stream is not fresh
+        try:
+            resp = self._call(
+                lambda r: r.robot.FT_GetForceTorqueRCS(0),
+                retries=1,
+                priority=2,
+                coalesce_key="ft-reading",
+            )
+            if isinstance(resp, (list, tuple)) and len(resp) >= 7:
+                err_code, values = int(resp[0]), resp[1:7]
+            else:
+                err_code, values = self._unpack(resp)
+            if err_code == 0 and values is not None and len(values) >= 6:
+                return {
+                    "fx": float(values[0]), "fy": float(values[1]), "fz": float(values[2]),
+                    "mx": float(values[3]), "my": float(values[4]), "mz": float(values[5]),
+                    "active": True,
+                    "source": "xmlrpc",
+                    "age_s": 0.0,
+                }
+        except Exception:
+            pass
+
         return {
-            "fx": float(values[0]), "fy": float(values[1]), "fz": float(values[2]),
-            "mx": float(values[3]), "my": float(values[4]), "mz": float(values[5]),
-            # No liveness flag exists over RPC; err==0 only says the controller
-            # answered. Real liveness is the commissioning checks (values dither,
-            # RCS != Origin, hand push moves the expected axis).
-            "active": True,
+            "fx": None, "fy": None, "fz": None,
+            "mx": None, "my": None, "mz": None,
+            "active": False,
+            "source": "none",
+            "age_s": None,
         }
 
     def weld_probe(
@@ -404,11 +848,11 @@ class WeldFlexRobotService:
     ) -> dict:
         """Everything the Weld Test page shows, in a single worker dispatch.
 
-        The two inputs are different signals and both have to be watched:
-        `stud_di` (DI1) is continuity welder -> work -> gun, i.e. the stud is
-        seated; `ready_di` (DI0) is the welder's caps-at-charge line. weld.lua
-        gates the pulse on both, so a stalled weld test is only diagnosable if the
-        page can show which one is missing.
+        `stud_di` and `ready_di` name the two inputs the caller displays. The
+        controller program reads them itself and publishes their levels through
+        system variables. Host-side raw ``GetDI`` was removed from this polling
+        path: it is unverified on this firmware and can hold the single XML-RPC
+        worker until its socket timeout, starving every other detailed signal.
 
         `sysvar_slots` are the controller system variables weld.lua's pub() writes
         its progress to — slot 1 is the phase code, slot 2 the raw return value of
@@ -420,32 +864,23 @@ class WeldFlexRobotService:
 
         Polled a few times a second while a weld test runs, so every read shares
         one submission rather than queueing behind the others on the link's single
-        worker. All bypass the SDK wrappers for the reason ft_read documents: the
-        wrapped GetDI and FT_GetForceTorqueRCS read robot_state_pkg, which only the
-        CNDE stream fills, and CNDE never connects on this firmware. GetActualTCPPose
-        is unwrapped for consistency and to keep the whole probe on one code path —
-        its SDK wrapper does do real RPC.
+        worker. The force read and pose read bypass their SDK wrappers for the
+        reason ft_read documents: the wrapped force getter reads robot_state_pkg,
+        which CNDE never fills on this firmware. GetActualTCPPose is unwrapped for
+        consistency and to keep the whole probe on one code path — its SDK wrapper
+        does do real RPC.
 
         `fz` is the sensor's native value — negative under compression. Callers
         that display it flip the sign; see FT_FZ_DISPLAY_SIGN in app.py.
 
-        Every read here is best-effort — nothing raises. The DI reads come back
-        as `None` on failure (they have no live-verified precedent). The force
-        read reports its error code in `ft_err` with `fz = None` instead of
-        raising, because a nonzero code is routine, not exceptional: the
-        controller refuses FT_GetForceTorqueRCS with code 14 for the whole time
-        FT_FindSurface is executing (observed live 2026-07-28 — the force-control
-        task owns the sensor), which is exactly when this gets polled hardest.
-        The caller decides whether a given code is "busy" or a real fault.
+        Every read here is best-effort — nothing raises. Force comes from the
+        shared CNDE snapshot, which is updated independently of this XML-RPC
+        batch and continues through controller-side force control. A missing or
+        stale frame is unknown, not a zero.
         """
-        def _probe(r):
-            ft = r.robot.FT_GetForceTorqueRCS(0)
-            dis = []
-            for di_id in (stud_di, ready_di):
-                try:
-                    dis.append(r.robot.GetDI(int(di_id), 0))
-                except Exception:
-                    dis.append(None)
+        force = self.force_snapshot()
+
+        def weld_detail_probe(r):
             svars = []
             for slot in sysvar_slots:
                 try:
@@ -456,28 +891,18 @@ class WeldFlexRobotService:
                 pose = r.robot.GetActualTCPPose(0)
             except Exception:
                 pose = None
-            try:
-                state_resp = r.robot.GetProgramState()
-            except Exception:
-                state_resp = None
-            try:
-                line_resp = r.robot.GetCurrentLine()
-            except Exception:
-                line_resp = None
-            try:
-                fault_resp = r.robot.GetRobotErrorCode()
-            except Exception:
-                fault_resp = None
-            return ft, dis[0], dis[1], svars, pose, state_resp, line_resp, fault_resp
+            return svars, pose
 
-        ft_resp, stud_resp, ready_resp, svar_resps, pose_resp, state_resp, line_resp, fault_resp = self._call(_probe, retries=1, timeout=1.0)
+        svar_resps, pose_resp = self._call(
+            weld_detail_probe,
+            retries=1,
+            timeout=WELD_TELEMETRY_CALL_TIMEOUT_S,
+            priority=2,
+            coalesce_key="weld-detail",
+        )
 
-        if isinstance(ft_resp, (list, tuple)) and len(ft_resp) >= 7:
-            ft_err, fz = int(ft_resp[0]), float(ft_resp[3])
-        else:
-            ft_err, fz = int(self._unpack(ft_resp)[0]), None
-        if ft_err != 0:
-            fz = None
+        ft_err = 0 if force.is_fresh() else None
+        fz = force.values[2] if force.is_fresh() else None
 
         def _level(resp):
             if isinstance(resp, (list, tuple)) and len(resp) >= 2 and int(resp[0]) == 0:
@@ -507,55 +932,22 @@ class WeldFlexRobotService:
             except (TypeError, ValueError):
                 tcp_z = None
 
-        program_state_raw = None
-        if isinstance(state_resp, (list, tuple)) and len(state_resp) >= 2 and int(state_resp[0]) == 0:
-            try:
-                program_state_raw = int(state_resp[1])
-            except (TypeError, ValueError):
-                program_state_raw = None
-        elif isinstance(state_resp, (int, float)):
-            try:
-                program_state_raw = int(state_resp)
-            except (TypeError, ValueError):
-                program_state_raw = None
-
-        line = None
-        if isinstance(line_resp, (list, tuple)) and len(line_resp) >= 2 and int(line_resp[0]) == 0:
-            try:
-                line = int(line_resp[1])
-            except (TypeError, ValueError):
-                line = None
-        elif isinstance(line_resp, (int, float)):
-            try:
-                line = int(line_resp)
-            except (TypeError, ValueError):
-                line = None
-
-        fault_main = None
-        fault_sub = None
-        if isinstance(fault_resp, (list, tuple)) and len(fault_resp) >= 3 and int(fault_resp[0]) == 0:
-            try:
-                fault_main = int(fault_resp[1]) or None
-            except (TypeError, ValueError):
-                fault_main = None
-            try:
-                fault_sub = int(fault_resp[2]) or None
-            except (TypeError, ValueError):
-                fault_sub = None
-
         return {
             "ft_err": ft_err,
             "fz": fz,
             "stud_di": int(stud_di),
-            "stud_on_work": _level(stud_resp),
+            "stud_on_work": None,
             "ready_di": int(ready_di),
-            "weld_ready": _level(ready_resp),
+            "weld_ready": None,
             "sysvars": sysvars,
             "tcp_z": tcp_z,
-            "program_state_raw": program_state_raw,
-            "line": line,
-            "fault_main": fault_main,
-            "fault_sub": fault_sub,
+            # Program state, line, and faults are the core heartbeat's job.
+            # Duplicating them here made one detail read much longer without
+            # improving what the page can render.
+            "program_state_raw": None,
+            "line": None,
+            "fault_main": None,
+            "fault_sub": None,
         }
 
     def status(self) -> dict[str, Any]:

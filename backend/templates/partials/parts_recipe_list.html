@@ -5,6 +5,8 @@
       <tr>
         <th>Part</th>
         <th>Studs</th>
+        <th>Stud / Substrate</th>
+        <th>Pressure</th>
         <th>Updated</th>
         <th>Action</th>
       </tr>
@@ -14,6 +16,8 @@
       <tr>
         <td class="parts-library-name-cell">{{ recipe.name }}</td>
         <td class="parts-library-studs-cell">{{ recipe.studs_count }}</td>
+        <td class="parts-library-spec-cell">{{ recipe.stud_type }} · {{ recipe.substrate }}</td>
+        <td class="parts-library-pressure-cell"><span class="badge badge--{{ recipe.pressure_setting }}">{{ recipe.pressure_setting|upper }}</span></td>
         <td class="parts-library-date-cell">{{ recipe.updated_label }}</td>
         <td class="parts-library-action-cell">
           <button type="button" class="btn run js-table-run parts-run-btn"

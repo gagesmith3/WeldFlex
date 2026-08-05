@@ -3,9 +3,15 @@
   Connection state comes from the link's cached snapshot, so this partial can be polled
   by every open page without generating any robot traffic.
 #}
+{#
+  'telemetry' = the 8083 push is live but XML-RPC is not. The robot is reachable
+  and the program is still running, so this is not OFFLINE; commands ride
+  XML-RPC and would silently fail, so it is not ONLINE either.
+#}
 {% set conn = {
     'connected':    ('ONLINE',       'link_2',     'ok'),
     'connecting':   ('CONNECTING',   'refresh-cw', 'warn'),
+    'telemetry':    ('TELEMETRY',    'link_2',     'warn'),
     'degraded':     ('UNSTABLE',     'link_2',     'warn'),
     'faulted':      ('OFFLINE',      'link_2_off', 'error'),
     'disconnected': ('DISCONNECTED', 'link_2_off', 'error'),

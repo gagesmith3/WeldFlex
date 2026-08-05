@@ -51,7 +51,10 @@
       "Bash(python \"C:/Users/Gage/AppData/Local/Temp/claude/c--Users-Gage-Desktop-WeldFlex/57c3e674-567b-4ace-9005-d32c621cd573/scratchpad/probe_check.py\")",
       "Bash(python \"C:/Users/Gage/AppData/Local/Temp/claude/c--Users-Gage-Desktop-WeldFlex/57c3e674-567b-4ace-9005-d32c621cd573/scratchpad/luabalance.py\" programs/weld.lua programs/test_ft_sensor.lua)",
       "Bash(python \"C:/Users/Gage/AppData/Local/Temp/claude/c--Users-Gage-Desktop-WeldFlex/57c3e674-567b-4ace-9005-d32c621cd573/scratchpad/luabalance.py\" programs/weld.lua)",
-      "Bash(pdftotext docs/fairino-doc-en-readthedocs-io-en-latest.pdf C:/Users/Gage/AppData/Local/Temp/claude/c--Users-Gage-Desktop-WeldFlex/57c3e674-567b-4ace-9005-d32c621cd573/scratchpad/sdkdoc_raw.txt)"
+      "Bash(pdftotext docs/fairino-doc-en-readthedocs-io-en-latest.pdf C:/Users/Gage/AppData/Local/Temp/claude/c--Users-Gage-Desktop-WeldFlex/57c3e674-567b-4ace-9005-d32c621cd573/scratchpad/sdkdoc_raw.txt)",
+      "Bash(./venv/Scripts/python.exe -m pytest tests/test_robot_feed.py tests/test_frame_8083.py -q)",
+      "Bash(./venv/Scripts/python.exe -m pytest tests/test_robot_link.py -q)",
+      "Edit(/.claude/skills/deployment-targets/**)"
     ],
     "additionalDirectories": [
       "C:\\Users\\Gage\\Desktop\\WeldFlex\\.claude"

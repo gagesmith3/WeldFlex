@@ -18,14 +18,26 @@ though it's not SDK-mandated.
 
 ## Reading program state
 
-- **`GetProgramState(self)`** — `Robot.py:7164`. **Local-cache read, not RPC**
-  (`return 0, self.robot_state_pkg.robot_state`; the real RPC call is
-  commented out just above it). Always error `0`. Docstring documents values
-  `1`=stopped/no program, `2`=running, `3`=paused — **but** the underlying
-  struct field comment (`Robot.py:~194`) documents a 4th value, `4`=drag(teach)
-  mode, that `GetProgramState`'s own docstring never mentions. If you poll
-  this while the robot is in drag-teach mode, expect `4`, not one of the
-  documented three.
+- **`GetProgramState(self)`** — `Robot.py:7164`. The **SDK method itself** is a
+  local-cache read, not RPC (`return 0, self.robot_state_pkg.robot_state`; the
+  real RPC call is commented out just above it), always error `0`. **Don't
+  call the SDK method** — as of the telemetry rewrite, `robot_link.py`'s core
+  heartbeat (`_read_program_state`) sources this through a three-tier
+  fallback instead, tried in order: (1) the CNDE struct's `program_state`
+  field, but only when the CNDE receiver's own `_robot_state_run_flag` shows
+  it's actually streaming (`source="cnde"` in `ConnSnapshot`); (2) raw XML-RPC
+  `client.robot.GetProgramState()` (`source="rpc"`) — a real round trip,
+  cached as unsupported (`source` stays `"rpc"`-eligible) only if the
+  controller returns a method-not-found fault; (3) the same dead local-cache
+  read the SDK method itself does, as a last resort (`source="cache"`, always
+  `0`/stale). Check `ConnSnapshot.program_state_source` to know which tier
+  actually produced a given `program_state_raw` value — `"cache"` means the
+  same "always 0" problem as calling the SDK method directly. Docstring
+  documents values `1`=stopped/no program, `2`=running, `3`=paused — **but**
+  the underlying struct field comment (`Robot.py:~194`) documents a 4th value,
+  `4`=drag(teach) mode, that `GetProgramState`'s own docstring never mentions.
+  If you poll this while the robot is in drag-teach mode, expect `4`, not one
+  of the documented three.
 - **`GetCurrentLine(self)`** — `Robot.py:7050`. Real RPC call. Returns
   `(0, line_num)` / `(err, None)`. Used for line-based progress tracking (see
   the `weldflex-app` skill's liberty-test completion-detection pattern).

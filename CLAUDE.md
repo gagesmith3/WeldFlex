@@ -16,6 +16,12 @@ Layers, strictly one-way:
 
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — what the app is for, how a
   part becomes a program, job states, and the current gaps. Start here.
+- [docs/ROBOT_TELEMETRY.md](docs/ROBOT_TELEMETRY.md) — authoritative: which
+  signal comes from which transport, and what has and hasn't moved to the
+  port-8083 feed. Read before touching anything that reads robot state. The
+  trap it exists to prevent: **XML-RPC dies for the whole of a force operation
+  while the robot runs on**, so "connected" is now two separate facts —
+  `commands_available` gates commands, `feed_streaming` never does.
 - [orderofevent.md](orderofevent.md) — the intent spec in the owner's words.
 - `.claude/skills/weldflex-app/` — Flask/HTMX conventions. Load before touching
   any route, template, or `robot_service.py` method.

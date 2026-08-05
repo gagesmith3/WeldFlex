@@ -9,6 +9,7 @@ Page routes (`app.py`) — verified against the code 2026-07-28:
 /operator/admin                     admin.html   (hidden — 700ms long-press on header home button, see admin.js)
 /operator/parts                     parts.html
 /operator/job-history               job_history.html
+/operator/faceplate                 faceplate.html   (stub — linked from admin.html's Tools card, no content yet)
 /operator/calibration               calibration.html   (menu page)
 /operator/jog                       jog.html
 /operator/calibration/force-sensor  force_sensor.html

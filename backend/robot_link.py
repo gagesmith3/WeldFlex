@@ -40,6 +40,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable
 
+from robot_feed import FeedSnapshot, StatusFeed
+
 # The FAIRINO SDK prints Chinese debug text to stdout/stderr. On Windows the
 # default console codec (cp1252) can't encode it, which raises UnicodeEncodeError
 # and gets mistaken for a connection failure. Force UTF-8 stdio regardless of how
@@ -460,6 +462,13 @@ class RobotLink:
         self._raw_fault_supported: bool | None = None
         self._force_snapshot = ForceSnapshot()
 
+        # The port-8083 status stream. Deliberately not tied to the XML-RPC
+        # client or its generation: it has its own socket and its own thread, so
+        # telemetry survives a dead command channel and a command channel
+        # survives a dead feed. Started on operator intent rather than on a
+        # successful RPC connect, for the same reason.
+        self._feed = StatusFeed()
+
         self._snapshot = ConnSnapshot(ip=self._ip)
 
         self._enabled = False           # operator intent: should we hold a connection?
@@ -493,8 +502,10 @@ class RobotLink:
             self._supervisor = threading.Thread(
                 target=self._supervisor_loop, name="robot-supervisor", daemon=True
             )
+            ip = self._ip
         if connect:
             self._set_state(ConnState.CONNECTING, "starting")
+            self._feed.start(ip)
         self._supervisor.start()
         self._wake.set()
 
@@ -509,6 +520,7 @@ class RobotLink:
         if supervisor is not None and supervisor.is_alive():
             supervisor.join(timeout=timeout)
 
+        self._feed.stop()
         handle = self._take_handle()
         if handle is not None:
             self._teardown(handle, close_rpc=True)
@@ -522,7 +534,9 @@ class RobotLink:
             self._attempts = 0
             self._backoff = BACKOFF_START_S
             self._next_attempt_ts = None
+            ip = self._ip
         self._set_state(ConnState.CONNECTING, "connect requested")
+        self._feed.start(ip)
         self.start(connect=True)
         self._wake.set()
 
@@ -535,6 +549,9 @@ class RobotLink:
         with self._state_lock:
             self._enabled = False
             handle, self._handle = self._handle, None
+        # A technician working on the controller gets a genuinely quiet link:
+        # the feed's socket goes too, not just the RPC client.
+        self._feed.stop()
         if handle is not None:
             self._queue_teardown(handle, close_rpc=True)
         self._set_state(ConnState.DISCONNECTED, "disconnected by operator")
@@ -567,6 +584,7 @@ class RobotLink:
             self._next_attempt_ts = None
         if handle is not None:
             self._queue_teardown(handle, close_rpc=True)
+        self._feed.retarget(cleaned)
         self._set_state(ConnState.CONNECTING, f"retargeting to {cleaned}")
         self._wake.set()
         return True
@@ -591,10 +609,23 @@ class RobotLink:
                 return ForceSnapshot()
             return snapshot
 
+    def feed_snapshot(self) -> FeedSnapshot:
+        """Latest port-8083 frame, without performing any robot I/O.
+
+        Not filtered by the RPC client's generation — the feed has its own
+        socket and its own generation, and an RPC reconnect says nothing about
+        whether the status stream is still good.
+        """
+        return self._feed.snapshot()
+
+    def feed_stats(self) -> dict[str, Any]:
+        return self._feed.stats().as_dict()
+
     def thread_report(self) -> dict[str, Any]:
         """Live thread census — the only way to see a thread leak in the field."""
         names = sorted(t.name for t in threading.enumerate())
-        sdk_prefixes = ("robot-sdk", "robot-supervisor", "RobotUdpDataRecvThread", "CNDERecvThread")
+        sdk_prefixes = ("robot-sdk", "robot-supervisor", "robot-feed",
+                        "RobotUdpDataRecvThread", "CNDERecvThread")
         return {
             "count": len(names),
             "names": names,

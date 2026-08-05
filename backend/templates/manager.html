@@ -21,7 +21,7 @@
     <div class="mgr-body">
       <div class="mgr-drawer-backdrop" id="mgr-backdrop" onclick="closeMgrDrawer()"></div>
       <nav class="mgr-sidebar" id="mgr-drawer">
-        <button type="button" class="mgr-nav-btn {% if active_tab != 'settings' %}active{% endif %}"
+        <button type="button" class="mgr-nav-btn {% if active_tab == 'part-designer' or not active_tab %}active{% endif %}"
                 hx-get="/ui/manager/part-designer"
                 hx-push-url="/manager/part-designer"
                 hx-target="#mgr-content"
@@ -29,6 +29,15 @@
                 onclick="setMgrTab(this)">
           {{ icon_safe('pen_tool', width=16, height=16) }}
           Part Designer
+        </button>
+        <button type="button" class="mgr-nav-btn {% if active_tab == 'reports' %}active{% endif %}"
+                hx-get="/ui/manager/reports"
+                hx-push-url="/manager/reports"
+                hx-target="#mgr-content"
+                hx-swap="innerHTML"
+                onclick="setMgrTab(this)">
+          {{ icon_safe('bar_chart_2', width=16, height=16) }}
+          Reports
         </button>
         <button type="button" class="mgr-nav-btn {% if active_tab == 'settings' %}active{% endif %}"
                 hx-get="/ui/manager/settings"
@@ -49,6 +58,8 @@
         <div id="mgr-content">
           {% if active_tab == 'settings' %}
             {% include "partials/mgr_settings.html" %}
+          {% elif active_tab == 'reports' %}
+            {% include "partials/mgr_reports.html" %}
           {% else %}
             {% include "partials/mgr_part_designer.html" %}
           {% endif %}

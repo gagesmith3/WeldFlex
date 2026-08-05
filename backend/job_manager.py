@@ -791,6 +791,11 @@ class JobManager:
                 "status": status,
                 "error": sess.error,
                 "cycle_times": list(sess.cycle_times),
+                "safe_z": sess.safe_z,
+                "part_z": sess.part_z,
+                "pressure_setting": sess.pressure_setting,
+                "stud_type": sess.stud_type,
+                "substrate": sess.substrate,
             }
             snap = self._snapshot_locked()
 
@@ -840,6 +845,28 @@ class JobManager:
                 continue
             try:
                 out.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+        return out
+
+    def events_for_run(self, run_id: str) -> list[dict]:
+        """Fetch all logged events matching a given run_id."""
+        if not run_id:
+            return []
+        out = []
+        try:
+            with open(self._events_path, encoding="utf-8") as f:
+                lines = f.readlines()
+        except OSError:
+            return []
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                item = json.loads(line)
+                if item.get("run_id") == run_id:
+                    out.append(item)
             except json.JSONDecodeError:
                 continue
         return out

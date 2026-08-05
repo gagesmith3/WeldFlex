@@ -1,0 +1,334 @@
+<div class="mgr-reports-container">
+  <div class="mgr-reports-header">
+    <div>
+      <h2 class="mgr-reports-title">Production &amp; Part Reports</h2>
+      <p class="mgr-reports-subtitle">Per-run execution logging, cycle metrics, and part performance history.</p>
+    </div>
+    <div class="mgr-reports-actions">
+      <div class="mgr-select-wrap">
+        <label for="mgr-report-part-filter" class="mgr-filter-label">Filter Part:</label>
+        <select id="mgr-report-part-filter" class="mgr-select-input" onchange="mgrFilterReportsByPart(this.value)">
+          <option value="all">All Parts</option>
+          {% for r in recipes %}
+            <option value="{{ r.id }}">{{ r.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <button type="button" class="btn primary sm btn-blue" onclick="mgrRefreshReports()">
+        {{ icon_safe('refresh_cw', width=14, height=14) }} Refresh
+      </button>
+    </div>
+  </div>
+
+  <!-- Summary Metric Cards -->
+  <div class="mgr-stats-grid">
+    <div class="mgr-stat-card">
+      <span class="mgr-stat-label">Total Runs</span>
+      <strong class="mgr-stat-value" id="mgr-stat-total-runs">0</strong>
+    </div>
+    <div class="mgr-stat-card">
+      <span class="mgr-stat-label">Completed Cycles</span>
+      <strong class="mgr-stat-value" id="mgr-stat-total-cycles">0</strong>
+    </div>
+    <div class="mgr-stat-card">
+      <span class="mgr-stat-label">Success Rate</span>
+      <strong class="mgr-stat-value" id="mgr-stat-success-rate">0%</strong>
+    </div>
+    <div class="mgr-stat-card">
+      <span class="mgr-stat-label">Avg Cycle Time</span>
+      <strong class="mgr-stat-value" id="mgr-stat-avg-cycle">—</strong>
+    </div>
+  </div>
+
+  <!-- Run Log History Table -->
+  <div class="mgr-card">
+    <div class="mgr-card-header">
+      <h3 class="mgr-card-title">Run History</h3>
+      <span class="mgr-badge" id="mgr-history-count-badge">0 runs</span>
+    </div>
+    <div class="mgr-table-responsive">
+      <table class="mgr-table" id="mgr-reports-table">
+        <thead>
+          <tr>
+            <th>Date / Time</th>
+            <th>Part Name</th>
+            <th>Status</th>
+            <th>Cycles (Done / Target)</th>
+            <th>Avg Cycle Time</th>
+            <th>Total Time</th>
+            <th>Details</th>
+          </tr>
+        </thead>
+        <tbody id="mgr-reports-tbody">
+          <tr>
+            <td colspan="7" class="mgr-table-empty">Loading production run logs...</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Run Detail Modal -->
+<div id="mgr-run-detail-modal" class="wf-modal-overlay" hidden>
+  <div class="wf-modal pd-modal-wide">
+    <div class="wf-modal-header">
+      <h3 class="wf-modal-msg">Run Execution Log — <span id="mgr-modal-run-id"></span></h3>
+      <button type="button" class="mgr-modal-close" onclick="mgrCloseRunDetailModal()">&times;</button>
+    </div>
+    <div class="mgr-modal-content">
+      <div class="mgr-modal-summary-grid">
+        <div class="mgr-modal-summary-item">
+          <span class="mgr-report-label">Part Name</span>
+          <strong id="mgr-modal-part-name">—</strong>
+        </div>
+        <div class="mgr-modal-summary-item">
+          <span class="mgr-report-label">Status</span>
+          <span id="mgr-modal-status" class="job-status-badge">—</span>
+        </div>
+        <div class="mgr-modal-summary-item">
+          <span class="mgr-report-label">Started At</span>
+          <strong id="mgr-modal-started">—</strong>
+        </div>
+        <div class="mgr-modal-summary-item">
+          <span class="mgr-report-label">Ended At</span>
+          <strong id="mgr-modal-ended">—</strong>
+        </div>
+      </div>
+
+      <!-- Part Configuration Snapshot -->
+      <div class="mgr-modal-section">
+        <h4 class="mgr-modal-section-title">Part Parameters at Execution</h4>
+        <div class="mgr-params-row">
+          <span><strong>Stud Type:</strong> <span id="mgr-modal-stud-type">—</span></span>
+          <span><strong>Substrate:</strong> <span id="mgr-modal-substrate">—</span></span>
+          <span><strong>Pressure:</strong> <span id="mgr-modal-pressure">—</span> lbf</span>
+          <span><strong>Safe Z:</strong> <span id="mgr-modal-safe-z">—</span> mm</span>
+          <span><strong>Part Z:</strong> <span id="mgr-modal-part-z">—</span> mm</span>
+          <span><strong>Studs:</strong> <span id="mgr-modal-stud-count">—</span></span>
+        </div>
+      </div>
+
+      <!-- Error banner if any -->
+      <div id="mgr-modal-error-box" class="mgr-error-banner" hidden>
+        <strong>Run Error:</strong> <span id="mgr-modal-error-text"></span>
+      </div>
+
+      <!-- Cycle Times Breakdown -->
+      <div class="mgr-modal-section">
+        <h4 class="mgr-modal-section-title">Cycle Breakdown</h4>
+        <div class="mgr-table-responsive">
+          <table class="mgr-table sm">
+            <thead>
+              <tr>
+                <th>Cycle #</th>
+                <th>Duration (s)</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="mgr-modal-cycles-tbody">
+              <tr><td colspan="3" class="mgr-table-empty">No cycle data recorded</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Event Trail -->
+      <div class="mgr-modal-section">
+        <h4 class="mgr-modal-section-title">Event Timeline</h4>
+        <div id="mgr-modal-events-list" class="mgr-events-list">
+          <div class="mgr-table-empty">No event trail</div>
+        </div>
+      </div>
+    </div>
+    <div class="wf-modal-actions">
+      <button type="button" class="btn wf-cancel" onclick="mgrCloseRunDetailModal()">Close</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  let _allRuns = [];
+  let _activePartFilter = 'all';
+
+  window.mgrRefreshReports = function() {
+    fetch('/api/reports/summary')
+      .then(res => res.json())
+      .then(data => {
+        if (!data || !data.runs) return;
+        _allRuns = data.runs;
+        mgrRenderReports();
+      })
+      .catch(err => {
+        console.error('Failed to fetch reports summary:', err);
+        const tbody = document.getElementById('mgr-reports-tbody');
+        if (tbody) tbody.innerHTML = `<tr><td colspan="7" class="mgr-table-empty error">Failed to load reports history.</td></tr>`;
+      });
+  };
+
+  window.mgrFilterReportsByPart = function(partId) {
+    _activePartFilter = partId;
+    mgrRenderReports();
+  };
+
+  function mgrRenderReports() {
+    const filtered = _activePartFilter === 'all' 
+      ? _allRuns 
+      : _allRuns.filter(r => r.part_id === _activePartFilter);
+
+    // Compute stats
+    const totalRuns = filtered.length;
+    let totalCycles = 0;
+    let completedRuns = 0;
+    let allCycleTimes = [];
+
+    filtered.forEach(r => {
+      totalCycles += (r.cycles_done || 0);
+      if (r.status === 'completed') completedRuns++;
+      if (Array.isArray(r.cycle_times)) {
+        allCycleTimes.push(...r.cycle_times);
+      }
+    });
+
+    const successRate = totalRuns > 0 ? Math.round((completedRuns / totalRuns) * 100) : 0;
+    const avgCycle = allCycleTimes.length > 0 
+      ? (allCycleTimes.reduce((a, b) => a + b, 0) / allCycleTimes.length).toFixed(1) + 's'
+      : '—';
+
+    document.getElementById('mgr-stat-total-runs').textContent = totalRuns;
+    document.getElementById('mgr-stat-total-cycles').textContent = totalCycles;
+    document.getElementById('mgr-stat-success-rate').textContent = successRate + '%';
+    document.getElementById('mgr-stat-avg-cycle').textContent = avgCycle;
+    document.getElementById('mgr-history-count-badge').textContent = `${totalRuns} run${totalRuns !== 1 ? 's' : ''}`;
+
+    const tbody = document.getElementById('mgr-reports-tbody');
+    if (!tbody) return;
+
+    if (filtered.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="7" class="mgr-table-empty">No production runs recorded for this filter.</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = filtered.map(r => {
+      const avgRunTime = (r.cycle_times && r.cycle_times.length)
+        ? (r.cycle_times.reduce((a, b) => a + b, 0) / r.cycle_times.length).toFixed(1) + 's'
+        : '—';
+      
+      let durationStr = '—';
+      if (r.started_at && r.ended_at) {
+        try {
+          const t1 = new Date(r.started_at).getTime();
+          const t2 = new Date(r.ended_at).getTime();
+          if (t2 > t1) {
+            const diffSec = Math.round((t2 - t1) / 1000);
+            durationStr = diffSec < 60 ? `${diffSec}s` : `${Math.floor(diffSec / 60)}m ${diffSec % 60}s`;
+          }
+        } catch(e){}
+      }
+
+      const statusClass = r.status === 'completed' ? 'completed' : (r.status === 'error' ? 'error' : 'stopped');
+      const startFmt = r.started_at ? r.started_at.replace('T', ' ') : 'Unknown';
+
+      return `
+        <tr>
+          <td>${startFmt}</td>
+          <td><strong>${r.part_name || 'Untitled Part'}</strong></td>
+          <td><span class="job-status-badge ${statusClass}">${r.status || 'unknown'}</span></td>
+          <td>${r.cycles_done || 0} / ${r.cycles_target || 1}</td>
+          <td>${avgRunTime}</td>
+          <td>${durationStr}</td>
+          <td>
+            <button type="button" class="btn primary xs btn-blue" onclick="mgrOpenRunDetailModal('${r.run_id}')">
+              View Log
+            </button>
+          </td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  window.mgrOpenRunDetailModal = function(runId) {
+    const run = _allRuns.find(r => r.run_id === runId);
+    const modal = document.getElementById('mgr-run-detail-modal');
+    if (!modal) return;
+
+    document.getElementById('mgr-modal-run-id').textContent = runId.substring(0, 8);
+    document.getElementById('mgr-modal-part-name').textContent = run ? (run.part_name || 'Untitled') : '—';
+    
+    const statusEl = document.getElementById('mgr-modal-status');
+    if (statusEl && run) {
+      statusEl.textContent = run.status || 'unknown';
+      statusEl.className = `job-status-badge ${run.status === 'completed' ? 'completed' : (run.status === 'error' ? 'error' : 'stopped')}`;
+    }
+
+    document.getElementById('mgr-modal-started').textContent = run && run.started_at ? run.started_at.replace('T', ' ') : '—';
+    document.getElementById('mgr-modal-ended').textContent = run && run.ended_at ? run.ended_at.replace('T', ' ') : '—';
+
+    document.getElementById('mgr-modal-stud-type').textContent = run && run.stud_type ? run.stud_type : 'M4';
+    document.getElementById('mgr-modal-substrate').textContent = run && run.substrate ? run.substrate : 'Mild Steel';
+    document.getElementById('mgr-modal-pressure').textContent = run && run.pressure_setting !== undefined ? run.pressure_setting : '20';
+    document.getElementById('mgr-modal-safe-z').textContent = run && run.safe_z !== undefined ? run.safe_z : '10.0';
+    document.getElementById('mgr-modal-part-z').textContent = run && run.part_z !== undefined ? run.part_z : '0.0';
+    document.getElementById('mgr-modal-stud-count').textContent = run && run.stud_count !== undefined ? run.stud_count : '—';
+
+    const errBox = document.getElementById('mgr-modal-error-box');
+    const errText = document.getElementById('mgr-modal-error-text');
+    if (run && run.error) {
+      errText.textContent = run.error;
+      errBox.removeAttribute('hidden');
+    } else {
+      errBox.setAttribute('hidden', '');
+    }
+
+    // Render cycles
+    const cyclesTbody = document.getElementById('mgr-modal-cycles-tbody');
+    if (cyclesTbody) {
+      if (run && Array.isArray(run.cycle_times) && run.cycle_times.length > 0) {
+        cyclesTbody.innerHTML = run.cycle_times.map((t, idx) => `
+          <tr>
+            <td>Cycle ${idx + 1}</td>
+            <td>${t.toFixed(2)} s</td>
+            <td><span class="job-status-badge completed">OK</span></td>
+          </tr>
+        `).join('');
+      } else {
+        cyclesTbody.innerHTML = `<tr><td colspan="3" class="mgr-table-empty">No cycle timestamps logged</td></tr>`;
+      }
+    }
+
+    // Fetch events for event timeline
+    const eventsList = document.getElementById('mgr-modal-events-list');
+    if (eventsList) {
+      eventsList.innerHTML = `<div class="mgr-table-empty">Loading events...</div>`;
+      fetch(`/api/reports/runs/${runId}`)
+        .then(res => res.json())
+        .then(data => {
+          if (!data || !data.events || data.events.length === 0) {
+            eventsList.innerHTML = `<div class="mgr-table-empty">No event logs recorded for this run</div>`;
+            return;
+          }
+          eventsList.innerHTML = data.events.map(ev => `
+            <div class="mgr-event-item">
+              <span class="mgr-event-time">${(ev.ts || '').replace('T', ' ')}</span>
+              <strong class="mgr-event-name">${ev.event}</strong>
+              <span class="mgr-event-detail">${ev.detail ? JSON.stringify(ev.detail) : ''}</span>
+            </div>
+          `).join('');
+        })
+        .catch(() => {
+          eventsList.innerHTML = `<div class="mgr-table-empty error">Failed to load events</div>`;
+        });
+    }
+
+    modal.removeAttribute('hidden');
+  };
+
+  window.mgrCloseRunDetailModal = function() {
+    const modal = document.getElementById('mgr-run-detail-modal');
+    if (modal) modal.setAttribute('hidden', '');
+  };
+
+  mgrRefreshReports();
+})();
+</script>

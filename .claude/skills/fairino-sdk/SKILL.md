@@ -19,14 +19,18 @@ the `deployment-targets` skill for how platform selection and the RPi CNDE
 patch history work.
 
 This is **not a stock FAIRINO SDK checkout** — it has WeldFlex-specific patches:
-Chinese debug `print()`s, a custom CNDE client on port 20005, `RPC.is_connect`/
-reconnect machinery, and — critically — several `Get*` functions rewritten to
-read a **locally-cached UDP/CNDE state struct** (`self.robot_state_pkg`)
-instead of round-tripping over XML-RPC. These always report error code `0`
-regardless of the robot's real-time state accuracy. The tell: a commented-out
-`# _error = self.robot.X(...)` line sitting directly above a
-`return 0, self.robot_state_pkg....` line. Every reference file below flags
-which functions in its domain do this.
+Chinese debug `print()`s, a custom CNDE client (port configurable via
+`WELDFLEX_CNDE_PORT`/`Robot.RPC.ROBOT_CNDE_PORT`, class default `20005` — see
+the port-discrepancy note in `io-and-force-torque.md` before assuming either
+20004 or 20005 is actually in effect), a `set_state_callback()` hook added for
+WeldFlex's telemetry rewrite, `RPC.is_connect`/reconnect machinery, and —
+critically — several `Get*` functions rewritten to read a **locally-cached
+UDP/CNDE state struct** (`self.robot_state_pkg`) instead of round-tripping
+over XML-RPC. These always report error code `0` regardless of the robot's
+real-time state accuracy. The tell: a commented-out `# _error =
+self.robot.X(...)` line sitting directly above a `return 0,
+self.robot_state_pkg....` line. Every reference file below flags which
+functions in its domain do this.
 
 **Don't assume the standard `(err_code, value)` return shape.** Most methods
 return `(0, payload)` on success / `(err_code, None)` on failure, but this SDK
@@ -40,7 +44,7 @@ all the variants seen so far. Unpack defensively; don't assume a fixed arity.
 
 | # | Gotcha | Detail |
 |---|---|---|
-| 1 | Local-cache reads always report `err=0` — **and the cache never fills on this robot** | `GetRobotMotionDone`, `GetProgramState`, `GetRobotErrorCode`, `GetActualTCPNum`/`GetActualWObjNum`, `FT_GetForceTorqueRCS`/`Origin`, `GetDI`/`GetDO`/tool variants. The CNDE stream that feeds `robot_state_pkg` never connects on this firmware (20004-vs-20005 port mismatch), so every one of these returns zeros forever. Bypass with a raw `client.robot.<Method>()` call where the controller supports it (`robot_link._read_program_state`, `robot_service.ft_read`) — **but the raw `GetDI` bypass is live-disproven on this firmware** (2026-07-28: both weld interlock DIs unreadable from run start; `weld_probe` reports them as unknown, never a confident 0). See per-domain files and the audit log 2026-07-28 |
+| 1 | Local-cache reads (`robot_state_pkg`) still always report `err=0` regardless of whether the cache is actually filling | `GetRobotMotionDone`, `GetProgramState`, `GetRobotErrorCode`, `GetActualTCPNum`/`GetActualWObjNum`, `FT_GetForceTorqueRCS`/`Origin`, `GetDI`/`GetDO`/tool variants all still read the struct rather than round-tripping. **As of the 2026-07-29/2026-08-03 telemetry rewrite this is no longer uniformly "dead"**: `robot_link.py`'s `RobotLink` now wires the vendored SDK's `FRCNDEClient.set_state_callback()` (a hook added to both vendored `Robot.py` copies) into a callback that fills an immutable `ForceSnapshot` on every complete CNDE frame, and `robot_service.ft_read()` reads that snapshot first, falling back to the raw `FT_GetForceTorqueRCS` RPC only when it's stale. **Program state, current line and fault codes left the SDK entirely on 2026-08-03** — they are decoded from the port-8083 push (`backend/frame_8083.py` + `robot_feed.py`), because the controller stops answering XML-RPC for the duration of a force operation while the pushed frame keeps arriving. The raw XML-RPC reads into `ConnSnapshot` remain as the fallback when no fresh frame exists, and the SDK's cached getters are still never used — see `error-handling-and-connection.md`. **DI is not read from Python at all any more, cache or raw**: `weld_probe()` dropped host-side `GetDI` entirely (both the wrapped and the raw-RPC form were dead/unreliable on this firmware); the working replacement is controller-side Lua calling `GetDI` itself and publishing the level through `SetSysVarValue` (a real RPC read from the host side) — see `io-and-force-torque.md` and `controller-lua-api.md`. `docs/ROBOT_TELEMETRY.md` is the authoritative spec for all of this; the CNDE port itself has an unresolved discrepancy worth checking before trusting the force path — see that file's port note. |
 | 2 | `GetRobotErrCode` does not exist | Only `GetRobotErrorCode` exists in `Robot.py`. The wrong name raises `AttributeError`. |
 | 3 | Asymmetric failure shape | `GetActualJointPosDegree`/`GetActualTCPPose` return a **bare int** (no `None`) on failure, unlike most getters |
 | 4 | Coordinate `id` indexing is inconsistent | `SetToolCoord`/`SetToolList` use `id ∈ [1,15]` (1-indexed); `SetWObjCoord`/`SetWObjList` use `id ∈ [0,14]` (0-indexed) |
@@ -71,6 +75,16 @@ should follow. That wrapper convention (not the raw SDK) is documented in the
 `weldflex-app` skill's `references/robot-service-wrapper.md` — read that
 before adding a new `WeldFlexRobotService` method.
 
+`backend/robot_link.py`'s `RobotLink` sits underneath that and owns the
+connection itself: one daemon `_SdkWorker` thread is the only thing ever
+allowed to touch the SDK object (xmlrpc.client cannot safely interleave
+request/response pairs on one connection), fed by a priority queue —
+`0`=operator command, `1`=core heartbeat probe, `2`=detailed telemetry — with
+same-generation duplicate detail reads coalesced onto one in-flight future.
+Every client is generation-tagged so a failure can only invalidate the
+generation that produced it. See `error-handling-and-connection.md` for the
+gotchas that model produces and `docs/ROBOT_TELEMETRY.md` for the full spec.
+
 **Worked example**: the jog feature (`StartJOG`/`StopJOG`/`ImmStopJOG`/
 `GetRobotMotionDone` wired into `robot_service.py`'s `jog_step()`/
 `jog_stop()`/`jog_pose()`, plus `app.py`'s `/operator/jog` + `/ui/jog/*`
@@ -93,5 +107,30 @@ SDK calls it uses (`references/motion-and-jog.md`).
 ## Upstream sources
 
 - `docs/fairino-doc-en-readthedocs-io-en-latest.pdf` — official English manual (local copy)
+- `docs/Cobot Controller Communication Instruction.pdf` — the vendor's raw
+  text-based command protocol (the `/f/bIII...III/b/f` wire format on port
+  20003) that `Robot.py` itself wraps. Useful for confirming a signal or error
+  code exists at all independent of the Python SDK's framing of it; not
+  something WeldFlex talks directly.
+- `docs/collabrative_robot_8083_port_status.pdf` / `.md` — vendor doc for the
+  binary status-push protocol on port 8083 (fixed `0x5A5A` frame header, 8–100ms
+  period set **on the pendant**, one frame carrying `FT_data[0..5]` plus program
+  state/line/fault/DI/DO/pose in a single push — no SDK class, no CNDE port to
+  guess). **This is integrated as of 2026-08-03** and is not part of `Robot.py`
+  at all: `backend/frame_8083.py` decodes it and `backend/robot_feed.py` owns
+  the socket, both written against the vendor doc rather than the SDK. Program
+  state, current line and fault codes now come from here; force and DI do not
+  yet. See `docs/ROBOT_TELEMETRY.md`.
+- `docs/ROBOT_TELEMETRY.md` — authoritative, current-tense spec for the
+  connection/telemetry architecture (`RobotLink`, `ConnSnapshot`,
+  `ForceSnapshot`, `WeldTelemetrySnapshot`, freshness rules). Written after the
+  2026-07-29 telemetry rewrite; trust it over anything here that disagrees.
+- `docs/weldNotes.md` — authoritative, actively-maintained technical writeup
+  for `programs/weld.lua` specifically (phase/sysvar map, force ladder,
+  collision-guard strategy, preconditions). Superseded the inline header
+  comments that used to live in the file itself.
 - `.claude/onlineDocs.md` — links to the hosted readthedocs manual, by chapter
-- `../../sdk-alignment-findings.md` — dated audit log of how the gotchas above were discovered, and anything still open
+- `../../sdk-alignment-findings.md` — dated audit log of how the gotchas above
+  were discovered, and anything still open. **Not updated for the
+  2026-07-29/2026-08-03 telemetry rewrite** — for CNDE/DI/force-path questions,
+  `docs/ROBOT_TELEMETRY.md` and this skill are current; the audit log is not.

@@ -176,6 +176,24 @@
         <strong class="pd-report-value" id="pd-report-last-run">—</strong>
       </div>
     </div>
+    <div class="mgr-modal-section" style="margin-top:16px;">
+      <h4 class="mgr-modal-section-title">Recent Part Runs</h4>
+      <div class="mgr-table-responsive" style="max-height: 220px; overflow-y: auto;">
+        <table class="mgr-table sm">
+          <thead>
+            <tr>
+              <th>Date / Time</th>
+              <th>Status</th>
+              <th>Cycles</th>
+              <th>Avg Time</th>
+            </tr>
+          </thead>
+          <tbody id="pd-report-runs-tbody">
+            <tr><td colspan="4" class="mgr-table-empty">Loading runs...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
     <div class="wf-modal-actions">
       <button type="button" class="btn wf-cancel" onclick="pdCloseJobReportsModal()">Close</button>
     </div>

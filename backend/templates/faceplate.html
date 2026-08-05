@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% from "components/ui.html" import panel_shell with context %}
+
+{% block body %}
+<div class="page-body">
+  {% call panel_shell('Faceplate', class_name='settings-shell') %}
+    <p class="panel-note">Coming soon.</p>
+  {% endcall %}
+</div>
+{% endblock %}

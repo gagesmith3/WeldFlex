@@ -31,13 +31,21 @@ Two consequences worth carrying:
   every other failure in that file goes through, and would leave the torch parked
   on the work at 20 lbf.
 
+**DO2–DO15 are undocumented, which is not the same as verified free.** The table
+above is the whole of what is known to be wired. A planned feature wants DO4–DO7
+as a 4-bit rolling cycle counter the program publishes and the host reads back
+from the 8083 frame's DO bitmap — but writing a DO that is physically connected
+actuates real hardware, so **confirm on the pendant that those four are unwired
+before any code writes to them.** Reading them (`FeedSnapshot.do(n)`) is free and
+safe; writing them is not.
+
 ## IO — brief inventory
 
-Only `GetDI` is used by `robot_service.py` so far (`weld_probe()`); the rest is
-deliberately a brief inventory, not deep detail. Expand it when a feature
-actually needs the call. Section starts ~`Robot.py:4209`. Standard shape:
-`SetXX` → bare int; `GetXX` → `(0, value)`, usually bit-packed across multiple
-channels.
+**`robot_service.py` doesn't call `GetDI` at all any more** (see the DI section
+below for what replaced it); this table stays a brief inventory of the raw IO
+calls, not deep detail. Expand it when a feature actually needs the call.
+Section starts ~`Robot.py:4209`. Standard shape: `SetXX` → bare int; `GetXX` →
+`(0, value)`, usually bit-packed across multiple channels.
 
 | Call | Location | Notes |
 |---|---|---|
@@ -45,7 +53,7 @@ channels.
 | `SetToolDO(id, status, smooth=0, block=0)` | `4251` | Tool DO, `id ∈ [0,1]`. |
 | `SetAO(id, value, block=0)` | `4278` | Analog out. `value` is **0–100%** — the SDK internally multiplies by `40.95` before sending (percent → raw ~0–4095 range). Don't pre-scale. |
 | `SetToolAO(id, value, block=0)` | `4304` | Same scaling behavior, tool analog out. |
-| `GetDI(id, block=0)` / `GetToolDI(id, block=0)` | `4330` / `4361` | **Local bit-read from `robot_state_pkg`**, not RPC (`@xmlrpc_timeout` is commented out on `GetDI`). Splits id 0–7 vs 8–15 across `cl_dgt_input_l`/`cl_dgt_input_h` bitfields. **Dead on this firmware** — the cache never fills, so every input reads 0 forever. **The raw `r.robot.GetDI(id, 0)` bypass is also dead — live-disproven 2026-07-28**: both weld interlock DIs were unreadable from the moment a run started, before any fault latched, while raw FT reads worked on the same connection. `weld_probe()` still attempts it but returns `None` for an input it cannot read rather than a confident `0` — an interlock that reads "open" when it is really unknown is the worst of the three answers. **No Python-side DI read exists on this firmware**; controller-side Lua `GetDI` inside a program is the only candidate left, itself not yet proven with a closed circuit. |
+| `GetDI(id, block=0)` / `GetToolDI(id, block=0)` | `4330` / `4361` | **Local bit-read from `robot_state_pkg`**, not RPC (`@xmlrpc_timeout` is commented out on `GetDI`). Splits id 0–7 vs 8–15 across `cl_dgt_input_l`/`cl_dgt_input_h` bitfields. **Dead on this firmware** — the cache never fills, so every input reads 0 forever. **The raw `r.robot.GetDI(id, 0)` bypass is also dead — live-disproven 2026-07-28**: both weld interlock DIs were unreadable from the moment a run started, before any fault latched, while raw FT reads worked on the same connection. **Neither Python-side path is used any more as of the 2026-08-03 rewrite** — `robot_service.weld_probe()` dropped host-side `GetDI` entirely, partly because it's unreliable here and partly because a call that can stall behind the shared XML-RPC worker's socket timeout starves every other detail read sharing that worker. See the sysvar-relay pattern below, which is what replaced it in production. |
 | `GetAI(id, block=0)` / `GetToolAI(...)` | `4475` / `4503` | Analog in. |
 | `GetDO()` / `GetToolDO()` | `4580` / `4558` | Both **local-cache reads**, return packed hi/lo words. |
 | `WaitDI`/`WaitMultiDI`/`WaitToolDI`/`WaitAI`/`WaitToolAI` | `4389–4636` | Blocking-wait-for-IO-state variants. |
@@ -53,34 +61,102 @@ channels.
 | Fieldbus-slave IO (`FieldBusSlaveWriteDO/AO`, `FieldBusSlaveReadDI/AI`, `FieldBusSlaveWaitDI/AI`) | `~15282–15414` | |
 | IO config (`GetDIConfig`/`SetDOConfig`/`GetDIConfigLevel`/`SetDOConfigLevel`) | `~17507–17726` | |
 
+## DI on this firmware — the working pattern is controller-side Lua + sysvar relay
+
+Both Python-side routes to `GetDI` are dead (see the table above), so the
+production answer isn't a Python read at all: `programs/weld.lua`'s `readDI()`
+calls the controller-side Lua `GetDI(id, thread)` instruction (a different
+instruction set from the Python SDK — see `controller-lua-api.md`) and
+publishes the level through `SetSysVarValue`/`SetSysVarvalue` to slots 6
+(`SV_STUD_ON_WORK`) and 7 (`SV_WELD_READY`). The host reads those slots back
+with `GetSysVarValue` (`Robot.py:5460`) — a **real RPC call**, not another
+`robot_state_pkg` read, which is exactly what makes it work while a program is
+running and every raw force/DI read is refused. `robot_service.weld_probe()`
+polls these slots instead of ever calling `GetDI` itself.
+
+`programs/io_monitor.lua` is a standalone program using the identical
+mechanism, with the welding stripped out: it loops `GetDI`+publish for a
+bounded window (default 45s, max 300s) so the same two input tiles can be
+watched live from the Weld Test / diagnostics page without a weld test having
+to run — useful for checking a wire is on the right pin. Both programs zero
+the two slots back to `-1` ("unknown") on exit so a stale level from a
+previous run can never be misread as a live one; the diagnostics page also
+independently greys the tiles whenever no program is running, as a second,
+redundant guard against the same failure mode.
+
+**There is now a third way to see DI, and it is not a replacement.** The
+port-8083 push carries the control-box input bitmap (`cl_dgt_input_l`/`_h`,
+offsets 176/177) in every frame, and `FeedSnapshot.di(n)` decodes it —
+confirmed tracking DI0/DI1 correctly on hardware 2026-08-03. It costs no RPC
+call and survives the force-operation window that kills XML-RPC. But the Lua
+sysvar relay is still the production DI path for the weld test, and the feed's
+DI is **observe-only**: it is a display value and must not be used as a safety
+interlock. If you switch a consumer over, the IO map at the top of this file
+still governs — DI1 is stud-on-work, DI0 is welder-ready, and they are not
+interchangeable.
+
 ## Force-torque sensor — how it actually couples to the robot
 
 **The controller owns the sensor. Python is a spectator.** Nothing in this app
 ever reads the sensor directly, and nothing in it is ever inside a force loop.
 
+As of the 2026-07-29/2026-08-03 telemetry rewrite, the primary path is a live
+CNDE push, not a poll:
+
 ```
 XJC sensor  ──RS485──▶  FR-16 end plate (M12, 8-core)
                             │  controller polls sensor, decouples + compensates
                             ▼
-                     controller real-time state
-                            │  raw XML-RPC FT_GetForceTorqueRCS(0), TCP :20003
+                     CNDE stream (FtSensorData), configured signal-list + period
+                            │  FRCNDEClient.set_state_callback() (vendored SDK hook)
                             ▼
-              robot_service.ft_read()  ──▶  /ui/ft/reading  ──▶  UI @ 300 ms
+                  robot_link._on_cnde_state()  ──▶  ForceSnapshot (immutable)
+                            │
+              robot_service.ft_read()  ──▶  /ui/ft/reading  ──▶  UI
+                            │  (idle-only fallback if the snapshot has gone stale)
+                            ▼
+                  raw XML-RPC FT_GetForceTorqueRCS(0), TCP :20003
 ```
 
-**The SDK's cache path is dead on this robot** (established 2026-07-28, audit
-log). The SDK intends `FtSensorRawData`/`FtSensorData`/`FtSensorActive` to
-arrive via the CNDE stream (`DEFAULT_CNDE_STATES`, `Robot.py:1241-1269`, 8 ms
-period) and serves them as pure local struct reads — but this FR-16 firmware
-only speaks CNDE on port 20004 while the SDK targets 20005 (same root cause as
-the connect-gate history in `deployment-targets`), so the CNDE connect times
-out on every session and `robot_state_pkg` stays zeroed forever. Any read
-through the cache reports `err=0` with all-zero forces and
-`ft_sensor_active=0` no matter what the sensor does. `robot_service.ft_read()`
-therefore bypasses the SDK method and calls **raw XML-RPC
-`r.robot.FT_GetForceTorqueRCS(0)`** on the same proxy — the identical bypass
-`robot_link._read_program_state` already uses. The raw response is flat:
-`[err, fx, fy, fz, tx, ty, tz]`.
+`robot_service.ft_read()` reads `force_snapshot()` first and only falls back
+to the raw RPC call when `ForceSnapshot.is_fresh()` is false (default
+staleness budget `CNDE_FORCE_FRESH_S = 0.5s`) — the reverse of the priority
+that held through 2026-07-29, when the CNDE cache was the thing considered
+dead and the raw RPC was the only source. `robot_state_pkg`'s own `GetXX`
+getters (`GetActualTCPNum` etc.) are unaffected by any of this and remain the
+dead local-cache reads described elsewhere in this file — only the *force*
+signal has a live push path now.
+
+**Whether the CNDE stream is actually filling `ForceSnapshot` on this
+firmware has not been re-verified since the rewrite**, and there's an open
+port discrepancy worth resolving before trusting it:
+
+- `backend/robot_link.py`'s code-level default (`CNDE_PORT = _env_port(...,
+  20005)`) matches the **SDK's own class default** — the port every prior
+  live probe found unreachable on this firmware (`CNDE连接失败: timed out`,
+  error `-5`, 2026-07-28).
+- `.env.example` overrides this to `20004`, matching the port prior findings
+  established as the one this firmware actually speaks.
+- The live `.env` as of 2026-08-03 does **not** set `WELDFLEX_CNDE_PORT` at
+  all — meaning, unless something else has changed, the running app falls
+  back to the 20005 default that earlier testing showed times out here. If
+  force telemetry looks dead (zeros, or every read falling through to the
+  idle-only RPC fallback), check this env var before anything else.
+- **The replacement now exists but force has not moved onto it yet.** The
+  port-8083 status push (`backend/robot_feed.py`, decoded by
+  `backend/frame_8083.py`) carries `FT_data[0..5]` at offset 179 and
+  `FT_ActStatus` at 227 in the same frame as everything else — no CNDE class,
+  no port to guess, and it is confirmed streaming on this firmware as of
+  2026-08-03. `FeedSnapshot.fz` / `.ft_values` / `.ft_active` decode it today.
+  `ft_read()` still does **not** read them: force is the last signal left on
+  CNDE, and cutting it over is the open task. Until then the port ambiguity
+  above still governs the live force path.
+
+Per [[no-adhoc-robot-probes]] this needs an app-based, read-only check (watch
+`/operator/robot-diagnostics` or the weld-test page for changing force values
+while idle) rather than a standalone script — see
+`error-handling-and-connection.md`'s recovery procedure and
+`docs/ROBOT_TELEMETRY.md`'s recovery section.
 
 `FT_SetConfig` does not "connect" to anything — it tells the controller **which
 vendor's digital protocol to speak** on the end bus. Force *control*
@@ -127,14 +203,19 @@ A live readout is **not** proof of a correct setup: the read path reports succes
 unconditionally (see the `FT_GetForceTorqueRCS` gotcha below), so several
 distinct faults all present as plausible-looking numbers. Check in order:
 
-1. ~~`ft_sensor_active == 1`~~ — **unavailable on this firmware.** The flag only
-   ever arrives via the CNDE stream, which never connects (see above), so it
-   reads 0 forever and says nothing about the sensor. `reading["active"]` is now
-   hardcoded True on any successful raw-RPC read; the UI banner means "the
-   controller answered a force query", not "the sensor is alive". Liveness must
-   come from checks 2–5. (Whether the raw RPC returns a nonzero error for an
-   unplugged/unconfigured sensor is still unverified — the 2026-07-28 session
-   ended in a controller crash before this could be tested.)
+1. ~~`ft_sensor_active == 1`~~ — **not a trustworthy liveness signal either way.**
+   The SDK's own `ft_sensor_active` flag only ever arrives via the CNDE
+   struct, which is exactly the path whose live-fill status on this firmware
+   is unconfirmed (see the port note above). `robot_service.ft_read()`'s
+   returned dict has an `"active"` key and a `"source"` key (`"cnde"` or
+   `"xmlrpc"`) instead: `"active"` is `True` whenever *either* the CNDE
+   snapshot is fresh *or* the idle raw-RPC fallback succeeded, so the UI
+   banner still only means "something answered a force query", not "the
+   sensor is alive" — check `"source"` if you need to know which path actually
+   produced the reading. Liveness must come from checks 2–5. (Whether the raw
+   RPC returns a nonzero error for an unplugged/unconfigured sensor is still
+   unverified — the 2026-07-28 session ended in a controller crash before this
+   could be tested.)
 2. **Values dither.** Sample for a few seconds with nothing touching the tool.
    Real strain-gauge data always moves in the low digits; a bit-for-bit constant
    is a frozen feed. The observed span is also the noise floor — a force
@@ -182,19 +263,23 @@ exposes three analog inputs total (`cl_analog_input[2]`, `tl_anglog_input`,
   single tool-frame component is what `FT_Control`'s `select` mask will want.
 - **`FT_GetForceTorqueRCS(self)`** — `Robot.py:7655`. **Local-cache read, not
   RPC** (real call commented out at line 7659; body just returns
-  `0, [robot_state_pkg.ft_sensor_data[0..5]]`). **Dead on this firmware** — the
-  cache never fills (see above), so it always returns zeros with err 0. Don't
-  call the SDK method; `ft_read()` uses the raw XML-RPC
-  `r.robot.FT_GetForceTorqueRCS(0)` instead (flat
-  `[err, fx, fy, fz, tx, ty, tz]` response, per the commented-out code).
-  **The raw read returns error 14 for the whole time a force-control move
-  (`FT_FindSurface`) is executing** (live 2026-07-28) — the controller's
-  force-control task owns the sensor. That is routine, not a fault:
-  `weld_probe()` reports it as `ft_err` in its dict instead of raising, and
-  the weld-test page renders running+14 as "sensor busy"
-  (`FT_RPC_BUSY_CODE` in `app.py`). The same code also appears when a latched
-  controller fault blocks all raw reads — see
-  `error-handling-and-connection.md` for telling the two apart.
+  `0, [robot_state_pkg.ft_sensor_data[0..5]]`). Don't call the SDK method
+  directly either way — `ft_read()` never calls it. As of the telemetry
+  rewrite, `ft_read()`'s primary source is the CNDE-fed `ForceSnapshot` (see
+  above); it falls back to raw XML-RPC `r.robot.FT_GetForceTorqueRCS(0)` only
+  when that snapshot has gone stale (flat `[err, fx, fy, fz, tx, ty, tz]`
+  response, per the commented-out code — the SDK method's local-cache body is
+  never the one running). **The raw fallback read returns error 14 for the
+  whole time a force-control move (`FT_FindSurface`) is executing** (live
+  2026-07-28) — the controller's force-control task owns the sensor. That is
+  routine, not a fault: `weld_probe()` reports it as `ft_err` in its dict
+  instead of raising, and the weld-test page renders running+14 as "sensor
+  busy" (`FT_RPC_BUSY_CODE` in `app.py`). The same code also appears when a
+  latched controller fault blocks all raw reads — see
+  `error-handling-and-connection.md` for telling the two apart. Since the
+  fallback is idle-only, this code will not appear at all while a force-control
+  move is running and the CNDE stream is genuinely live — seeing it during a
+  press is itself a signal that the snapshot has gone stale.
 - **`FT_GetForceTorqueOrigin(self)`** — `Robot.py:7679`. Same dead local-cache
   pattern; the raw RPC is `r.robot.FT_GetForceTorqueOrigin(0)`. Useful as a
   cross-check: if RCS and Origin are identical, decoupling/zeroing is not being
@@ -203,7 +288,14 @@ exposes three analog inputs total (`cl_analog_input[2]`, `tl_anglog_input`,
   docstring promises `[number, company, device, softversion, bus]` (5 values) but
   the body returns 4, with `+1` added to the first two (`:7448`). Don't compare
   its output against what you passed to `FT_SetConfig` without accounting for
-  that.
+  that. **Actively used** via `robot_service.ft_config()` — a plain, idle-safe
+  XML-RPC read (subject to the same code-14-during-force-control caveat as
+  everything else FT) whose whole purpose is cross-checking `weld.lua`'s
+  `FTC_SENSOR_NUM` guess (currently `1`) against the `number` this returns. A
+  wrong sensor number doesn't fail loudly — `FT_Control` starts, regulates on
+  nothing, and the press drives in under position control until something
+  stops it, which looks identical to the STAGE 2 collision-fault story this
+  file's audit history spent a long time chasing.
 
 ### Validated init sequence
 

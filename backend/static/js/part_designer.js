@@ -708,6 +708,41 @@ function pdOpenJobReportsModal() {
   const lastEl = document.getElementById('pd-report-last-run');
   if (lastEl) lastEl.textContent = r.updated_label || r.last_run || 'Never';
 
+  const tbody = document.getElementById('pd-report-runs-tbody');
+  if (tbody) {
+    if (_state.activeId) {
+      tbody.innerHTML = `<tr><td colspan="4" class="mgr-table-empty">Loading runs...</td></tr>`;
+      fetch(`/api/reports/parts/${encodeURIComponent(_state.activeId)}`)
+        .then(res => res.json())
+        .then(data => {
+          const runs = (data && data.runs) || [];
+          if (runs.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="4" class="mgr-table-empty">No production runs recorded for this part</td></tr>`;
+            return;
+          }
+          tbody.innerHTML = runs.map(run => {
+            const avgT = (run.cycle_times && run.cycle_times.length)
+              ? (run.cycle_times.reduce((a, b) => a + b, 0) / run.cycle_times.length).toFixed(1) + 's'
+              : '—';
+            const statusCls = run.status === 'completed' ? 'completed' : (run.status === 'error' ? 'error' : 'stopped');
+            return `
+              <tr>
+                <td>${run.started_at ? run.started_at.replace('T', ' ') : '—'}</td>
+                <td><span class="job-status-badge ${statusCls}">${run.status || 'unknown'}</span></td>
+                <td>${run.cycles_done || 0} / ${run.cycles_target || 1}</td>
+                <td>${avgT}</td>
+              </tr>
+            `;
+          }).join('');
+        })
+        .catch(() => {
+          tbody.innerHTML = `<tr><td colspan="4" class="mgr-table-empty error">Failed to load run history</td></tr>`;
+        });
+    } else {
+      tbody.innerHTML = `<tr><td colspan="4" class="mgr-table-empty">Save or select a part to view run logs</td></tr>`;
+    }
+  }
+
   modal.removeAttribute('hidden');
 }
 

@@ -17,6 +17,7 @@ load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
 from flask import Flask, jsonify, make_response, redirect, render_template, request
 from markupsafe import Markup
+import frame_8083 as f8
 from job_manager import JobError, JobManager
 from lua_builder import (
     GATE_MODES,
@@ -296,6 +297,10 @@ def manager_part_designer_page():
 @app.route("/manager/settings")
 def manager_settings_page():
     return render_template("manager.html", page_title="Settings", active_tab="settings")
+
+@app.route("/manager/reports")
+def manager_reports_page():
+    return render_template("manager.html", page_title="Reports", active_tab="reports")
 
 @app.route("/operator/admin")
 def admin():
@@ -634,6 +639,10 @@ def ui_job_history():
 @app.route("/operator/job-history")
 def job_history_page():
     return render_template("job_history.html", page_title="Run History")
+
+@app.route("/operator/faceplate")
+def faceplate_page():
+    return render_template("faceplate.html", page_title="Faceplate")
 
 @app.route("/operator/calibration")
 def calibration():
@@ -1123,6 +1132,8 @@ def _connection_snapshot() -> dict:
         detail = ustate.busy_label
     elif ustate.state == "connecting" and snap.attempts > 1:
         detail = f"attempt {snap.attempts}"
+    elif ustate.state == "telemetry":
+        detail = "no commands"
     elif ustate.state == "degraded":
         age = snap.age_s()
         detail = f"{age:.0f}s ago" if age is not None else "no reply"
@@ -1188,6 +1199,68 @@ def ui_diagnostics():
                            ok=True, status=status, snapshot=snapshot,
                            uptime=robot.uptime())
 
+def _feed_compare_rows(feed, rpc) -> list[dict]:
+    """The four signals the 8083 feed is slated to take over, side by side.
+
+    Only `robot.snapshot()` is used for the XML-RPC column — it is a pure cache
+    read. `get_universal_state()` would be richer but calls `ft_read()`, which
+    falls back to a real XML-RPC round trip whenever the force cache is stale,
+    and adding a controller call to a once-a-second panel is the exact load this
+    whole change exists to remove.
+    """
+    def norm_fault(value):
+        # ConnSnapshot normalises "no fault" to None; the frame reports 0.
+        return None if not value else value
+
+    rows = [
+        ("Program state",
+         f8.PROGRAM_STATES.get(feed.program_state), ROBOT_STATE_MAP.get(rpc.program_state_raw)),
+        ("Current line", feed.current_line, rpc.current_line),
+        ("Fault main", norm_fault(feed.fault_main), norm_fault(rpc.fault_main)),
+        ("Fault sub", norm_fault(feed.fault_sub), norm_fault(rpc.fault_sub)),
+    ]
+    out = []
+    for label, feed_value, rpc_value in rows:
+        # Only claim agreement when both sides actually reported something.
+        both = feed_value is not None and rpc_value is not None
+        out.append({
+            "label": label,
+            "feed": feed_value,
+            "rpc": rpc_value,
+            "agrees": (feed_value == rpc_value) if both else None,
+        })
+    return out
+
+
+@app.route("/ui/diagnostics/feed")
+def ui_diagnostics_feed():
+    """Read-only view of the port-8083 status stream.
+
+    State, line and fault codes now come from the feed; force and DI still do
+    not. This panel is how the remaining signals get proven before they move —
+    it shows every parsed field beside the XML-RPC value it would replace, plus
+    the frame-integrity counters. Purely observational: it performs no robot I/O
+    of its own, reading the feed's cached frame the same way every other panel
+    reads cache. That is what makes it safe to poll during a live run, and what
+    `tools/feed_continuity.py` relies on.
+    """
+    feed = robot.feed_snapshot()
+    stats = robot.feed_stats()
+    return render_template(
+        "partials/feed_readout.html",
+        feed=feed,
+        stats=stats,
+        rows=_feed_compare_rows(feed, robot.snapshot()),
+        age_s=feed.age_s(),
+        fresh=feed.is_fresh(),
+        expected_len=f8.EXPECTED_DATA_LEN,
+        mode_label=f8.ROBOT_MODES.get(feed.robot_mode),
+        error_label=f8.ERROR_CODES.get(feed.get("error_code")),
+        stud_di=WELD_STUD_DI,
+        ready_di=WELD_READY_DI,
+    )
+
+
 @app.route("/ui/diagnostics/reset-errors", methods=["POST"])
 def ui_diagnostics_reset_errors():
     try:
@@ -1239,6 +1312,30 @@ def ui_manager_part_designer():
 @app.route("/ui/manager/settings")
 def ui_manager_settings():
     return render_template("partials/mgr_settings.html")
+
+@app.route("/ui/manager/reports")
+def ui_manager_reports():
+    recipes = _recipes_enrich(_recipes_load())
+    return render_template("partials/mgr_reports.html", recipes=recipes)
+
+@app.route("/api/reports/summary")
+def api_reports_summary():
+    runs = job.history(limit=500)
+    recipes = _recipes_enrich(_recipes_load())
+    return jsonify({"runs": runs, "recipes": recipes})
+
+@app.route("/api/reports/parts/<part_id>")
+def api_reports_part(part_id):
+    all_runs = job.history(limit=500)
+    part_runs = [r for r in all_runs if r.get("part_id") == part_id]
+    return jsonify({"part_id": part_id, "runs": part_runs})
+
+@app.route("/api/reports/runs/<run_id>")
+def api_reports_run(run_id):
+    all_runs = job.history(limit=500)
+    run_rec = next((r for r in all_runs if r.get("run_id") == run_id), None)
+    events = job.events_for_run(run_id)
+    return jsonify({"run_id": run_id, "run": run_rec, "events": events})
 
 if __name__ == "__main__":
     # Werkzeug's dev server spawns an unbounded thread per request, so an unreachable

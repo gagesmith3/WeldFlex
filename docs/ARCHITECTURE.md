@@ -54,6 +54,15 @@ Because progress is driven by the manager's own thread rather than browser
 polling, **a job keeps advancing with the kiosk tab closed** — that is the
 "persists no matter what page the user is on" requirement, and it is met.
 
+Step 5 is the fragile one. `GetCurrentLine` is an XML-RPC poll, and the
+controller stops answering XML-RPC for the whole of a force operation — so a
+cycle boundary that falls inside that window can be missed. Everything else
+observable (program state, line, fault codes) has already moved to a pushed
+status feed on port 8083 that rides through the outage; cycle counting has not,
+and the intended fix is a counter the program publishes on digital outputs
+rather than a line number the host has to catch mid-flight.
+`docs/ROBOT_TELEMETRY.md` is the authoritative spec for all of this.
+
 ## How a part becomes a program
 
 The studs are **inlined at build time**, not read at runtime. `lua_builder.py`
@@ -108,12 +117,15 @@ assume they work.
 | 1 | **A job still does not weld** | `WeldFlex.lua`'s cycle loop is `PointsOffsetEnable → PTP → PointsOffsetDisable → WaitMs(1000)` — it never calls `programs/weld.lua`. **A run is still a complete dry-run motion driver.** `weld.lua` itself now exists (search → press → weld → hold → retract → feed) and can be exercised one stud at a time from `/operator/weld-test`, which uploads it with a generated harness; that is a bring-up path, not the production one. It is disarmed unless the caller publishes `WELD_ARMED = 1`. | Gage — wiring `weld.lua` into the cycle loop |
 | 2 | **No return-to-home** | The spec ends a job by returning home. The generated program just ends after the last cycle; there is no home move and no home pose defined anywhere in the app. | Gage — fixing `WeldFlex.lua` |
 | 3 | **User-entered waits are a dead field** | Every recipe carries a `pause_points: []` written at [`app.py:382`](../backend/app.py#L382), but nothing reads it — not `lua_builder.py`, not the part designer. `lua_builder._stud_rows` consumes only `x` and `y`. The per-cycle `gate_mode` is a *different* feature and does not cover this. | Deferred — wait system to be refactored later |
+| 4 | **The telemetry cutover is half done** | Program state, current line and fault codes now come from the port-8083 push. Force still rides the legacy CNDE stream — on a port the live `.env` does not set, defaulting to one that has never worked here — so **assume force may be dead in production until proven on hardware**. DI still rides the controller-Lua sysvar relay, and cycle counting still rides XML-RPC. | Gage — in progress; see `docs/ROBOT_TELEMETRY.md` |
 
 Gap 3 is the one most likely to mislead: the data model looks like it supports
 per-stud waits and it does not.
 
 ## Where to go next
 
+- How WeldFlex talks to the controller — transports, which signal comes from
+  where, freshness rules, recovery — `docs/ROBOT_TELEMETRY.md` (authoritative)
 - Flask/HTMX conventions, route naming, response patterns —
   `.claude/skills/weldflex-app/`
 - Calling the vendor SDK, return-shape gotchas, error codes —

@@ -33,7 +33,7 @@ see the `fairino-sdk` skill, for Flask/route conventions see `weldflex-app`.
 | 3 | The RPi systemd unit's SDK patch step is **gone** | `weldflex-backend.service` used to `sed`-patch `if cnde_ok and xmlrpc_ok:` → `if xmlrpc_ok:` in the vendored `Robot.py` via `ExecStartPre` at every service start. Commit `452bbfc` ("fixit8", 2026-07-15) baked that edit into both vendored copies, making the `sed` a no-op; the line has since been deleted from the unit. See "CNDE connect-gate" below. |
 | 4 | `libfairino/` and `fairino/build/lib.*` are unused | Both platform dirs also ship a compiled Cython extension (`libfairino/Robot.*.pyd`/`.so`) and stray build artifacts inside `fairino/build/`. `_bootstrap_sdk()` only ever imports the plain `fairino/Robot.py` source — never add `libfairino` to a deploy step. |
 | 5 | `WELDFLEX_FTP_USER`/`WELDFLEX_FTP_PASS` are set but unused | Present in root `.env`/`.env.example`; no `.py` file references them (`LuaUpload` goes over XML-RPC, not raw FTP). Vestigial — don't assume Lua upload depends on them. |
-| 6 | RPi `.env` doesn't set `WELDFLEX_PROGRAM_PATH`/`WELDFLEX_STUDS_DATA_PATH` | `deploy/rpi/.env.rpi.example` only sets `WELDFLEX_ROBOT_IP`/`PORT`/`WELDFLEX_KIOSK` — those two paths fall back to `app.py`'s hardcoded defaults on the RPi, same as everywhere else. Doesn't change the `WeldFlex.lua` program-name landmine (`../../sdk-alignment-findings.md`), just confirms it isn't papered over by RPi-specific config. |
+| 6 | RPi `.env` doesn't set `WELDFLEX_PROGRAM_PATH`/`WELDFLEX_STUDS_DATA_PATH` | `deploy/rpi/.env.rpi.example` sets `WELDFLEX_ROBOT_IP`, the CNDE and port-8083 telemetry vars, `PORT` and `WELDFLEX_KIOSK` — those two paths fall back to `app.py`'s hardcoded defaults on the RPi, same as everywhere else. Doesn't change the `WeldFlex.lua` program-name landmine (`../../sdk-alignment-findings.md`), just confirms it isn't papered over by RPi-specific config. |
 
 ## Windows-only stdout fix (applies everywhere `robot_link.py` runs)
 
@@ -70,6 +70,15 @@ now-redundant `ExecStartPre` `sed` has since been deleted from
 `weldflex-backend.service`, so nothing re-patches the SDK at boot any more. **If
 the SDK is ever re-vendored from a fresh upstream drop, re-check this line** —
 there is no longer a deploy-time safety net that would silently fix it.
+
+**CNDE is being retired.** The port-8083 status push replaced it for program
+state, line and fault codes on 2026-08-03; force is the last signal still on it,
+and once that moves, none of the above matters at run time — though the
+re-vendoring warning stands as long as the patched `Robot.py` is in the tree.
+The new feed is not part of the SDK at all (`backend/robot_feed.py` owns its own
+socket), so it needs no vendored patch and has no port ambiguity. Deploy
+consequence: `WELDFLEX_STATUS_PORT` and `WELDFLEX_FEED_STALE_S` belong in every
+`.env` from now on. See `docs/ROBOT_TELEMETRY.md`.
 
 ## Reference files
 

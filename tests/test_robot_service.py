@@ -2,6 +2,7 @@ import threading
 import time
 from types import SimpleNamespace
 
+from robot_feed import FeedSnapshot
 from robot_link import ConnSnapshot, ConnState, ForceSnapshot
 from robot_service import WeldFlexRobotService
 
@@ -217,4 +218,135 @@ def test_get_universal_state_consolidates_robot_sources(monkeypatch):
     assert ustate.collision_guard_code == 1
     assert ustate.collision_guard_label == "custom thresholds"
     assert ustate.collision_guard_applied is True
-    assert ustate.target_press_lbf == 20.0
+    assert ustate.target_press_lbf == 20.0
+
+# --- observation sourced from the port-8083 push --------------------------
+#
+# The two channels fail independently. XML-RPC stops answering while the
+# controller is busy with a force operation; the pushed frame keeps arriving.
+# These pin down which source wins, and — more importantly — that a live feed is
+# never allowed to imply commands are deliverable.
+
+
+def _feed_frame(**overrides) -> FeedSnapshot:
+    fields = {
+        "program_state": 2,
+        "prog_cur_line": 17,
+        "main_errcode": 0,
+        "sub_errcode": 0,
+    }
+    fields.update(overrides)
+    return FeedSnapshot(fields=fields, received_monotonic=time.monotonic(), generation=1)
+
+
+def test_universal_state_prefers_the_feed_for_observation(monkeypatch):
+    """A fresh frame outranks the RPC cache even when both are available."""
+    service = WeldFlexRobotService("127.0.0.1")
+    monkeypatch.setattr(
+        service,
+        "snapshot",
+        lambda: ConnSnapshot(
+            state=ConnState.CONNECTED.value,
+            connected=True,
+            generation=3,
+            program_state_raw=1,
+            current_line=999,
+        ),
+    )
+    monkeypatch.setattr(service, "feed_snapshot", lambda: _feed_frame())
+
+    ustate = service.get_universal_state()
+
+    assert ustate.telemetry_source == "8083"
+    assert ustate.program_state == "running"
+    assert ustate.current_line == 17
+    assert ustate.commands_available is True
+
+
+def test_universal_state_reports_telemetry_when_only_the_feed_survives(monkeypatch):
+    """The find-surface symptom: XML-RPC goes quiet while the robot runs on.
+
+    "Offline" is a lie the operator can see through — the arm is plainly moving.
+    "Online" is the dangerous one: commands ride XML-RPC, so Stop would silently
+    do nothing. This state exists to say exactly what is true.
+    """
+    service = WeldFlexRobotService("127.0.0.1")
+    monkeypatch.setattr(
+        service,
+        "snapshot",
+        lambda: ConnSnapshot(state=ConnState.FAULTED.value, connected=False, generation=4),
+    )
+    monkeypatch.setattr(service, "feed_snapshot", lambda: _feed_frame())
+
+    ustate = service.get_universal_state()
+
+    assert ustate.state == "telemetry"
+    assert ustate.feed_streaming is True
+    assert ustate.commands_available is False
+    assert ustate.connected is False
+    assert ustate.program_state == "running"
+    assert "commands cannot be delivered" in ustate.probe_error
+
+
+def test_universal_state_falls_back_to_rpc_when_the_feed_is_stale(monkeypatch):
+    service = WeldFlexRobotService("127.0.0.1")
+    monkeypatch.setattr(
+        service,
+        "snapshot",
+        lambda: ConnSnapshot(
+            state=ConnState.CONNECTED.value,
+            connected=True,
+            generation=3,
+            program_state_raw=1,
+            current_line=42,
+        ),
+    )
+    stale = FeedSnapshot(
+        fields={"program_state": 2},
+        received_monotonic=time.monotonic() - 3600.0,
+        generation=1,
+    )
+    monkeypatch.setattr(service, "feed_snapshot", lambda: stale)
+
+    ustate = service.get_universal_state()
+
+    assert ustate.telemetry_source == "rpc"
+    assert ustate.state == ConnState.CONNECTED.value
+    assert ustate.program_state == "stopped"
+    assert ustate.current_line == 42
+
+
+def test_a_live_feed_does_not_mask_an_operator_disconnect(monkeypatch):
+    """Disconnect is an intent, not a failure; the feed must not paper over it."""
+    service = WeldFlexRobotService("127.0.0.1")
+    monkeypatch.setattr(
+        service,
+        "snapshot",
+        lambda: ConnSnapshot(state=ConnState.DISCONNECTED.value, connected=False),
+    )
+    monkeypatch.setattr(service, "feed_snapshot", lambda: _feed_frame())
+
+    assert service.get_universal_state().state == ConnState.DISCONNECTED.value
+
+
+def test_frame_fault_codes_distinguish_zero_from_absent(monkeypatch):
+    """The frame reports 0 for "no fault"; ConnSnapshot uses None. Don't conflate."""
+    service = WeldFlexRobotService("127.0.0.1")
+    monkeypatch.setattr(
+        service,
+        "snapshot",
+        lambda: ConnSnapshot(state=ConnState.CONNECTED.value, connected=True),
+    )
+
+    monkeypatch.setattr(service, "feed_snapshot", lambda: _feed_frame())
+    clean = service.get_universal_state()
+    assert clean.fault_main is None
+    assert clean.has_fault is False
+
+    monkeypatch.setattr(
+        service, "feed_snapshot", lambda: _feed_frame(main_errcode=117, sub_errcode=4)
+    )
+    faulted = service.get_universal_state()
+    assert (faulted.fault_main, faulted.fault_sub) == (117, 4)
+    assert faulted.has_fault is True
+    assert faulted.fault_source == "8083"

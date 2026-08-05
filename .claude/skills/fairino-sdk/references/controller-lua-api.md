@@ -14,6 +14,12 @@ extract is OCR-lossy — **numeric literals in its code examples are merged**
 Grep the prototypes with:
 `grep -n "^Prototype " "docs/FR Lua programmingscript.txt"`
 
+For `weld.lua` specifically — the phase/sysvar map, force-ladder rationale,
+collision-guard strategy, and preconditions — `docs/weldNotes.md` is the
+current authoritative writeup and should be read first; it replaced the
+inline header comments that used to live in the file itself. This file stays
+focused on the controller Lua instruction set in general.
+
 ## The three that cost the most
 
 ### 1. `FT_*` return values are documented as `null` and are not
@@ -101,8 +107,30 @@ Two channels actually work:
 
 System variables are the only channel that keeps reporting while force control
 owns the sensor and `FT_GetForceTorqueRCS` is refused with code 14. `weld.lua`'s
-`pub()` writes phase to slot 1 and the last `FT_*` return to slot 2; `app.py`
-decodes them in `_WELD_PHASES`.
+`pub()` writes to eight slots — 1 phase, 2 last `FT_*` return, 3/4 press
+contact-Z/travel, 5 collision-guard state, 8 press force target, and **6/7 the
+two weld interlock DI levels** (`SV_STUD_ON_WORK`/`SV_WELD_READY`). `app.py`
+decodes the phase/fault/guard/ret codes in `_WELD_PHASES`/`_WELD_FAULT_SITES`/
+`_WELD_GUARD_CODES`/`_WELD_RET_CODES`. Full slot semantics and phase-code
+table: `docs/weldNotes.md` — that file is now the authoritative,
+actively-maintained writeup for `weld.lua` specifically (it replaced the
+file's own inline header comments), and should be read before touching
+anything in that program rather than re-deriving the telemetry contract from
+the source.
+
+**DI is reported this way because Python has no working read of its own on
+this firmware** (both `GetDI` routes are dead — see `io-and-force-torque.md`).
+`weld.lua`'s `readDI()` calls the controller-side `GetDI(id, thread)`
+instruction directly (in-process on the controller, not over RPC at all, so
+none of the Python-side deadness applies) and publishes the level through
+`pub()`; the host never calls `GetDI` itself, only `GetSysVarValue` on slots 6
+and 7. `programs/io_monitor.lua` is a second, standalone program using the
+identical mechanism with the welding stripped out, so the two interlock tiles
+can be watched live without a weld test having to run. Both programs publish
+`-1` ("unknown") back into those slots on a clean exit specifically because
+system variables outlive the program that wrote them — a level left sitting
+in a slot after the program stops is exactly how a stale reading gets
+displayed as a live input (observed 2026-07-30).
 
 Caveats: the manual spells the setter `SetSysVarvalue` (lowercase `v`) while the
 SDK uses `SetSysVarValue`, so `pub()` resolves the spelling with `type(...) ==

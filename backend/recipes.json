@@ -37,8 +37,8 @@
     "name": "single",
     "studs": [
       {
-        "x": 100,
-        "y": 200
+        "x": 125,
+        "y": 275
       }
     ],
     "safe_z": 10.0,
@@ -47,23 +47,28 @@
     "substrate": "Mild Steel",
     "pressure_setting": 20.0,
     "created_at": "2026-07-28T17:04:11.455564+00:00",
-    "updated_at": "2026-08-03T13:49:06.969628+00:00",
-    "times_ran": 11,
-    "avg_cycle_time": 3.51,
-    "last_run": "2026-07-31T15:10:01",
+    "updated_at": "2026-08-03T19:20:37.061466+00:00",
+    "times_ran": 15,
+    "avg_cycle_time": 7.11,
+    "last_run": "2026-08-03T15:22:55",
     "pause_points": []
   },
   {
     "id": "bfa39447-7215-4321-80ee-4ca10ac375c6",
     "name": "faceplates",
-    "studs": [],
+    "studs": [
+      {
+        "x": 100,
+        "y": 100
+      }
+    ],
     "safe_z": 10.0,
     "part_z": 0.0,
-    "stud_type": "1/4\"",
-    "substrate": "Mild Steel",
+    "stud_type": "M6",
+    "substrate": "Aluminum",
     "pressure_setting": 17.0,
     "created_at": "2026-08-03T13:57:03.766019+00:00",
-    "updated_at": "2026-08-03T13:57:03.766019+00:00",
+    "updated_at": "2026-08-05T19:28:58.112710+00:00",
     "times_ran": 0,
     "avg_cycle_time": null,
     "last_run": null,

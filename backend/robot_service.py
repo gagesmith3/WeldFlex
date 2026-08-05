@@ -98,6 +98,14 @@ class UniversalRobotState:
     program_state: str = "unknown"
     current_line: int | None = None
 
+    # The two channels fail independently, so they are reported independently.
+    # `connected` tracks XML-RPC, which is what carries commands; the 8083 push
+    # can be alive while it is not. Anything gating a command must read
+    # `commands_available`, never `feed_streaming`.
+    feed_streaming: bool = False
+    commands_available: bool = False
+    telemetry_source: str = "rpc"
+
     # Safety & Diagnostics
     fault_main: int | None = None
     fault_sub: int | None = None
@@ -264,25 +272,64 @@ class WeldFlexRobotService:
         """Latest CNDE force data for any page, without controller I/O."""
         return self._link.force_snapshot()
 
+    def feed_snapshot(self):
+        """Latest port-8083 status frame, without controller I/O.
+
+        Observation only, but no longer unused: `get_universal_state()` prefers
+        this over the XML-RPC cache for program state, line and fault codes,
+        because the controller stops answering XML-RPC for the duration of a
+        force operation while these frames keep arriving. Force and DI have not
+        moved off their old paths yet.
+        """
+        return self._link.feed_snapshot()
+
+    def feed_stats(self) -> dict[str, Any]:
+        """Connection and frame-integrity counters for the diagnostics page."""
+        return self._link.feed_stats()
+
     def get_universal_state(self) -> UniversalRobotState:
         """Consolidated, authoritative single source of truth for all robot state and telemetry."""
         snap = self.snapshot()
         force = self.force_snapshot()
+        feed = self.feed_snapshot()
         with self._weld_telemetry_lock:
             telemetry = self._weld_telemetry
 
+        feed_streaming = feed.is_fresh()
         connected = snap.connected
         state = snap.state
         busy = snap.busy
         busy_label = snap.busy_label
-        prog_raw = snap.program_state_raw
-        program_state = STATE_MAP.get(prog_raw, "unknown") if prog_raw is not None else "unknown"
-        line = snap.current_line
 
-        fault_main = snap.fault_main
-        fault_sub = snap.fault_sub
-        fault_source = snap.fault_source
+        # Observation prefers the pushed frame. The XML-RPC poll cannot get an
+        # answer while the controller is busy with a force operation — the
+        # program keeps running, the poll just stops being able to ask — so the
+        # frame is both fresher and available exactly when the poll is not.
+        # `PROGRAM_STATES` and `STATE_MAP` agree, so this changes source, not meaning.
+        if feed_streaming and feed.program_state is not None:
+            prog_raw = feed.program_state
+            line = feed.current_line
+            fault_main = feed.fault_main or None  # the frame reports 0 for "none"
+            fault_sub = feed.fault_sub or None
+            fault_source = "8083"
+            telemetry_source = "8083"
+        else:
+            prog_raw = snap.program_state_raw
+            line = snap.current_line
+            fault_main = snap.fault_main
+            fault_sub = snap.fault_sub
+            fault_source = snap.fault_source
+            telemetry_source = "rpc"
+
+        program_state = STATE_MAP.get(prog_raw, "unknown") if prog_raw is not None else "unknown"
         has_fault = fault_main is not None and fault_main != 0
+
+        # A live feed proves the controller is reachable even when XML-RPC is
+        # not. Say so rather than showing "offline" over a robot that is plainly
+        # running — but do not say "online" either, because commands still ride
+        # XML-RPC and would silently fail.
+        if feed_streaming and not connected and state != "disconnected":
+            state = "telemetry"
 
         try:
             ft = self.ft_read()
@@ -334,8 +381,10 @@ class WeldFlexRobotService:
         di_live = program_state == "running"
 
         probe_err = None
-        if not connected:
+        if not connected and not feed_streaming:
             probe_err = "Robot offline"
+        elif not connected:
+            probe_err = "Telemetry only — the robot is reachable but commands cannot be delivered"
         elif not force_fresh and di_live:
             probe_err = "No force — CNDE stream is stale or has not produced a frame"
 
@@ -346,6 +395,9 @@ class WeldFlexRobotService:
             state=state,
             busy=busy,
             busy_label=busy_label,
+            feed_streaming=feed_streaming,
+            commands_available=connected,
+            telemetry_source=telemetry_source,
             program_state_raw=prog_raw,
             program_state=program_state,
             current_line=line,

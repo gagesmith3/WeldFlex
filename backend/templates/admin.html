@@ -7,6 +7,7 @@
     {% call panel_shell('Tools', class_name='settings-shell') %}
       <section class="home-nav-grid">
         {{ nav_card('/operator/job-history', 'activity', 'Run History', 'Review completed and aborted production runs.') }}
+        {{ nav_card('/operator/faceplate', 'square', 'Faceplate') }}
       </section>
     {% endcall %}
     {% call panel_shell('Connection Settings', 'Runtime robot connection and polling configuration.', class_name='settings-shell') %}

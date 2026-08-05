@@ -155,9 +155,17 @@ Copy `deploy/rpi/.env.rpi.example` → `.env` at the project root:
 
 ```bash
 WELDFLEX_ROBOT_IP=192.168.58.2
+WELDFLEX_CNDE_PORT=20004        # code default is 20005, which does not work here
+WELDFLEX_CNDE_PERIOD_MS=20
+WELDFLEX_STATUS_PORT=8083       # pushed status feed; period is set on the pendant
+WELDFLEX_FEED_STALE_S=3.0
 PORT=5000
 WELDFLEX_KIOSK=1
 ```
+
+**Set `WELDFLEX_CNDE_PORT` explicitly.** Leaving it unset is not neutral — it
+falls back to `20005`, the port that times out on this firmware, which silently
+kills force telemetry. This has already bitten the live dev `.env`.
 
 Deliberately omits `WELDFLEX_FAIRINO_PATH` so `_bootstrap_sdk()`'s
 `sys.platform` auto-detect resolves to `fairino-python-sdk-main/linux/fairino`.

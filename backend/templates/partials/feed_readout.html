@@ -1,0 +1,169 @@
+{# Port-8083 status feed — observation only.
+
+   Program state, line and fault codes are read from the feed in production;
+   force and DI are not, yet. This panel is how the rest gets proven before
+   anything depends on it: that DATA is the documented length, that the byte
+   order is what we assumed, and that each signal agrees with the XML-RPC one it
+   would replace. It keeps earning its place after a cutover, as the only view
+   of frame integrity and of the raw values behind the chips.
+
+   Every value here is a cached frame read. This panel performs no robot I/O. #}
+
+{% macro level(value) -%}
+  {%- if value is none %}<span class="diag-code-label">—</span>
+  {%- else %}<strong class="{{ 'diag-code-num-ok' if value else 'diag-code-label' }}">{{ 'HIGH' if value else 'low' }}</strong>
+  {%- endif -%}
+{%- endmacro %}
+
+<div class="diagnostics-grid">
+
+  {# ── Stream health ── #}
+  {% set health = {
+      'streaming':    ('Streaming',    'diag-health-ok'),
+      'connecting':   ('Connecting',   'diag-health-warn'),
+      'error':        ('No stream',    'diag-health-error'),
+      'layout_error': ('Bad frames',   'diag-health-error'),
+      'stopped':      ('Stopped',      'diag-health-error'),
+    } %}
+  {% set health_label, health_class = health.get(stats.state, ('Unknown', 'diag-health-error')) %}
+  {% if stats.state == 'streaming' and not fresh %}
+    {% set health_label, health_class = 'Stalled', 'diag-health-warn' %}
+  {% endif %}
+  <div class="diag-health {{ health_class }}">
+    <div class="diag-health-dot"></div>
+    <div class="diag-health-body">
+      <strong>{{ health_label }}</strong>
+      <span>
+        {{ stats.ip or '—' }}:{{ stats.port }}
+        {%- if stats.frame_rate is not none %} · {{ '%.1f'|format(stats.frame_rate) }} fps{% endif %}
+        {%- if age_s is not none %} · {{ '%.1f'|format(age_s) }}s ago{% endif %}
+      </span>
+    </div>
+    <div class="diag-health-right">
+      <span class="diag-code-num {{ 'diag-code-num-ok' if fresh else 'diag-code-num-error' }}">
+        {{ stats.frames }}
+      </span>
+      <span class="diag-health-line">frames</span>
+    </div>
+  </div>
+
+  {% if stats.state == 'layout_error' %}
+  <div class="diag-error-detail">
+    <strong>Frames are not decoding</strong> — {{ stats.last_error }}
+    <div class="diag-fault-hint">
+      Nothing is published while this persists; the panel shows no values rather
+      than plausible-looking wrong ones. Check the controller firmware revision
+      against docs/collabrative_robot_8083_port_status.md.
+    </div>
+  </div>
+  {% elif stats.state == 'error' and stats.last_error %}
+  <div class="diag-error-detail">
+    <strong>No status stream</strong> — {{ stats.last_error }}
+    <div class="diag-fault-hint">
+      Port {{ stats.port }} must be reachable and the feed enabled on the
+      controller (system settings → maintenance mode).
+    </div>
+  </div>
+  {% endif %}
+
+  {# ── Feed vs. XML-RPC, for the signals the cutover moves ── #}
+  {% if stats.frames %}
+  <div class="diag-meta">
+    <div class="diag-meta-section diag-meta-section-overflow">
+      <div class="diag-meta-title">Feed vs. XML-RPC</div>
+      {% for row in rows %}
+      <div class="row">
+        <span>
+          {{ row.label }}
+          {%- if row.agrees is not none %}
+          <strong class="{{ 'diag-code-num-ok' if row.agrees else 'diag-code-num-error' }}">
+            {{ '=' if row.agrees else '≠' }}
+          </strong>
+          {%- endif %}
+        </span>
+        <strong>
+          {{ row.feed if row.feed is not none else '—' }}
+          <span class="diag-code-label">/ {{ row.rpc if row.rpc is not none else '—' }}</span>
+        </strong>
+      </div>
+      {% endfor %}
+    </div>
+
+    {# Signals the feed carries that no current source provides at all. #}
+    <div class="diag-meta-section">
+      <div class="diag-meta-title">New signals</div>
+      <div class="row"><span>Robot mode</span><strong>{{ mode_label or '—' }}</strong></div>
+      <div class="row">
+        <span>E-stop</span>
+        <strong class="{{ 'diag-code-num-error' if feed.emergency_stop else '' }}">
+          {{ 'ENGAGED' if feed.emergency_stop else ('clear' if feed.emergency_stop is not none else '—') }}
+        </strong>
+      </div>
+      <div class="row"><span>Error code</span><strong>{{ error_label or '—' }}</strong></div>
+      <div class="row"><span>Program</span><strong>{{ feed.program_name or '—' }}</strong></div>
+    </div>
+
+    {# Force and pose arrive in the same frame — no CNDE stream, no separate
+       round trip. Fz is the sensor's native sign: negative under compression. #}
+    <div class="diag-meta-section">
+      <div class="diag-meta-title">Force &amp; pose</div>
+      <div class="row">
+        <span>F/T sensor</span>
+        <strong>{{ 'active' if feed.ft_active else ('reset' if feed.ft_active is not none else '—') }}</strong>
+      </div>
+      <div class="row">
+        <span>Fz (native)</span>
+        <strong>{{ '%.2f N'|format(feed.fz) if feed.fz is not none else '—' }}</strong>
+      </div>
+      <div class="row">
+        <span>TCP Z</span>
+        <strong>{{ '%.2f mm'|format(feed.tcp_z) if feed.tcp_z is not none else '—' }}</strong>
+      </div>
+    </div>
+
+    {# DI straight off the frame, with no controller-Lua sysvar relay in the
+       path. Display only — this does not establish an interlock. #}
+    <div class="diag-meta-section">
+      <div class="diag-meta-title">Digital IO</div>
+      <div class="row"><span>DI{{ ready_di }} weld ready</span>{{ level(feed.di(ready_di)) }}</div>
+      <div class="row"><span>DI{{ stud_di }} stud on work</span>{{ level(feed.di(stud_di)) }}</div>
+      <div class="row"><span>DO0 weld trigger</span>{{ level(feed.do(0)) }}</div>
+      <div class="row"><span>DO1 feeder</span>{{ level(feed.do(1)) }}</div>
+      {% set do_word = feed.get('cl_dgt_output_l') %}
+      <div class="row">
+        <span>DO cycle counter</span>
+        <strong>{{ ((do_word // 16) % 16) if do_word is not none else '—' }}</strong>
+      </div>
+    </div>
+
+    {# Frame integrity. Any non-zero counter here is the first thing to look at
+       when a value on this page looks wrong. #}
+    <div class="diag-meta-section">
+      <div class="diag-meta-title">Frame integrity</div>
+      <div class="row">
+        <span>DATA length</span>
+        <strong class="{{ 'diag-code-num-error' if stats.data_len != expected_len else '' }}">
+          {{ stats.data_len if stats.data_len is not none else '—' }} / {{ expected_len }}
+        </strong>
+      </div>
+      <div class="row">
+        <span>Byte order</span>
+        <strong class="{{ '' if stats.little_endian else 'diag-code-num-error' }}">
+          {{ 'little' if stats.little_endian else 'BIG' }}
+        </strong>
+      </div>
+      {% for key, label in [('checksum_fail', 'Checksum fails'), ('resync_bytes', 'Resync bytes'),
+                            ('bad_len', 'Bad lengths'), ('short_data', 'Short frames')] %}
+      {% set count = stats.reader.get(key, 0) %}
+      <div class="row">
+        <span>{{ label }}</span>
+        <strong class="{{ 'diag-code-num-error' if count else '' }}">{{ count }}</strong>
+      </div>
+      {% endfor %}
+      <div class="row"><span>Reconnects</span><strong>{{ stats.connects }}</strong></div>
+      <div class="row"><span>Generation</span><strong>{{ stats.generation }}</strong></div>
+    </div>
+  </div>
+  {% endif %}
+
+</div>

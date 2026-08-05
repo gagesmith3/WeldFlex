@@ -8,6 +8,10 @@
       {{ htmx_mount('diagnostics-readout', '/ui/diagnostics', 'load, every ' ~ (status_interval_ms or 1000) ~ 'ms', 'innerHTML') }}
     {% endcall %}
 
+    {% call panel_shell('Status Feed (port 8083)', 'Pushed controller telemetry, shown beside the XML-RPC values it replaces. State, line and fault codes now come from here; force and DI do not yet.', class_name='diagnostics-shell') %}
+      {{ htmx_mount('feed-readout', '/ui/diagnostics/feed', 'load, every ' ~ (status_interval_ms or 1000) ~ 'ms', 'innerHTML') }}
+    {% endcall %}
+
     {% call panel_shell('Connection', 'Connect, release, or rebuild the link to the controller.', class_name='settings-shell') %}
       {# Split across two rows so five controls still fit the 800px kiosk width. #}
       <div class="btn-row">

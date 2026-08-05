@@ -1,6 +1,8 @@
 import threading
+import time
 from types import SimpleNamespace
 
+from robot_feed import FeedSnapshot, FeedStats
 from robot_link import CNDE_PERIOD_MS, CNDE_PORT, ConnState, RobotLink, _ClientHandle, _SdkWorker
 from robot_service import WeldFlexRobotService
 
@@ -286,6 +288,90 @@ def test_read_program_state_and_fault_codes_prefer_cnde_stream():
 
     assert (state, st_src) == (2, "cnde")
     assert (main, sub, flt_src) == (102, 4, "cnde")
+
+
+class _FakeFeed:
+    """Records lifecycle calls so the wiring can be asserted without a socket."""
+
+    def __init__(self):
+        self.calls = []
+        self._snapshot = FeedSnapshot()
+
+    def start(self, ip):
+        self.calls.append(("start", ip))
+
+    def retarget(self, ip):
+        self.calls.append(("retarget", ip))
+
+    def stop(self, timeout=3.0):
+        self.calls.append(("stop", None))
+
+    def snapshot(self):
+        return self._snapshot
+
+    def stats(self):
+        return FeedStats(state="streaming", ip="127.0.0.1")
+
+
+def test_constructing_a_link_does_not_open_the_status_feed():
+    """No socket until the operator asks for a connection."""
+    link = RobotLink("127.0.0.1")
+
+    assert link._feed.is_streaming() is False
+    assert not any(t.name == "robot-feed" for t in threading.enumerate())
+
+
+def test_status_feed_follows_the_operator_intent(monkeypatch):
+    """Connect/disconnect/retarget drive the feed, not the RPC client's success.
+
+    The feed is started on intent rather than after a successful RPC connect so
+    telemetry still arrives when the command channel is down — the two failure
+    modes are independent and must stay that way.
+
+    The supervisor is stubbed out because this is about the wiring, not about
+    reaching a controller: letting it run would build a real SDK client and dial
+    a real socket for a question neither one answers.
+    """
+    link = RobotLink("127.0.0.1")
+    feed = _FakeFeed()
+    link._feed = feed
+    monkeypatch.setattr(link, "start", lambda connect=True: None)
+
+    link.connect()
+    link.set_ip("127.0.0.2")
+    link.disconnect()
+
+    assert feed.calls == [
+        ("start", "127.0.0.1"),
+        ("retarget", "127.0.0.2"),
+        ("stop", None),
+    ]
+
+
+def test_feed_snapshot_is_not_filtered_by_the_rpc_generation():
+    """An XML-RPC reconnect says nothing about whether the feed is still good."""
+    link = RobotLink("127.0.0.1")
+    feed = _FakeFeed()
+    feed._snapshot = FeedSnapshot(
+        fields={"program_state": 2}, received_monotonic=time.monotonic(), generation=1
+    )
+    link._feed = feed
+    link._gen = 99  # RPC client has reconnected many times since
+
+    assert link.feed_snapshot().program_state == 2
+    assert link.feed_stats()["state"] == "streaming"
+
+
+def test_thread_report_counts_the_feed_thread():
+    """Without the prefix in the census, a leaked feed thread is invisible."""
+    link = RobotLink("127.0.0.1")
+    assert not any(n.startswith("robot-feed") for n in link.thread_report()["sdk"])
+
+    link._feed.start("127.0.0.1")
+    try:
+        assert any(n.startswith("robot-feed") for n in link.thread_report()["sdk"])
+    finally:
+        link._feed.stop()
 
 
 def test_call_retries_transient_error_without_invalidating_generation():

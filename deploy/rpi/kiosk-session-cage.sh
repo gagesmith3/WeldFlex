@@ -23,48 +23,25 @@ set -u
 URL="http://localhost:5000/operator"
 READY_URL="http://localhost:5000/"
 
-# Hide the compositor's cursor by giving it a fully transparent cursor theme.
+# The compositor's cursor is deliberately NOT handled here — see the diversion
+# step in install_rpi_kiosk.sh.
 #
-# The app already sets `cursor: none` in kiosk mode, but that only governs the
-# pointer once Chromium owns it. wlroots parks its own default cursor at the
-# centre of the output and keeps drawing it until a pointer motion event hands
-# control to the client — and the panel's touchscreen enumerates as a pointer
-# without ever producing motion, so the arrow just sits there. XCURSOR_SIZE=1
-# was tried first and changed nothing (cage passes its own size when it builds
-# the cursor manager), which leaves the cursor *image* as the only lever.
+# cage parks a default cursor in the centre of the output and never removes it:
+# the panel's touchscreen produces no pointer-motion event, so nothing ever hands
+# the cursor to the client, and the app's kiosk `cursor: none` CSS only governs
+# the pointer once Chromium owns it. cage 0.2.0 has no option for this at all —
+# `cage --help` lists only -d/-D/-h/-m/-s/-v.
 #
-# Built here rather than in the installer so a `git pull` + reboot is enough.
-CURSOR_THEME_DIR="$HOME/.local/share/icons/default"
-if [ ! -f "$CURSOR_THEME_DIR/cursors/left_ptr" ]; then
-    echo "generating blank cursor theme at $CURSOR_THEME_DIR"
-    mkdir -p "$CURSOR_THEME_DIR/cursors"
-    printf '[Icon Theme]\nName=default\n' > "$CURSOR_THEME_DIR/index.theme"
-    # One 24x24 fully-transparent frame in Xcursor's binary format: a 16-byte
-    # file header, a 12-byte table-of-contents entry, then a 36-byte image
-    # chunk header and the pixels. Written directly because xcursorgen lives in
-    # x11-apps, which is a silly thing to drag onto a Wayland-only image.
-    python3 - "$CURSOR_THEME_DIR/cursors/left_ptr" << 'PY'
-import struct, sys
-W = H = 24
-with open(sys.argv[1], "wb") as f:
-    f.write(b"Xcur")
-    f.write(struct.pack("<III", 16, 0x00010000, 1))       # header len, version, 1 TOC entry
-    f.write(struct.pack("<III", 0xfffd0002, W, 28))       # image chunk, nominal size, offset
-    f.write(struct.pack("<IIII", 36, 0xfffd0002, W, 1))   # chunk header len, type, subtype, version
-    f.write(struct.pack("<IIIII", W, H, 0, 0, 0))         # w, h, xhot, yhot, delay
-    f.write(b"\x00" * (W * H * 4))                        # transparent ARGB pixels
-PY
-    # Every name a client might ask for has to resolve inside this theme. Any
-    # miss and wlroots falls back to the system theme, and the arrow is back.
-    for name in default arrow top_left_arrow pointer hand1 hand2 text xterm \
-                watch wait progress left_ptr_watch; do
-        ln -sf left_ptr "$CURSOR_THEME_DIR/cursors/$name"
-    done
-fi
-# Ours has to come before /usr/share/icons, where Debian ships a "default"
-# theme of its own that inherits a perfectly visible arrow.
-export XCURSOR_PATH="$HOME/.local/share/icons:$HOME/.icons:/usr/share/icons"
-export XCURSOR_THEME=default
+# This block used to generate a fully-transparent Xcursor theme and point
+# XCURSOR_PATH/XCURSOR_THEME at it. That never worked, and proving it took a
+# while: on 2026-08-10 the theme was pointed at a fully *opaque red* cursor and
+# the panel still showed a normal arrow, so wlroots was never loading the theme
+# in the first place. Do not reintroduce it — it reads like a working fix.
+#
+# What does work is removing the image wlroots resolves to. Mind the name:
+# wlroots asks for the XDG cursor name `default`, and `left_ptr` is merely a
+# symlink pointing at it, which is why the "rename left_ptr" recipes on the Pi
+# forums have no effect here.
 
 # Send stdout/stderr to journald so `journalctl -t weldflex-kiosk -f` works, and
 # tee it to the console so a startup that never completes says so on the panel.

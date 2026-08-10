@@ -60,7 +60,10 @@
       "Bash(python -m pytest tests/test_lua_builder.py tests/test_job_manager.py -q)",
       "Bash(python -m pytest tests/test_lua_builder.py tests/test_job_manager.py tests/test_cycle_tracker.py -q)",
       "Bash(python -m pytest tests/test_job_manager.py::test_gate_pause_re_arms_on_every_cycle -q)",
-      "Bash(python -m pytest tests/test_job_manager.py -q -p no:randomly)"
+      "Bash(python -m pytest tests/test_job_manager.py -q -p no:randomly)",
+      "PowerShell(ssh -i \"$env:USERPROFILE\\\\.ssh\\\\id_ed25519_weldflex\" -o BatchMode=yes iwt@weldflex.local 'CP=$\\(pgrep -x cage | head -1\\); echo \"=== cage pid: $CP ===\"; echo \"=== XCURSOR env actually seen by cage ===\"; tr \"\\\\0\" \"\\\\n\" < /proc/$CP/environ | grep -i -E \"xcursor|wlr_|XDG_\" ; echo \"=== cage version ===\"; cage --version 2>&1 | head -2; echo \"=== theme dir ===\"; ls -l ~/.local/share/icons/default/cursors/ ; echo \"=== index.theme ===\"; cat ~/.local/share/icons/default/index.theme; echo \"=== /usr/share/icons ===\"; ls /usr/share/icons/' 2>&1)",
+      "Bash(bash -n \"c:/Users/Gage/Desktop/WeldFlex/deploy/rpi/kiosk-session-cage.sh\")",
+      "Bash(bash -n \"c:/Users/Gage/Desktop/WeldFlex/deploy/rpi/install_rpi_kiosk.sh\")"
     ],
     "additionalDirectories": [
       "C:\\Users\\Gage\\Desktop\\WeldFlex\\.claude"

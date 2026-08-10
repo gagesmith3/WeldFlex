@@ -69,6 +69,33 @@ fi
 # shellcheck disable=SC2086
 apt-get install -y $COMMON_PKGS $STACK_PKGS
 
+# ── 2b. Remove the compositor cursor (cage stack only) ────────────────────────
+# cage draws a default cursor in the centre of the output and never takes it
+# away: the touchscreen produces no pointer-motion event, so the cursor is never
+# handed to the client. cage 0.2.0 exposes no option for this, and the
+# documented XCURSOR_PATH/XCURSOR_THEME override is ignored in practice — this
+# was verified on 2026-08-10 by pointing the theme at an opaque red cursor and
+# watching the panel keep showing a normal arrow.
+#
+# Deleting the image wlroots resolves to is what actually works. Two traps:
+#   * The name is the XDG `default`, not the legacy X11 `left_ptr` — the latter
+#     is only a symlink to it, so the "rename left_ptr" advice found on the Pi
+#     forums does nothing on this image.
+#   * A plain `mv` is undone by the next adwaita-icon-theme upgrade, silently
+#     and months later. dpkg-divert is Debian's supported way to keep a packaged
+#     file out of the way permanently; upgrades write to .distrib instead.
+# Reverse with: dpkg-divert --local --rename --remove <path>
+# The X11 stack does not need this — unclutter already hides the pointer there.
+if [ "$STACK" = "cage" ]; then
+    CURSOR_FILE="/usr/share/icons/Adwaita/cursors/default"
+    if dpkg-divert --list | grep -q "$CURSOR_FILE"; then
+        echo "==> Cursor diversion already present, skipping"
+    else
+        echo "==> Diverting $CURSOR_FILE to hide the compositor cursor..."
+        dpkg-divert --local --rename --add "$CURSOR_FILE"
+    fi
+fi
+
 # ── 3. Python venv + deps ─────────────────────────────────────────────────────
 echo "==> Setting up Python venv..."
 VENV="$PROJECT_DIR/venv"

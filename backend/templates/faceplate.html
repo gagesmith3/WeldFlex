@@ -31,7 +31,7 @@
   <div class="fp-menu-grid">
     <!-- 1. Move to Position Button -->
     <button type="button" class="fp-menu-btn fp-btn-position"
-            hx-post="/ui/faceplate/move-position" hx-target="#faceplate-cmd-result" hx-swap="innerHTML"
+            hx-post="/ui/faceplate/move-position" hx-target="#toast-rack" hx-swap="innerHTML"
             hx-disabled-elt="this">
       <div class="fp-menu-btn-icon">
         {{ icon_safe('target', fallback='circle', width=32, height=32) }}
@@ -44,7 +44,7 @@
 
     <!-- 2. Weld Button -->
     <button type="button" class="fp-menu-btn fp-btn-weld"
-            hx-post="/ui/faceplate/weld" hx-target="#faceplate-cmd-result" hx-swap="innerHTML"
+            hx-post="/ui/faceplate/weld" hx-target="#toast-rack" hx-swap="innerHTML"
             hx-disabled-elt="this">
       <div class="fp-menu-btn-icon">
         {{ icon_safe('zap', fallback='circle', width=32, height=32) }}
@@ -57,7 +57,7 @@
 
     <!-- 3. Feed Button -->
     <button type="button" class="fp-menu-btn fp-btn-feed"
-            hx-post="/ui/faceplate/feed" hx-target="#faceplate-cmd-result" hx-swap="innerHTML"
+            hx-post="/ui/faceplate/feed" hx-target="#toast-rack" hx-swap="innerHTML"
             hx-disabled-elt="this">
       <div class="fp-menu-btn-icon">
         {{ icon_safe('arrow_down_to_line', fallback='circle', width=32, height=32) }}
@@ -70,7 +70,7 @@
 
     <!-- 4. Move Home Button -->
     <button type="button" class="fp-menu-btn fp-btn-home"
-            hx-post="/ui/faceplate/move-home" hx-target="#faceplate-cmd-result" hx-swap="innerHTML"
+            hx-post="/ui/faceplate/move-home" hx-target="#toast-rack" hx-swap="innerHTML"
             hx-disabled-elt="this">
       <div class="fp-menu-btn-icon">
         {{ icon_safe('home', fallback='circle', width=32, height=32) }}
@@ -81,9 +81,6 @@
       </div>
     </button>
   </div>
-
-  <!-- Command Result Notification Bubble Mount -->
-  <div id="faceplate-cmd-result" class="fp-cmd-result-wrap"></div>
 </div>
 
 <!-- Faceplate Target settings modal -->

@@ -114,7 +114,22 @@ input, textarea, select, [contenteditable] {
   height: 28px;
 }
 
-.home-btn:hover {
+/* ── Hover is mouse-only ──────────────────────────────────────────────────
+   Chromium latches :hover onto the last-tapped element and keeps it until you
+   tap somewhere else, so on the touchscreen a tapped control stays looking
+   "selected" after the finger lifts. Every decorative :hover rule in this file
+   is therefore gated on `body:not(.kiosk)` — base.html stamps .kiosk from
+   WELDFLEX_KIOSK=1, which the RPi .env sets and the Windows dev box does not.
+   That is a signal we control, unlike @media (hover: hover), which depends on
+   how Chromium under cage/Wayland reports its pointer.
+
+   :where() keeps the guard at zero specificity, so each rule holds its exact
+   original weight and the cascade cannot shift.
+
+   Touch feedback comes from :active and from the .is-pressed class that
+   static/js/press.js drives off pointer events. When adding a new :hover rule,
+   guard it the same way. */
+:where(body:not(.kiosk)) .home-btn:hover {
   background: #c6def4;
   transform: translateY(-1px);
   box-shadow: 0 6px 14px rgba(8, 36, 58, 0.2);
@@ -228,7 +243,8 @@ input, textarea, select, [contenteditable] {
   color: var(--ink);
   transition: box-shadow 0.15s, border-color 0.15s;
 }
-.landing-card:hover {
+:where(body:not(.kiosk)) .landing-card:hover,
+.landing-card.is-pressed {
   border-color: var(--header-end);
   box-shadow: 0 4px 16px rgba(39, 95, 132, 0.12);
 }
@@ -253,12 +269,15 @@ input, textarea, select, [contenteditable] {
 }
 
 /* ── Toast notification rack ── */
+/* z-index above .wf-modal-overlay (9000) and .admin-overlay (9100): a command
+   result must never be hidden behind a dim backdrop. Below .wf-kbd (9200),
+   which is the documented ceiling — see the note on .wf-kbd. */
 .toast-rack {
   position: fixed;
   bottom: 28px;
   left: 50%;
   transform: translateX(-50%);
-  z-index: 900;
+  z-index: 9150;
   width: min(460px, calc(100vw - 48px));
   pointer-events: none;
 }
@@ -401,9 +420,14 @@ input, textarea, select, [contenteditable] {
   transition: transform 120ms ease, box-shadow 120ms ease;
 }
 
-.home-nav-card:hover {
+:where(body:not(.kiosk)) .home-nav-card:hover {
   transform: translateY(-2px);
   box-shadow: 0 8px 16px rgba(18, 44, 69, 0.12);
+}
+
+.home-nav-card.is-pressed {
+  transform: scale(0.98);
+  box-shadow: 0 2px 8px rgba(18, 44, 69, 0.14);
 }
 
 .home-nav-card h3 {
@@ -837,7 +861,7 @@ select {
   transition: background 0.1s;
 }
 
-.library-table tbody tr:hover {
+:where(body:not(.kiosk)) .library-table tbody tr:hover {
   background: var(--bg-bottom);
 }
 
@@ -1235,15 +1259,17 @@ select {
   transition: background 0.15s ease, border-color 0.15s ease, transform 0.12s ease;
 }
 
-.fp-settings-btn:hover {
+:where(body:not(.kiosk)) .fp-settings-btn:hover {
   background: #334155 !important;
   border-color: #64748b !important;
   color: #ffffff !important;
   transform: translateY(-1px);
 }
 
-.fp-cmd-result-wrap {
-  margin-top: 16px;
+/* Shown when the faceplate recipe has no target point saved yet. */
+.fp-text-warn {
+  color: var(--stop);
+  font-weight: 700;
 }
 
 /* --- Simple Menu Layout --- */
@@ -1269,15 +1295,29 @@ select {
   width: 100%;
 }
 
-.fp-menu-btn:hover {
+:where(body:not(.kiosk)) .fp-menu-btn:hover {
   transform: translateY(-2px);
   border-color: var(--muted);
   background: var(--bg-bottom);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
 }
 
-.fp-menu-btn:active {
-  transform: translateY(0);
+/* Touch press feedback — .is-pressed is added on pointerdown and removed on
+   pointerup/pointercancel by static/js/press.js, so it releases with the
+   finger. On the kiosk this is the only feedback these cards get. */
+.fp-menu-btn:active,
+.fp-menu-btn.is-pressed {
+  transform: scale(0.98);
+  border-color: var(--muted);
+  background: var(--bg-bottom);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+}
+
+/* hx-disabled-elt="this" holds the button down for the request; .fp-menu-btn is
+   not a .btn, so .btn:disabled never applies. move-position and move-home block
+   on a synchronous upload_and_run, so the tap needs to visibly register. */
+.fp-menu-btn:disabled {
+  opacity: 0.55;
 }
 
 .fp-menu-btn-icon {
@@ -1359,7 +1399,7 @@ select {
   transition: background 0.12s ease, color 0.12s ease, transform 0.12s ease;
 }
 
-.icon-btn-lg:hover {
+:where(body:not(.kiosk)) .icon-btn-lg:hover {
   background: var(--bg-bottom);
   color: var(--ink);
 }
@@ -1483,7 +1523,8 @@ select {
   padding: 6px 10px;
 }
 
-.table-add-row .btn.table-add:hover,
+/* :hover split out from :active so the press state survives on the kiosk. */
+:where(body:not(.kiosk)) .table-add-row .btn.table-add:hover,
 .table-add-row .btn.table-add:active {
   background: #eef4fa;
   color: var(--text);
@@ -1815,6 +1856,30 @@ pre {
     overflow-y: auto;
   }
   .workspace { grid-template-columns: 1fr; }
+
+  /* ── Faceplate station ──
+     Let the menu grid absorb the leftover height instead of sizing the cards
+     by hand — same approach as .home-nav-grid above. Four cards as a 2x2 that
+     fills the viewport exactly, so the page never scrolls. */
+  .fp-dashboard { flex: 1; gap: 10px; padding-bottom: 10px; }
+  .fp-header-card { padding: 10px 14px; }
+  /* nowrap matters: a long target string would otherwise push the Settings
+     button onto its own row, costing ~50px and overflowing 480px on its own. */
+  .fp-header-main { flex-wrap: nowrap; gap: 10px; }
+  .fp-subtitle { font-size: 0.82rem; line-height: 1.35; }
+  .fp-settings-btn { padding: 10px 14px !important; font-size: 0.85rem !important; }
+  .fp-menu-grid {
+    flex: 1;
+    min-height: 0;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr 1fr;
+    gap: 10px;
+  }
+  .fp-menu-btn { padding: 12px 14px; gap: 12px; border-radius: 12px; }
+  .fp-menu-btn-icon { width: 44px; height: 44px; border-radius: 10px; }
+  .fp-menu-btn-icon svg { width: 26px; height: 26px; }
+  .fp-menu-btn-title { font-size: 0.98rem; }
+  .fp-menu-btn-desc { font-size: 0.72rem; }
 }
 
 @media (max-width: 600px) {
@@ -2442,8 +2507,10 @@ pre {
   padding: 24px;
 }
 
-.calib-menu-card:hover,
-.calib-menu-card:active {
+/* :hover split out from :active so the press state survives on the kiosk. */
+:where(body:not(.kiosk)) .calib-menu-card:hover,
+.calib-menu-card:active,
+.calib-menu-card.is-pressed {
   background: #eef4fb;
   border-color: #1d5f9a;
 }
@@ -3033,7 +3100,8 @@ pre {
   transition: background 0.12s, color 0.12s;
 }
 
-.mgr-menu-btn:hover {
+:where(body:not(.kiosk)) .mgr-menu-btn:hover,
+.mgr-menu-btn.is-pressed {
   background: rgba(255, 255, 255, 0.12);
   color: #ffffff;
 }
@@ -3380,7 +3448,7 @@ pre {
   transition: background 0.12s, color 0.12s;
 }
 
-.mgr-nav-btn:hover {
+:where(body:not(.kiosk)) .mgr-nav-btn:hover {
   background: var(--bg-bottom);
   color: var(--ink);
 }
@@ -3504,7 +3572,7 @@ pre {
   transition: background 0.12s, color 0.12s;
 }
 
-.pd-icon-btn:hover {
+:where(body:not(.kiosk)) .pd-icon-btn:hover {
   background: var(--bg-bottom);
   color: var(--ink);
 }
@@ -3555,7 +3623,7 @@ pre {
   transition: background 0.1s;
 }
 
-.pd-stud-row:hover    { background: var(--bg-bottom); }
+:where(body:not(.kiosk)) .pd-stud-row:hover { background: var(--bg-bottom); }
 .pd-stud-row.selected { background: rgba(39, 95, 132, 0.08); }
 
 .pd-stud-row.dragging {
@@ -3579,7 +3647,7 @@ pre {
   transition: opacity 0.12s, color 0.12s;
 }
 
-.pd-stud-row:hover .pd-drag-handle {
+:where(body:not(.kiosk)) .pd-stud-row:hover .pd-drag-handle {
   opacity: 1;
   color: var(--ink);
 }
@@ -3639,8 +3707,13 @@ pre {
   transition: opacity 0.12s, background 0.12s, color 0.12s;
 }
 
-.pd-stud-row:hover .pd-stud-delete-btn { opacity: 1; }
-.pd-stud-delete-btn:hover { background: var(--err-bg); color: var(--stop); }
+:where(body:not(.kiosk)) .pd-stud-row:hover .pd-stud-delete-btn { opacity: 1; }
+/* Base opacity is 0 and hover is the only reveal, so on the touchscreen — where
+   there is no hover — the button has to be visible outright or it is
+   unreachable. */
+body.kiosk .pd-stud-delete-btn { opacity: 1; }
+:where(body:not(.kiosk)) .pd-stud-delete-btn:hover,
+.pd-stud-delete-btn:active { background: var(--err-bg); color: var(--stop); }
 
 .pd-panel-footer {
   padding: 8px;
@@ -3668,13 +3741,13 @@ pre {
   transition: background 0.12s, color 0.12s;
 }
 
-.pd-panel-footer-btn:hover {
+:where(body:not(.kiosk)) .pd-panel-footer-btn:hover {
   background: var(--bg-bottom);
   color: var(--ink);
 }
 
 .pd-tool-btn.save { color: var(--run); border-color: var(--ok-line); }
-.pd-tool-btn.save:hover { background: rgba(18, 116, 74, 0.08); }
+:where(body:not(.kiosk)) .pd-tool-btn.save:hover { background: rgba(18, 116, 74, 0.08); }
 .pd-tool-btn.save:disabled { opacity: 0.5; cursor: default; }
 
 .pd-left  { border-right: 1px solid var(--line); }
@@ -3691,7 +3764,8 @@ pre {
   transition: background 0.12s;
 }
 
-.pd-part-item:hover  { background: var(--bg-bottom); }
+:where(body:not(.kiosk)) .pd-part-item:hover,
+.pd-part-item.is-pressed { background: var(--bg-bottom); }
 .pd-part-item.active { background: rgba(39, 95, 132, 0.1); }
 
 .pd-part-item-body {
@@ -3718,8 +3792,11 @@ pre {
   transition: opacity 0.12s, background 0.12s, color 0.12s;
 }
 
-.pd-part-item:hover .pd-part-delete-btn { opacity: 1; }
-.pd-part-delete-btn:hover { background: var(--err-bg); color: var(--stop); }
+:where(body:not(.kiosk)) .pd-part-item:hover .pd-part-delete-btn { opacity: 1; }
+/* Same reveal problem as .pd-stud-delete-btn — see above. */
+body.kiosk .pd-part-delete-btn { opacity: 1; }
+:where(body:not(.kiosk)) .pd-part-delete-btn:hover,
+.pd-part-delete-btn:active { background: var(--err-bg); color: var(--stop); }
 
 .pd-delete-warning {
   margin: -8px 0 0;
@@ -3785,7 +3862,7 @@ pre {
   transition: background 0.12s;
 }
 
-.pd-title-wrap:hover {
+:where(body:not(.kiosk)) .pd-title-wrap:hover {
   background: var(--bg-bottom);
 }
 
@@ -3806,7 +3883,7 @@ pre {
   transition: opacity 0.12s, color 0.12s;
 }
 
-.pd-title-wrap:hover .pd-rename-btn {
+:where(body:not(.kiosk)) .pd-title-wrap:hover .pd-rename-btn {
   opacity: 1;
   color: var(--ink);
 }
@@ -3827,7 +3904,7 @@ pre {
   transition: background 0.12s, color 0.12s, border-color 0.12s;
 }
 
-.pd-tool-btn:hover {
+:where(body:not(.kiosk)) .pd-tool-btn:hover {
   background: var(--bg-bottom);
   color: var(--ink);
 }
@@ -4867,9 +4944,9 @@ pre {
   box-shadow: 0 2px 4px rgba(37, 99, 235, 0.2);
 }
 
-.btn.primary:hover,
-.btn-blue:hover,
-.btn.secondary.btn-blue:hover {
+:where(body:not(.kiosk)) .btn.primary:hover,
+:where(body:not(.kiosk)) .btn-blue:hover,
+:where(body:not(.kiosk)) .btn.secondary.btn-blue:hover {
   background: var(--primary-dark, #1d4ed8);
   color: #ffffff;
   box-shadow: 0 4px 8px rgba(29, 78, 216, 0.3);

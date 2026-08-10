@@ -3,15 +3,18 @@ import re
 import pytest
 
 from lua_builder import (
+    FACEPLATE_TEMPLATE_PATH,
     GATE_DI_OPT_ABORT,
     IO_MONITOR_DEFAULT_MS,
     IO_MONITOR_MAX_MS,
     IO_MONITOR_PATH,
+    PAUSE_GATE_CODE,
     PRESS_LBF_MAX,
     TEMPLATE_PATH,
     WELD_PATH,
     WELD_PROGRAM_NAME,
     build_io_monitor_lua,
+    build_weld_faceplate_lua,
     build_weldflex_lua,
     format_lua_string,
     format_number,
@@ -88,6 +91,20 @@ def test_marker_line_really_is_the_boundary_dwell():
     assert built.loop_start_line < built.cycle_marker_line < built.gate_line
 
 
+def test_program_line_count_matches_the_built_text_and_stays_under_weld_lua():
+    """job_manager's CycleTracker uses program_line_count as a ceiling so a
+
+    NewDofile-aliased sample from inside weld.lua (which reports its own line
+    numbers, ~500 of them) can never be mistaken for a caller-file line. That
+    only works as long as weld.lua stays longer than any caller program — pin
+    both halves of the invariant here.
+    """
+    built = build_weldflex_lua([{"x": 1, "y": 2}] * 5, cycles=3)
+    assert built.program_line_count == len(_lines(built))
+    weld_lua_lines = len(WELD_PATH.read_text(encoding="utf-8").splitlines())
+    assert built.program_line_count < weld_lua_lines
+
+
 @pytest.mark.parametrize("n_studs,cycles", [(0, 1), (1, 1), (5, 20), (40, 999)])
 def test_marker_lines_track_stud_count(n_studs, cycles):
     built = build_weldflex_lua([{"x": i, "y": i} for i in range(n_studs)], cycles=cycles)
@@ -97,8 +114,9 @@ def test_marker_lines_track_stud_count(n_studs, cycles):
 
 
 def test_pause_mode_gets_a_longer_boundary_dwell():
-    """`pause` gates by host-issued ProgramPause *after* seeing the marker, so the
-    round trip has to fit inside the dwell. The in-program gates don't pay for it."""
+    """The cycle banks at the marker — the start of the dwell — and `Pause()` is
+    the line after it, so the dwell is the window job_manager._gate waits out
+    before deciding the program did not hold and sending a ProgramPause itself."""
     paused = build_weldflex_lua([{"x": 1, "y": 1}], cycles=2, gate_mode="pause")
     for mode in ("none", "di"):
         other = build_weldflex_lua([{"x": 1, "y": 1}], cycles=2, gate_mode=mode)
@@ -127,6 +145,39 @@ def test_di_gate_emits_waitdi_that_aborts_on_timeout():
     # opt=0 stops the program on timeout. Falling through would weld into a part
     # the operator never swapped.
     assert GATE_DI_OPT_ABORT == 0
+
+
+@pytest.mark.parametrize(
+    "builder", [
+        lambda mode: build_weldflex_lua([{"x": 1, "y": 1}], cycles=4, gate_mode=mode),
+        lambda mode: build_weld_faceplate_lua(1, 1, cycles=4, gate_mode=mode),
+    ],
+    ids=["weldflex", "faceplate"],
+)
+def test_pause_gate_holds_in_the_program_and_skips_the_last_cycle(builder):
+    """2026-08-06. The gate used to be nothing but a comment — the manager saw
+    the marker and *then* sent a ProgramPause, which on hardware never landed:
+    the faceplate run welded, retracted, opened DO1 and drove straight back down
+    into the next cycle. The hold has to be an instruction the program executes.
+
+    The last cycle is deliberately exempt. Nothing releases a pause the manager
+    never gates on (`done < target`), and the run still has its home return to
+    do after the loop.
+    """
+    built = builder("pause")
+    lines = built.text.splitlines()
+    gate = "\n".join(lines[built.gate_line - 1:built.gate_line + 8])
+
+    assert "if cycleIndex < cycleCount then" in gate
+    assert f"Pause({PAUSE_GATE_CODE})" in gate
+    # Exactly one pause in the whole program, sitting past the boundary dwell.
+    pause_lines = [i for i, l in enumerate(lines, 1) if re.match(r"^\s*Pause\(", l)]
+    assert len(pause_lines) == 1
+    assert built.cycle_marker_line < pause_lines[0]
+
+    # ...and none of it survives into a mode that isn't gating that way.
+    for mode in ("none", "di"):
+        assert "Pause(" not in builder(mode).text
 
 
 @pytest.mark.parametrize("mode", ["none", "pause"])
@@ -274,6 +325,23 @@ def test_weld_di_map_agrees_across_the_language_boundary():
     for name in ("DI_STUD_ON_WORK", "DI_WELD_READY", "SV_STUD_ON_WORK", "SV_WELD_READY"):
         assert monitor_const(name) == lua_const(name), \
             f"{name} drifted between weld.lua and io_monitor.lua"
+
+
+def test_feed_do_agrees_across_the_language_boundary():
+    """/ui/faceplate/feed writes the stud-feeder output from the host, so app.py
+    now holds a copy of a number weld.lua owns as DO_FEED — the same silent-drift
+    hazard the DI map has. A wrong number here does not error; it energizes some
+    other output the operator never asked to actuate.
+    """
+    weld = WELD_PATH.read_text(encoding="utf-8")
+    app_src = (WELD_PATH.parents[1] / "backend" / "app.py").read_text(encoding="utf-8")
+
+    lua = re.search(r"^local DO_FEED\s*=\s*(\d+)", weld, re.M)
+    assert lua, "weld.lua no longer declares DO_FEED"
+    py = re.search(r'^FEED_DO = int\(os\.getenv\("WELDFLEX_FEED_DO", "(\d+)"\)\)', app_src, re.M)
+    assert py, "app.py no longer declares FEED_DO"
+    assert lua.group(1) == "1"
+    assert py.group(1) == lua.group(1)
 
 
 def test_the_io_monitor_issues_no_motion():
@@ -545,5 +613,133 @@ def test_stripping_leaves_trailing_comments_alone():
     assert "local DO_FEED = 1        -- feeder" in out
     assert 'print("a -- b")' in out
     assert "-- gone" not in out
+
+
+# --- weld_faceplate.lua -----------------------------------------------------
+
+
+def test_faceplate_target_and_cycle_count_are_substituted():
+    built = build_weld_faceplate_lua(120.5, -45.0, cycles=7)
+    assert "faceplateX = 120.5" in built.text
+    assert "faceplateY = -45" in built.text
+    assert "cycleCount = 7" in built.text
+    assert built.stud_count == 1
+    assert built.cycles == 7
+    assert built.program_name == "weld_faceplate.lua"
+    # Nothing unsubstituted may reach the controller.
+    assert "--{{" not in built.text
+
+
+def test_faceplate_lua_substitutes_recipe_parameters():
+    built = build_weld_faceplate_lua(
+        0, 0, cycles=1,
+        safe_z=15.5, part_z=2.0, pressure_setting="low",
+        stud_type="M6", substrate="Stainless Steel",
+    )
+    assert "SAFE_Z = 15.5" in built.text
+    assert "PART_Z = 2" in built.text
+    assert "PRESS_LBF = 17" in built.text
+    assert 'STUD_TYPE = "M6"' in built.text
+    assert 'SUBSTRATE = "Stainless Steel"' in built.text
+
+
+def test_faceplate_marker_line_really_is_the_boundary_dwell():
+    """Same load-bearing assertion as WeldFlex.lua's — the job manager counts
+    cycles by watching GetCurrentLine cross these lines."""
+    built = build_weld_faceplate_lua(1, 2, cycles=3)
+    lines = built.text.splitlines()
+    assert "WaitMs(BOUNDARY_MS)" in lines[built.cycle_marker_line - 1]
+    assert "for cycleIndex = 1, cycleCount do" in lines[built.loop_start_line - 1]
+    assert built.loop_start_line < built.cycle_marker_line < built.gate_line
+
+
+def test_faceplate_program_line_count_stays_under_weld_lua():
+    """Same invariant as WeldFlex.lua's — see
+    test_program_line_count_matches_the_built_text_and_stays_under_weld_lua.
+    weld_faceplate.lua has no inner stud loop, so it is even shorter, and the
+    margin against weld.lua's ~500 lines is even wider."""
+    built = build_weld_faceplate_lua(1, 2, cycles=3)
+    assert built.program_line_count == len(built.text.splitlines())
+    weld_lua_lines = len(WELD_PATH.read_text(encoding="utf-8").splitlines())
+    assert built.program_line_count < weld_lua_lines
+
+
+@pytest.mark.parametrize("cycles", [1, 5, 999])
+def test_faceplate_marker_lines_track_cycle_count(cycles):
+    built = build_weld_faceplate_lua(1, 1, cycles=cycles)
+    lines = built.text.splitlines()
+    assert "WaitMs(BOUNDARY_MS)" in lines[built.cycle_marker_line - 1]
+    assert f"cycleCount = {cycles}" in built.text
+
+
+def test_faceplate_lua_returns_home_once_after_the_last_cycle_only():
+    """weld_faceplate.lua goes straight to the fixture and stays there for
+    every cycle — no home approach before the loop starts — but returns home
+    exactly once, after the loop closes, not between cycles. Checked against
+    what's actually sent (comments blanked), since the file's own header
+    discusses the design by name."""
+    built = build_weld_faceplate_lua(10, 20, cycles=4)
+    code = strip_lua_comments(built.text)
+    lines = code.splitlines()
+
+    home_idxs = [i for i, l in enumerate(lines) if "homewf" in l]
+    assert home_idxs, "weld_faceplate.lua no longer returns home at all"
+    # No home reference anywhere before the loop starts...
+    assert all(i >= built.loop_start_line for i in home_idxs)
+    # ...and none inside the loop body either — only after its gate/boundary
+    # machinery, i.e. after every cycle (successful or fault-broken) is done.
+    assert all(i > (built.gate_line - 1) for i in home_idxs)
+
+
+def test_faceplate_lua_builds_cleanly():
+    """Faceplate maintenance runs build without DO1 hold logic."""
+    built = build_weld_faceplate_lua(10, 20, cycles=2)
+    text = built.text
+    assert "SetDO(1, 1, 0, 0)" not in text
+    assert "WELD_SKIP_FEED = 1" not in text
+    assert 'NewDofile("/fruser/weld.lua", 1, 1)' in text
+
+
+
+def test_weld_lua_honours_the_skip_feed_sentinel():
+    """weld.lua's own timed DO1 pulse must not also fire on a faceplate run —
+    that would advance the real automated stud feeder in addition to the held
+    DO1 signal the faceplate program manages itself."""
+    weld = strip_lua_comments(WELD_PATH.read_text(encoding="utf-8"))
+    assert "if WELD_SKIP_FEED ~= 1 then" in weld
+    assert "feedNextStud()" in weld
+
+
+def test_weldflex_lua_never_sets_the_skip_feed_sentinel():
+    """WELD_SKIP_FEED is faceplate-only. If WeldFlex.lua ever started setting
+    it, real part runs would silently stop feeding studs."""
+    template = TEMPLATE_PATH.read_text(encoding="utf-8")
+    assert "WELD_SKIP_FEED" not in template
+
+
+def test_faceplate_lua_upload_gate_matches_weldflex():
+    weld = WELD_PATH.read_text(encoding="utf-8")
+    template = FACEPLATE_TEMPLATE_PATH.read_text(encoding="utf-8")
+    assert "if WELD_RUN == 1 then" in weld
+    assert "WELD_RUN = 1" in template
+
+
+def test_faceplate_lua_never_receives_a_protected_call():
+    sent = strip_lua_comments(FACEPLATE_TEMPLATE_PATH.read_text(encoding="utf-8"))
+    assert "pcall" not in sent, "the controller will refuse this upload outright"
+
+
+def test_faceplate_missing_marker_is_a_hard_error(tmp_path):
+    bad = tmp_path / "weld_faceplate.lua"
+    bad.write_text("faceplateX = 0 --{{FACEPLATE_X}}\n--{{CYCLE_COUNT}}\n", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="missing required marker"):
+        build_weld_faceplate_lua(0, 0, cycles=1, template_path=bad)
+
+
+def test_faceplate_rejects_bad_gate_mode_or_cycles():
+    with pytest.raises(ValueError):
+        build_weld_faceplate_lua(0, 0, cycles=1, gate_mode="nope")
+    with pytest.raises(ValueError):
+        build_weld_faceplate_lua(0, 0, cycles=0)
 
 

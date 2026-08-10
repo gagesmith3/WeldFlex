@@ -46,10 +46,15 @@ though it's not SDK-mandated.
   weld-test harness was the loaded program), with nothing in the value saying
   which file it refers to. Any consumer comparing it against a parent file's
   marker lines — the job manager's cycle counter — will alias once the parent
-  calls `NewDofile`; see the `weldflex-app` skill's cycle-counting notes. It
-  also keeps answering **while motion executes**, including during
-  `FT_FindSurface` (unlike FT reads — see `error-handling-and-connection.md`
-  on code 14).
+  calls `NewDofile`; see the `weldflex-app` skill's cycle-counting notes.
+  **`job_manager.CycleTracker` guards against this since 2026-08-06** via a
+  `program_max_line` ceiling (the caller program's own length) — it shipped
+  unguarded with the 2026-08-03 weld.lua hookup and silently broke `pause`
+  gate mode until caught live on `weld_faceplate.lua`. Any *new* consumer of
+  `GetCurrentLine` still needs its own guard; the fix is local to
+  `CycleTracker`, not the SDK. It also keeps answering **while motion
+  executes**, including during `FT_FindSurface` (unlike FT reads — see
+  `error-handling-and-connection.md` on code 14).
 
 ## Lua file upload/delete
 

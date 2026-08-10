@@ -1156,6 +1156,234 @@ select {
   gap: 14px;
 }
 
+/* --- Faceplate Maintenance Simple Menu --- */
+.fp-dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding-bottom: 24px;
+}
+
+.fp-header-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 18px 24px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+}
+
+.fp-header-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.fp-header-title {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.fp-icon-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(234, 88, 12, 0.2), rgba(249, 115, 22, 0.1));
+  color: #f97316;
+  border: 1px solid rgba(249, 115, 22, 0.3);
+}
+
+.fp-header-title h2 {
+  font-size: 1.35rem;
+  font-weight: 700;
+  margin: 0 0 2px 0;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+}
+
+.fp-subtitle {
+  font-size: 0.96rem;
+  color: var(--muted);
+  margin: 0;
+}
+
+.fp-subtitle strong {
+  color: var(--ink);
+}
+
+.fp-header-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+}
+
+.fp-settings-btn {
+  padding: 10px 20px !important;
+  font-size: 0.95rem !important;
+  font-weight: 700 !important;
+  border-radius: 10px !important;
+  gap: 8px;
+  background: #1e293b !important;
+  color: #f8fafc !important;
+  border: 1px solid #475569 !important;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.12s ease;
+}
+
+.fp-settings-btn:hover {
+  background: #334155 !important;
+  border-color: #64748b !important;
+  color: #ffffff !important;
+  transform: translateY(-1px);
+}
+
+.fp-cmd-result-wrap {
+  margin-top: 16px;
+}
+
+/* --- Simple Menu Layout --- */
+.fp-menu-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.fp-menu-btn {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 22px 24px;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+  user-select: none;
+  width: 100%;
+}
+
+.fp-menu-btn:hover {
+  transform: translateY(-2px);
+  border-color: var(--muted);
+  background: var(--bg-bottom);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+}
+
+.fp-menu-btn:active {
+  transform: translateY(0);
+}
+
+.fp-menu-btn-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 14px;
+  flex-shrink: 0;
+}
+
+/* Menu Button Variants */
+.fp-btn-position .fp-menu-btn-icon {
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.2), rgba(37, 99, 235, 0.1));
+  color: #60a5fa;
+  border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
+.fp-btn-weld .fp-menu-btn-icon {
+  background: linear-gradient(135deg, rgba(234, 88, 12, 0.25), rgba(249, 115, 22, 0.15));
+  color: #f97316;
+  border: 1px solid rgba(249, 115, 22, 0.4);
+}
+
+.fp-btn-weld {
+  border-color: rgba(249, 115, 22, 0.3);
+}
+
+.fp-btn-home .fp-menu-btn-icon {
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.2), rgba(5, 150, 105, 0.1));
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.fp-btn-feed .fp-menu-btn-icon {
+  background: linear-gradient(135deg, rgba(168, 85, 247, 0.2), rgba(147, 51, 234, 0.1));
+  color: #c084fc;
+  border: 1px solid rgba(168, 85, 247, 0.3);
+}
+
+.fp-btn-settings .fp-menu-btn-icon {
+  background: linear-gradient(135deg, rgba(100, 116, 139, 0.2), rgba(71, 85, 105, 0.1));
+  color: #94a3b8;
+  border: 1px solid rgba(100, 116, 139, 0.3);
+}
+
+.fp-menu-btn-content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.fp-menu-btn-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+}
+
+.fp-menu-btn-desc {
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+
+
+.icon-btn-lg {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease, transform 0.12s ease;
+}
+
+.icon-btn-lg:hover {
+  background: var(--bg-bottom);
+  color: var(--ink);
+}
+
+.icon-btn-lg:active {
+  transform: translateY(1px);
+}
+
+/* Icon-only is too ambiguous for a button that actuates the feeder, so this
+   variant widens .icon-btn-lg for a label while keeping its 44px touch height. */
+.icon-btn-labeled {
+  width: auto;
+  gap: 8px;
+  padding: 0 14px;
+  color: var(--ink);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.icon-btn-labeled[disabled] {
+  opacity: 0.55;
+  cursor: default;
+}
+
 .sys-info-row {
   display: flex;
   flex-wrap: wrap;
@@ -2505,12 +2733,15 @@ pre {
 [hidden] { display: none !important; }
 
 /* ── On-screen keyboard ── */
+/* z-index above .wf-modal-overlay (9000): the faceplate settings modal is the
+   first wf-modal to hold data-kbd inputs, and the kiosk has no other input
+   method, so the keyboard must stay reachable over any modal that opens it. */
 .wf-kbd {
   position: fixed;
   bottom: 0;
   left: 0;
   right: 0;
-  z-index: 850;
+  z-index: 9200;
   background: #16191f;
   border-top: 1px solid #2a2f3d;
   padding: 0;

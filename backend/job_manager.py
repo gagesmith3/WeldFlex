@@ -40,6 +40,7 @@ from lua_builder import (
     PROGRAM_NAME,
     WELD_PATH,
     WELD_PROGRAM_NAME,
+    build_weld_faceplate_lua,
     build_weldflex_lua,
     strip_lua_comments,
 )
@@ -54,6 +55,12 @@ STARTUP_TIMEOUT_S = 20.0
 # Belt-and-braces finish once the target count is reached, in case the controller
 # never reports the stopped edge. Same idea as the old Liberty fallback.
 COMPLETION_FALLBACK_S = 4.0
+# Slack on top of the boundary dwell before `_gate` gives up waiting for the
+# program's own `Pause()` and sends a ProgramPause itself. The cycle banks at the
+# *start* of the dwell and `Pause()` runs at the end of it, so the wait has to
+# cover the whole dwell first — this is only the margin for the poll interval and
+# the controller's own reporting lag.
+GATE_PAUSE_GRACE_S = 1.5
 
 EVENTS_MAX_BYTES = 512 * 1024
 HISTORY_TAIL_LINES = 500
@@ -120,12 +127,34 @@ class CycleTracker:
 
     Repeated identical samples are ignored via the link's `line_edge_seq`, which
     only advances when the reported line actually changes.
+
+    **`program_max_line` guards against `NewDofile` line aliasing.** Per stud,
+    `WeldFlex.lua`/`weld_faceplate.lua` call `NewDofile("/fruser/weld.lua", 1, 1)`,
+    and `GetCurrentLine` reports *weld.lua's own* line numbers for the whole time
+    that sub-file is executing (weld.lua is ~500 lines; the caller program is
+    ~100-115). Those numbers are almost always >= `cycle_marker_line`, so without
+    a ceiling the tracker banks a cycle within the first poll of the very first
+    weld — seconds before the real boundary — and `cycles_done` races past
+    `cycles_target` before the actual dwell/gate is ever reached, silently
+    skipping the pause. `program_max_line` (the caller program's own line count)
+    filters out any sample beyond it, since only a `NewDofile`'d sub-file can
+    report a line number past the end of the caller's own text. This was a
+    documented-but-unfixed blocker (see `.claude/skills/weldflex-app/references/
+    state-and-session.md`) that shipped anyway with the weld.lua hookup
+    (2026-08-03) and surfaced live on `weld_faceplate.lua` (2026-08-06).
     """
 
-    def __init__(self, loop_start_line: int, cycle_marker_line: int, cycles_target: int = 0) -> None:
+    def __init__(
+        self,
+        loop_start_line: int,
+        cycle_marker_line: int,
+        cycles_target: int = 0,
+        program_max_line: int | None = None,
+    ) -> None:
         self.loop_start_line = int(loop_start_line)
         self.cycle_marker_line = int(cycle_marker_line)
         self.cycles_target = int(cycles_target)
+        self.program_max_line = int(program_max_line) if program_max_line is not None else None
         self.cycles_done = 0
         self._counted_this_cycle = False
         self._last_edge_seq: int | None = None
@@ -139,19 +168,24 @@ class CycleTracker:
                 return False
             self._last_edge_seq = edge_seq
 
+        if self.program_max_line is not None and line > self.program_max_line:
+            # Can only be an aliased sample from inside a NewDofile'd sub-file
+            # (weld.lua) — the caller program has no line past its own length.
+            return False
+
         if line >= self.cycle_marker_line:
             if self._counted_this_cycle:
                 return False
             return self._bank()
 
-        # Below the boundary dwell but inside the loop. The inner stud loop never
-        # crosses the marker, so arriving here after the marker was banked can only
-        # be the outer `for` wrapping into the next cycle. Level-triggered rather
-        # than edge-triggered on purpose: the wrap itself usually happens while the
-        # job is GATED, when nothing is feeding this at all.
+        # Below the boundary dwell but inside the loop.
         if self._counted_this_cycle and line >= self.loop_start_line:
             self._counted_this_cycle = False
         return False
+
+    def bank_cycle(self) -> bool:
+        """Explicitly bank a cycle (e.g., when the controller reports paused at a gate)."""
+        return self._bank()
 
     def _bank(self) -> bool:
         self._counted_this_cycle = True
@@ -221,6 +255,7 @@ class _Session:
 
     run_id: str
     state: str = JobState.QUEUED.value
+    kind: str = "part"  # "part" -> build_weldflex_lua, "faceplate" -> build_weld_faceplate_lua
     part_id: str | None = None
     part_name: str | None = None
     studs: list = field(default_factory=list)
@@ -243,10 +278,12 @@ class _Session:
     loop_start_line: int = 0
     cycle_marker_line: int = 0
     gate_line: int = 0
+    boundary_ms: int = 0
     seen_running: bool = False
     launched_ts: float | None = None
     completed_since: float | None = None
     gate_pending: bool = False
+    gate_since: float | None = None
 
     @property
     def cycles_done(self) -> int:
@@ -296,11 +333,15 @@ class JobManager:
         pressure_setting: str = "high",
         stud_type: str = "M4",
         substrate: str = "Mild Steel",
+        kind: str = "part",
     ) -> JobSnapshot:
-        """Queue a part for running. Rejected while a job is still active.
+        """Queue a part (or a faceplate maintenance run) for running.
 
-        A terminal job is replaced rather than blocking the load — `clear()` is for
-        dismissing the result deliberately, not a precondition for the next job.
+        Rejected while a job is still active. A terminal job is replaced rather
+        than blocking the load — `clear()` is for dismissing the result
+        deliberately, not a precondition for the next job. `kind` selects which
+        builder `_launch` uses; "faceplate" jobs pass a single-point `studs`
+        list (`[{"x":..., "y":...}]`) rather than a full stud list.
         """
         if gate_mode not in GATE_MODES:
             raise JobError(f"Unknown gate mode {gate_mode!r}")
@@ -313,6 +354,7 @@ class JobManager:
             self._session = _Session(
                 run_id=run_id,
                 state=JobState.QUEUED.value,
+                kind=kind,
                 part_id=part_id,
                 part_name=part_name,
                 studs=list(studs),
@@ -550,6 +592,7 @@ class JobManager:
                 sess = self._session
                 if sess is None or sess.run_id != run_id:
                     return
+                kind = sess.kind
                 studs = list(sess.studs)
                 cycles = sess.cycles_target
                 gate_mode = sess.gate_mode
@@ -559,16 +602,31 @@ class JobManager:
                 stud_type = sess.stud_type
                 substrate = sess.substrate
 
-            built = build_weldflex_lua(
-                studs,
-                cycles,
-                gate_mode=gate_mode,
-                safe_z=safe_z,
-                part_z=part_z,
-                pressure_setting=pressure_setting,
-                stud_type=stud_type,
-                substrate=substrate,
-            )
+            if kind == "faceplate":
+                if not studs:
+                    raise JobError("Faceplate job has no target point set")
+                built = build_weld_faceplate_lua(
+                    studs[0]["x"],
+                    studs[0]["y"],
+                    cycles,
+                    gate_mode=gate_mode,
+                    safe_z=safe_z,
+                    part_z=part_z,
+                    pressure_setting=pressure_setting,
+                    stud_type=stud_type,
+                    substrate=substrate,
+                )
+            else:
+                built = build_weldflex_lua(
+                    studs,
+                    cycles,
+                    gate_mode=gate_mode,
+                    safe_z=safe_z,
+                    part_z=part_z,
+                    pressure_setting=pressure_setting,
+                    stud_type=stud_type,
+                    substrate=substrate,
+                )
 
             tmp_dir = tempfile.mkdtemp()
             tmp_path = os.path.join(tmp_dir, built.program_name)
@@ -597,7 +655,11 @@ class JobManager:
                 sess.loop_start_line = built.loop_start_line
                 sess.cycle_marker_line = built.cycle_marker_line
                 sess.gate_line = built.gate_line
-                sess.tracker = CycleTracker(built.loop_start_line, built.cycle_marker_line, cycles)
+                sess.boundary_ms = built.boundary_ms
+                sess.tracker = CycleTracker(
+                    built.loop_start_line, built.cycle_marker_line, cycles,
+                    program_max_line=built.program_line_count,
+                )
                 sess.state = JobState.RUNNING.value
                 sess.launched_ts = time.time()
                 sess.cycle_start_ts = time.time()
@@ -677,27 +739,50 @@ class JobManager:
             sess.seen_running = True
 
         if sess.state == JobState.RUNNING.value and sess.tracker is not None:
-            banked = sess.tracker.observe(
-                getattr(snap, "current_line", None), getattr(snap, "line_edge_seq", None)
-            )
-            if banked:
+            # Direct controller state gating: when the controller hits Pause(0) at the
+            # cycle gate, program_state becomes "paused". Transition to GATED directly.
+            if program_state == "paused" and sess.gate_mode == "pause":
+                sess.tracker.bank_cycle()
                 now = time.time()
                 if sess.cycle_start_ts:
                     sess.cycle_times.append(round(now - sess.cycle_start_ts, 2))
                 sess.cycle_start_ts = now
                 done, target = sess.cycles_done, sess.cycles_target
-                log.info("cycle %d/%d run_id=%s", done, target, sess.run_id)
+                sess.state = JobState.GATED.value
+                sess.gate_pending = False
+                log.info("job gated at cycle %d/%d run_id=%s", done, target, sess.run_id)
                 events.append(("cycle", {
                     "cycles_done": done,
                     "cycles_target": target,
                     "cycle_s": sess.cycle_times[-1] if sess.cycle_times else None,
                 }))
-                if sess.gate_mode == "pause" and done < target and not sess.gate_pending:
-                    sess.gate_pending = True
-                    return _GATE
+                events.append(("gated", {"error": None, "held_by": "program"}))
+            else:
+                banked = sess.tracker.observe(
+                    getattr(snap, "current_line", None), getattr(snap, "line_edge_seq", None)
+                )
+                if banked:
+                    now = time.time()
+                    if sess.cycle_start_ts:
+                        sess.cycle_times.append(round(now - sess.cycle_start_ts, 2))
+                    sess.cycle_start_ts = now
+                    done, target = sess.cycles_done, sess.cycles_target
+                    log.info("cycle %d/%d run_id=%s", done, target, sess.run_id)
+                    events.append(("cycle", {
+                        "cycles_done": done,
+                        "cycles_target": target,
+                        "cycle_s": sess.cycle_times[-1] if sess.cycle_times else None,
+                    }))
+                    if sess.gate_mode == "pause" and done < target and not sess.gate_pending:
+                        sess.gate_pending = True
+                        sess.gate_since = time.time()
 
         if getattr(snap, "fault_main", None):
             sess.error = f"Controller fault {snap.fault_main}/{snap.fault_sub}"
+
+        gate_action = self._gate_pending_locked(sess, program_state, events)
+        if gate_action is not None:
+            return gate_action
 
         done, target = sess.cycles_done, sess.cycles_target
         if target and done >= target:
@@ -724,17 +809,51 @@ class JobManager:
 
         return None
 
-    def _gate(self, run_id: str) -> None:
-        """Hold at the cycle boundary so the operator can swap the part.
+    def _gate_pending_locked(
+        self, sess: _Session, program_state: str, events: list
+    ) -> tuple | None:
+        """Resolve an armed-but-not-yet-held cycle gate. `pause` mode only.
 
-        `pause` mode only. The pause lands wherever the robot is inside the
-        boundary dwell rather than exactly on the gate line — acceptable for
-        bring-up, which is why `di` is the production target.
+        The hold is **the program's own**: `lua_builder` emits the controller's
+        `Pause()` instruction at the gate line, so the job is gated the moment
+        the controller reports `paused`. Nothing is sent to the robot for that.
+
+        The cycle banks at the marker — the *start* of the boundary dwell — and
+        `Pause()` is the line after it, so the whole dwell has to elapse before
+        the program can possibly report paused. Only once that window plus a
+        margin is gone is the program treated as not having held, and `_gate`
+        sends a ProgramPause as a backstop.
+
+        That backstop used to be the entire gate, and it was not good enough: it
+        could only be sent *after* the marker was seen and had to make the round
+        trip before the dwell ran out. On 2026-08-06 it failed on hardware
+        exactly the way that design invites — the faceplate run welded,
+        retracted, opened DO1 and drove straight back down into the next cycle
+        without ever holding. A gate that depends on host timing to stop a
+        moving welder is not a gate.
+        """
+        if not sess.gate_pending or sess.state != JobState.RUNNING.value:
+            return None
+
+        if program_state == "paused":
+            sess.state = JobState.GATED.value
+            events.append(("gated", {"error": None, "held_by": "program"}))
+            return None
+
+        window = (max(0, sess.boundary_ms) / 1000.0) + GATE_PAUSE_GRACE_S
+        if sess.gate_since is not None and time.time() - sess.gate_since >= window:
+            return _GATE
+        return None
+
+    def _gate(self, run_id: str) -> None:
+        """Backstop for a controller whose in-program `Pause()` did not hold.
 
         Fails closed. A gate that cannot hold is worse than no gate at all: the
         program would run its remaining cycles with nobody swapping parts. One
         retry covers a transient RPC hiccup; past that the run ends.
         """
+        log.warning("the program's own Pause() never took run_id=%s — sending ProgramPause",
+                    run_id)
         error = None
         for attempt in (1, 2):
             try:
@@ -755,13 +874,19 @@ class JobManager:
                          error=f"Could not hold at the cycle boundary: {error}")
             return
 
+        self._enter_gated(run_id, held_by="host")
+
+    def _enter_gated(self, run_id: str, held_by: str) -> None:
+        """Move a still-running session to GATED. `held_by` records which
+        mechanism actually stopped the robot, so the audit trail says whether the
+        in-program `Pause()` worked or the ProgramPause backstop covered for it."""
         with self._lock:
             sess = self._session
             if sess is None or sess.run_id != run_id:
                 return
             if sess.state == JobState.RUNNING.value:
                 sess.state = JobState.GATED.value
-        self._event(run_id, "gated", {"error": None})
+        self._event(run_id, "gated", {"error": None, "held_by": held_by})
 
     def _finish(self, run_id: str, status: str, error: str | None = None) -> JobSnapshot:
         """Move to a terminal state exactly once, and write the history record."""

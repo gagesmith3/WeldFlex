@@ -157,23 +157,78 @@ Two things this must not go back to doing — both were real bugs, fixed 2026-07
   cycle. A backwards jump cannot distinguish an inner iteration from an outer one.
 
 The cost is that missing every sample across the whole dwell stalls the count.
-That's why `BOUNDARY_MS` is 1500 ms, and 3000 ms in `pause` gate mode where a
-host-issued `ProgramPause` also has to land inside the window. A zero-stud part
-has no executable line below the marker and so cannot re-arm — a config error the
+That's why `BOUNDARY_MS` is 1500 ms, and 3000 ms in `pause` gate mode (see the
+gate section below for what that longer dwell buys now). A zero-stud part has no
+executable line below the marker and so cannot re-arm — a config error the
 builder already flags.
 
 Repeated identical samples are ignored via the link's `line_edge_seq`, which only
 advances when the reported line changes.
 
-**Known blocker for the weld.lua hookup**: `GetCurrentLine` reports the
+**`NewDofile` line aliasing — fixed 2026-08-06.** `GetCurrentLine` reports the
 *sub-file's* line numbers while a `NewDofile`'d chunk executes (live
 2026-07-28 — line 262 was weld.lua's `searchForStud` with the weld-test
 harness loaded), with nothing distinguishing which file a number belongs to.
-Once `WeldFlex.lua`'s loop calls weld.lua, weld.lua's lines (~400 of them)
-overlap the parent's `loop_start_line`/`cycle_marker_line` and the detector
-above will bank phantom cycles. The counting scheme has to change — e.g. keep
-the marker line strictly above every line weld.lua can report, or gate
-sampling on which file is active — before that hookup ships.
+This was flagged here as a blocker for the weld.lua hookup but **shipped
+unfixed** on 2026-08-03 — `WeldFlex.lua`'s and `weld_faceplate.lua`'s
+`cycle_marker_line` (~88/~90) sat well inside weld.lua's own ~500-line range,
+so the very first sample taken while a stud's `weld.lua` call was running
+looked like "past the boundary" and banked a cycle seconds into the weld,
+well before the real dwell. `cycles_done` raced past `cycles_target` before
+the gate check (`done < target`) could ever fire, so `pause` mode silently
+never gated — the robot just ran straight through, indistinguishable from a
+normal completed cycle. First caught live on `weld_faceplate.lua` 2026-08-06.
+
+Fixed with a ceiling, not a file-identity check (`GetCurrentLine` still
+doesn't report one): `BuiltProgram.program_line_count` is the caller
+program's own text length, and `CycleTracker(..., program_max_line=...)`
+ignores any sample past it — only a `NewDofile`'d sub-file can report a line
+number beyond the end of the caller's own file. `job_manager._launch()` wires
+`built.program_line_count` through for both `kind`s. Residual risk is
+negligible and of the same shape already accepted for `loop_start_line`:
+weld.lua's own top-of-file constant declarations (not its function bodies,
+which sit at much higher line numbers) briefly occupy the same low-number
+range as the caller and execute in microseconds, so a 250 ms sampler
+essentially never lands there. See `CycleTracker`'s docstring
+(`backend/job_manager.py`) and `tests/test_cycle_tracker.py`'s "NewDofile line
+aliasing" section.
+
+## The inter-cycle gate (`gate_mode="pause"`)
+
+**The program holds itself. The host does not stop it.** `lua_builder._gate_rows`
+emits the controller's own `Pause()` instruction (FR Lua manual §3.1.3) at the
+gate line, wrapped in `if cycleIndex < cycleCount then` so the last cycle does
+*not* hold — nothing would release it, and the run still has its home return to
+do after the loop. `job_manager._gate_pending_locked` then just watches for
+`program_state == "paused"` and moves the job to `gated`; `/ui/job/continue` →
+`ProgramResume` releases it.
+
+**Do not go back to gating by host-issued `ProgramPause`.** That was the original
+design and it failed on hardware 2026-08-06: the manager could only *send* the
+pause after it saw the cycle marker, and it had to make the round trip before the
+dwell ran out. On the faceplate run it never landed — the robot welded, retracted,
+opened DO1 and drove straight back down into the next cycle. (The same run also
+hit the `NewDofile` aliasing bug below; fixing that alone would still have left the
+gate depending on host timing to stop a moving welder.)
+
+A `ProgramPause` is still sent, but only as a **backstop**, and only after the
+whole boundary dwell plus `GATE_PAUSE_GRACE_S` has passed with no paused report —
+that is what `pause` mode's longer `BOUNDARY_MS` buys now. The cycle banks at the
+*start* of the dwell and `Pause()` runs at the end of it, so the gate is armed
+(`gate_pending`) well before it can possibly be held. The `gated` event records
+`held_by` — `"program"` or `"host"` — so the audit trail says which one actually
+stopped the robot. Both paths fail closed: a gate that cannot hold ends the run
+rather than letting it weld on with nobody swapping parts.
+
+Two things to know before touching it:
+
+- The resolution lives in `_tick_locked`, not in a wait loop. `_gate` used to
+  block the monitor thread; it must not — the 250 ms tick is also what watches
+  for faults and lost links.
+- `weld_faceplate.lua` holds **DO1 high through the gate** for the operator's
+  manual feed. Whether a paused program keeps its outputs is a persistent
+  controller setting (`SetOutputResetCtlBoxDO`) WeldFlex does not touch — see the
+  `fairino-sdk` skill's `controller-lua-api.md`.
 
 Testing: `tests/test_cycle_tracker.py` drives the detector directly, and
 `tools/stub_robot.py --cycle LOOP_START:MARKER:CYCLES` scripts a `GetCurrentLine`

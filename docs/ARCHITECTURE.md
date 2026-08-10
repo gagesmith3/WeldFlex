@@ -15,9 +15,10 @@ WeldFlex's job is to own everything *around* the motion:
 The operator-facing intent is captured in [`orderofevent.md`](../orderofevent.md)
 at the repo root; that file is the spec, this one maps it onto the code.
 
-> **Read this before assuming a run welds anything.** As of 2026-07-28 the
-> generated program moves the head to each stud and dwells — it does **not** fire
-> a weld. See [Not yet implemented](#not-yet-implemented).
+> **A run welds for real.** As of the 2026-08-03 rewrite (commits `11aff8c`/
+> `e55a18b`) the generated program calls `programs/weld.lua` per stud, which
+> fires the arc once its two DI checks pass. There is no arm/disarm gate —
+> see [Not yet implemented](#not-yet-implemented), gap 1.
 
 ## The four layers
 
@@ -114,13 +115,17 @@ assume they work.
 
 | # | Gap | Detail | Owner |
 |---|---|---|---|
-| 1 | **A job still does not weld** | `WeldFlex.lua`'s cycle loop is `PointsOffsetEnable → PTP → PointsOffsetDisable → WaitMs(1000)` — it never calls `programs/weld.lua`. **A run is still a complete dry-run motion driver.** `weld.lua` itself now exists (search → press → weld → hold → retract → feed) and can be exercised one stud at a time from `/operator/weld-test`, which uploads it with a generated harness; that is a bring-up path, not the production one. It is disarmed unless the caller publishes `WELD_ARMED = 1`. | Gage — wiring `weld.lua` into the cycle loop |
-| 2 | **No return-to-home** | The spec ends a job by returning home. The generated program just ends after the last cycle; there is no home move and no home pose defined anywhere in the app. | Gage — fixing `WeldFlex.lua` |
-| 3 | **User-entered waits are a dead field** | Every recipe carries a `pause_points: []` written at [`app.py:382`](../backend/app.py#L382), but nothing reads it — not `lua_builder.py`, not the part designer. `lua_builder._stud_rows` consumes only `x` and `y`. The per-cycle `gate_mode` is a *different* feature and does not cover this. | Deferred — wait system to be refactored later |
-| 4 | **The telemetry cutover is half done** | Program state, current line and fault codes now come from the port-8083 push. Force still rides the legacy CNDE stream — on a port the live `.env` does not set, defaulting to one that has never worked here — so **assume force may be dead in production until proven on hardware**. DI still rides the controller-Lua sysvar relay, and cycle counting still rides XML-RPC. | Gage — in progress; see `docs/ROBOT_TELEMETRY.md` |
+| 1 | **No arm/disarm gate** | `WeldFlex.lua`'s cycle loop calls `programs/weld.lua` per stud (`NewDofile("/fruser/weld.lua", 1, 1)`) and it fires the arc for real. `WeldFlex.lua` sets `WELD_ARMED = 1` on every stud, but `weld.lua` never reads that global — there is no code path that disarms a run. `weld.lua` fires unconditionally once DI1 (stud on work) and DI0 (welder ready) both read high. | Unassigned — flag before assuming a "dry" or "test" mode exists in the production path |
+| 2 | **User-entered waits are a dead field** | Every recipe carries a `pause_points: []` written at [`app.py:382`](../backend/app.py#L382), but nothing reads it — not `lua_builder.py`, not the part designer. `lua_builder._stud_rows` consumes only `x` and `y`. The per-cycle `gate_mode` is a *different* feature and does not cover this. | Deferred — wait system to be refactored later |
+| 3 | **The telemetry cutover is half done** | Program state, current line and fault codes now come from the port-8083 push. Force still rides the legacy CNDE stream — on a port the live `.env` does not set, defaulting to one that has never worked here — so **assume force may be dead in production until proven on hardware**. DI still rides the controller-Lua sysvar relay, and cycle counting still rides XML-RPC. | Gage — in progress; see `docs/ROBOT_TELEMETRY.md` |
 
-Gap 3 is the one most likely to mislead: the data model looks like it supports
+Gap 2 is the one most likely to mislead: the data model looks like it supports
 per-stud waits and it does not.
+
+**Return-to-home is now built** (was gap 2 here as of 2026-07-28): a home
+approach runs before the cycle loop starts and a home return runs after the
+last cycle, both gated by `WeldFlex.lua`'s `USE_HOME_MOVE` flag. Do not
+describe this as missing.
 
 ## Where to go next
 

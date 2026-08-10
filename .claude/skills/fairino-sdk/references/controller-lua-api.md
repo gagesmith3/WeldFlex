@@ -174,6 +174,24 @@ asserts the ban against the **stripped** text for that reason.
 ## Other contract notes
 
 - `GetDI(id, thread)` returns a **bare value** (Table 3-76), not `(err, value)`.
+- **`Pause(num)`** (Table 3-7) is the program's own pause — the controller goes to
+  program state `3`, and `ProgramResume` from the host (or Continue on the pendant)
+  releases it. Its `num` is a free-form reason code the manual only uses for
+  shop-specific messages ("cylinder not in place"); `0` is the documented "no
+  function" value, i.e. the pause with nothing attached, which is what the vendor's
+  own multi-pass welding example (Code 3-49) uses between passes. Table 3-7's
+  Description cell says "Call subroutines" — that is a copy-paste error from the
+  `NewDofile` table two entries down; ignore it. `lua_builder`'s `pause` gate mode
+  emits this so the **program** holds at the cycle boundary instead of the host
+  having to land a `ProgramPause` inside a dwell (which failed on hardware
+  2026-08-06 — see the `weldflex-app` skill's `state-and-session.md`).
+  - **Watch DO across the pause.** `SetOutputResetCtlBoxDO(resetFlag, reloadFlag)`
+    (`Robot.py:11828`, protocol §3.5.9) is a persistent controller setting for
+    whether control-box DO is reset on stop/**pause** and reloaded on resume.
+    `weld_faceplate.lua` deliberately holds DO1 high through the gate for the
+    operator's manual feed, so a controller configured with `resetFlag=1` would
+    drop that signal the instant the program pauses. WeldFlex does not set this
+    either way; if the held output drops at the gate, that setting is why.
 - `WaitDI(id, status, maxtime, opt)` — `opt` 0 **stops the program** on timeout.
   That skips any retract/disarm cleanup, which is why `weld.lua` polls `GetDI`
   in a loop instead of using it.

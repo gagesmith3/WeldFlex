@@ -161,3 +161,44 @@ def test_entering_the_loop_is_not_itself_a_wrap(first_line):
     t = CycleTracker(LOOP_START, MARKER, cycles_target=2)
     banked = t.observe(first_line, edge_seq=1)
     assert banked is (first_line >= MARKER)
+
+
+# --- NewDofile line aliasing (2026-08-06 live bug on weld_faceplate.lua) ---
+#
+# GetCurrentLine reports weld.lua's *own* line numbers while it runs under
+# NewDofile — weld.lua is ~500 lines, dwarfing MARKER (45). Without a ceiling,
+# any sample taken while inside weld.lua looks like "past the boundary" and
+# banks a cycle seconds before the real dwell is reached.
+WELD_LUA_LINE = 350        # a plausible in-progress sample from inside weld.lua
+PROGRAM_MAX_LINE = END     # the caller program's own real length
+
+
+def test_a_sample_from_inside_newdofile_does_not_bank_early():
+    t = CycleTracker(LOOP_START, MARKER, cycles_target=3, program_max_line=PROGRAM_MAX_LINE)
+    # The weld is still running inside weld.lua (aliased high line numbers),
+    # nowhere near the real boundary dwell yet.
+    assert feed(t, [BODY, WELD_LUA_LINE, WELD_LUA_LINE, 495]) == 0
+    assert t.cycles_done == 0
+    # It still banks once execution actually returns to the caller and reaches
+    # the real marker.
+    assert feed(t, [BODY, MARKER]) == 1
+    assert t.cycles_done == 1
+
+
+def test_full_cycle_with_newdofile_noise_only_banks_at_the_real_marker():
+    t = CycleTracker(LOOP_START, MARKER, cycles_target=2, program_max_line=PROGRAM_MAX_LINE)
+    seq = []
+    for _ in range(2):
+        # weld.lua runs per stud, reporting its own (aliased) line numbers,
+        # before control returns to the caller and reaches the real boundary.
+        seq += [BODY, WELD_LUA_LINE, 420, 495, BODY, MARKER, GATE, END]
+    assert feed(t, seq) == 2
+    assert t.cycles_done == 2
+
+
+def test_without_a_ceiling_the_alias_bug_reproduces():
+    """Pins the bug this fix closes: no `program_max_line` means a weld.lua-sized
+    line number is indistinguishable from a real marker sample and banks early."""
+    t = CycleTracker(LOOP_START, MARKER, cycles_target=3)
+    assert feed(t, [BODY, WELD_LUA_LINE]) == 1
+    assert t.cycles_done == 1

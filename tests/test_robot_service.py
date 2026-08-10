@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 from robot_feed import FeedSnapshot
 from robot_link import ConnSnapshot, ConnState, ForceSnapshot
-from robot_service import WeldFlexRobotService
+from robot_service import DO_PULSE_MAX_S, WeldFlexRobotService
 
 
 def _connected_snapshot(generation: int) -> ConnSnapshot:
@@ -350,3 +350,79 @@ def test_frame_fault_codes_distinguish_zero_from_absent(monkeypatch):
     assert (faulted.fault_main, faulted.fault_sub) == (117, 4)
     assert faulted.has_fault is True
     assert faulted.fault_source == "8083"
+
+
+def test_pulse_do_drives_the_line_high_then_low_in_one_dispatch(monkeypatch):
+    """The whole pulse is one worker submission. The link runs a single worker, so
+    keeping both writes inside it is what guarantees nothing is interleaved between
+    them and leaves a wired output latched high.
+    """
+    service = WeldFlexRobotService("127.0.0.1")
+    writes = []
+    kwargs_seen = {}
+
+    class RawRobot:
+        def SetDO(self, channel, status):
+            writes.append((channel, status))
+            return 0
+
+    def fake_call(fn, **kwargs):
+        kwargs_seen.update(kwargs)
+        return fn(RawRobot())
+
+    monkeypatch.setattr(service, "_call", fake_call)
+    started = time.monotonic()
+    service.pulse_do(1, 0.05)
+
+    assert writes == [(1, 1), (1, 0)]
+    assert time.monotonic() - started >= 0.05
+    # A retry would advance the feeder a second time — the default 3 is wrong here.
+    assert kwargs_seen["retries"] == 1
+    # The hold is inside the call, so the timeout has to allow for it.
+    assert kwargs_seen["timeout"] > 0.05
+
+
+def test_pulse_do_drops_the_line_even_if_the_hold_is_interrupted(monkeypatch):
+    """DO1 is the stud feeder. An exception mid-hold must not leave it energized."""
+    service = WeldFlexRobotService("127.0.0.1")
+    writes = []
+
+    class RawRobot:
+        def SetDO(self, channel, status):
+            writes.append((channel, status))
+            return 0
+
+    def boom(_seconds):
+        raise KeyboardInterrupt("interrupted mid-hold")
+
+    monkeypatch.setattr(service, "_call", lambda fn, **kwargs: fn(RawRobot()))
+    monkeypatch.setattr("robot_service.time.sleep", boom)
+
+    try:
+        service.pulse_do(1, 0.25)
+    except KeyboardInterrupt:
+        pass
+
+    assert writes == [(1, 1), (1, 0)]
+
+
+def test_pulse_do_clamps_the_hold_and_reports_a_failed_write(monkeypatch):
+    service = WeldFlexRobotService("127.0.0.1")
+    slept = []
+    monkeypatch.setattr("robot_service.time.sleep", slept.append)
+
+    class RawRobot:
+        def SetDO(self, channel, status):
+            return 0 if status == 1 else -1
+
+    monkeypatch.setattr(service, "_call", lambda fn, **kwargs: fn(RawRobot()))
+
+    try:
+        service.pulse_do(1, 99.0)
+    except RuntimeError as exc:
+        assert "low code -1" in str(exc)
+    else:
+        raise AssertionError("a nonzero SetDO code must raise")
+
+    # Clamped: the hold blocks the only command channel for its whole duration.
+    assert slept == [DO_PULSE_MAX_S]

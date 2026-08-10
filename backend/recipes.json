@@ -58,17 +58,17 @@
     "name": "faceplates",
     "studs": [
       {
-        "x": 100,
-        "y": 100
+        "x": 215.9,
+        "y": 254.0
       }
     ],
-    "safe_z": 10.0,
+    "safe_z": 20.0,
     "part_z": 0.0,
-    "stud_type": "M6",
+    "stud_type": "M4",
     "substrate": "Aluminum",
-    "pressure_setting": 17.0,
+    "pressure_setting": 20.0,
     "created_at": "2026-08-03T13:57:03.766019+00:00",
-    "updated_at": "2026-08-05T19:28:58.112710+00:00",
+    "updated_at": "2026-08-07T19:25:33.637805+00:00",
     "times_ran": 0,
     "avg_cycle_time": null,
     "last_run": null,

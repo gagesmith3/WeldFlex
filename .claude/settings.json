@@ -54,7 +54,13 @@
       "Bash(pdftotext docs/fairino-doc-en-readthedocs-io-en-latest.pdf C:/Users/Gage/AppData/Local/Temp/claude/c--Users-Gage-Desktop-WeldFlex/57c3e674-567b-4ace-9005-d32c621cd573/scratchpad/sdkdoc_raw.txt)",
       "Bash(./venv/Scripts/python.exe -m pytest tests/test_robot_feed.py tests/test_frame_8083.py -q)",
       "Bash(./venv/Scripts/python.exe -m pytest tests/test_robot_link.py -q)",
-      "Edit(/.claude/skills/deployment-targets/**)"
+      "Edit(/.claude/skills/deployment-targets/**)",
+      "Bash(python -m py_compile backend/app.py backend/job_manager.py backend/lua_builder.py)",
+      "Bash(python -m pytest tests/test_lua_builder.py tests/test_job_manager.py tests/test_robot_service.py -q)",
+      "Bash(python -m pytest tests/test_lua_builder.py tests/test_job_manager.py -q)",
+      "Bash(python -m pytest tests/test_lua_builder.py tests/test_job_manager.py tests/test_cycle_tracker.py -q)",
+      "Bash(python -m pytest tests/test_job_manager.py::test_gate_pause_re_arms_on_every_cycle -q)",
+      "Bash(python -m pytest tests/test_job_manager.py -q -p no:randomly)"
     ],
     "additionalDirectories": [
       "C:\\Users\\Gage\\Desktop\\WeldFlex\\.claude"

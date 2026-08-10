@@ -1,10 +1,156 @@
 {% extends "base.html" %}
-{% from "components/ui.html" import panel_shell with context %}
+{% from "components/ui.html" import action_button with context %}
 
 {% block body %}
-<div class="page-body">
-  {% call panel_shell('Faceplate', class_name='settings-shell') %}
-    <p class="panel-note">Coming soon.</p>
-  {% endcall %}
+<div class="page-body fp-dashboard">
+  <!-- Faceplate Station Header -->
+  <div class="fp-header-card">
+    <div class="fp-header-main">
+      <div class="fp-header-title">
+        <p class="fp-subtitle">
+          {% if target %}
+            Target Location: <strong>X = {{ '%.1f' % target.x }} mm, Y = {{ '%.1f' % target.y }} mm</strong> &nbsp;|&nbsp; {{ recipe.stud_type }} / {{ recipe.substrate }} &nbsp;|&nbsp; {{ recipe.pressure_setting }} lbf
+          {% else %}
+            <span class="fp-text-warn">No Target Point Set — Click Settings to set X/Y</span>
+          {% endif %}
+        </p>
+      </div>
+      <!-- Right-clamped Settings Action Button -->
+      <div class="fp-header-right">
+        <button type="button" class="btn icon-btn-labeled fp-settings-btn"
+                onclick="openFaceplateSettingsModal()"
+                title="Configure Target X/Y & Parameters">
+          {{ icon_safe('settings', fallback='circle', width=20, height=20) }}
+          <span>Settings</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Simple Menu Actions Grid -->
+  <div class="fp-menu-grid">
+    <!-- 1. Move to Position Button -->
+    <button type="button" class="fp-menu-btn fp-btn-position"
+            hx-post="/ui/faceplate/move-position" hx-target="#faceplate-cmd-result" hx-swap="innerHTML"
+            hx-disabled-elt="this">
+      <div class="fp-menu-btn-icon">
+        {{ icon_safe('target', fallback='circle', width=32, height=32) }}
+      </div>
+      <div class="fp-menu-btn-content">
+        <strong class="fp-menu-btn-title">Move to Position</strong>
+        <span class="fp-menu-btn-desc">Drive weld head to target X/Y spot</span>
+      </div>
+    </button>
+
+    <!-- 2. Weld Button -->
+    <button type="button" class="fp-menu-btn fp-btn-weld"
+            hx-post="/ui/faceplate/weld" hx-target="#faceplate-cmd-result" hx-swap="innerHTML"
+            hx-disabled-elt="this">
+      <div class="fp-menu-btn-icon">
+        {{ icon_safe('zap', fallback='circle', width=32, height=32) }}
+      </div>
+      <div class="fp-menu-btn-content">
+        <strong class="fp-menu-btn-title">Weld</strong>
+        <span class="fp-menu-btn-desc">Run weld_faceplate.lua process</span>
+      </div>
+    </button>
+
+    <!-- 3. Feed Button -->
+    <button type="button" class="fp-menu-btn fp-btn-feed"
+            hx-post="/ui/faceplate/feed" hx-target="#faceplate-cmd-result" hx-swap="innerHTML"
+            hx-disabled-elt="this">
+      <div class="fp-menu-btn-icon">
+        {{ icon_safe('arrow_down_to_line', fallback='circle', width=32, height=32) }}
+      </div>
+      <div class="fp-menu-btn-content">
+        <strong class="fp-menu-btn-title">Feed</strong>
+        <span class="fp-menu-btn-desc">Pulse DO1 stud feeder advance</span>
+      </div>
+    </button>
+
+    <!-- 4. Move Home Button -->
+    <button type="button" class="fp-menu-btn fp-btn-home"
+            hx-post="/ui/faceplate/move-home" hx-target="#faceplate-cmd-result" hx-swap="innerHTML"
+            hx-disabled-elt="this">
+      <div class="fp-menu-btn-icon">
+        {{ icon_safe('home', fallback='circle', width=32, height=32) }}
+      </div>
+      <div class="fp-menu-btn-content">
+        <strong class="fp-menu-btn-title">Move Home</strong>
+        <span class="fp-menu-btn-desc">PTP move robot to homewf</span>
+      </div>
+    </button>
+  </div>
+
+  <!-- Command Result Notification Bubble Mount -->
+  <div id="faceplate-cmd-result" class="fp-cmd-result-wrap"></div>
 </div>
+
+<!-- Faceplate Target settings modal -->
+<div id="faceplate-settings-modal" class="wf-modal-overlay" hidden onclick="if (event.target === this) closeFaceplateSettingsModal()">
+  <div class="wf-modal wf-modal-wide">
+    <p class="wf-modal-msg">Faceplate Settings</p>
+    <p class="panel-note">Target point and weld settings for shop fixture faceplates.</p>
+    <form class="settings-grid" hx-post="/ui/recipes/save" hx-target="#toast-rack" hx-swap="innerHTML"
+          hx-on::after-request="closeFaceplateSettingsModal()">
+      <input type="hidden" name="recipe_id" value="{{ recipe.id }}">
+      <input type="hidden" name="recipe_name" value="{{ recipe.name }}">
+      <div>
+        <label for="fp_studs_text">Target (X, Y mm)</label>
+        <input id="fp_studs_text" name="studs_text" type="text" inputmode="none" data-kbd="num"
+               value="{{ '%s, %s' % (target.x, target.y) if target else '' }}"
+               placeholder="e.g. 120.5, 45.0" required>
+      </div>
+      <div>
+        <label for="fp_safe_z">Safe Z Level (mm)</label>
+        <input id="fp_safe_z" name="safe_z" type="text" inputmode="none" data-kbd="num"
+               value="{{ recipe.safe_z }}" required>
+      </div>
+      <div>
+        <label for="fp_part_z">Part Z Level (mm)</label>
+        <input id="fp_part_z" name="part_z" type="text" inputmode="none" data-kbd="num"
+               value="{{ recipe.part_z }}" required>
+      </div>
+      <div>
+        <label for="fp_stud_type">Stud Selector</label>
+        <select id="fp_stud_type" name="stud_type">
+          {% for opt in ['M3', 'M4', 'M5', 'M6', 'M8', '1/4"'] %}
+          <option value="{{ opt }}" {% if recipe.stud_type == opt %}selected{% endif %}>{{ opt }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label for="fp_substrate">Substrate Material</label>
+        <select id="fp_substrate" name="substrate">
+          {% for opt in ['Mild Steel', 'Stainless Steel', 'Aluminum', 'Galvanized'] %}
+          <option value="{{ opt }}" {% if recipe.substrate == opt %}selected{% endif %}>{{ opt }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label for="fp_pressure">Target Pressure (lbf)</label>
+        <input id="fp_pressure" name="pressure_setting" type="text" inputmode="none" data-kbd="num"
+               value="{{ recipe.pressure_setting }}" required>
+      </div>
+      <div class="settings-actions wf-modal-actions">
+        <button type="button" class="btn wf-cancel" onclick="closeFaceplateSettingsModal()">Cancel</button>
+        {{ action_button('Save Settings', variant='run', icon='save', button_type='submit') }}
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function openFaceplateSettingsModal() {
+  document.getElementById('faceplate-settings-modal').removeAttribute('hidden');
+}
+function closeFaceplateSettingsModal() {
+  document.getElementById('faceplate-settings-modal').setAttribute('hidden', '');
+}
+document.addEventListener('keydown', function (e) {
+  if (e.key === 'Escape') closeFaceplateSettingsModal();
+});
+</script>
 {% endblock %}

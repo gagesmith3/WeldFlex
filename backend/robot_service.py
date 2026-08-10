@@ -47,6 +47,10 @@ JOG_DIRECTION = {"negative": 0, "positive": 1}
 JOG_MOTION_TIMEOUT_S = 5.0
 JOG_MOTION_POLL_S = 0.02
 JOG_MOTION_SETTLE_S = 0.05
+# Ceiling on a host-driven DO pulse. The hold blocks the link's single worker
+# for its whole duration, so this is what stops a bad caller from parking the
+# robot's only command channel — and a wired output — indefinitely.
+DO_PULSE_MAX_S = 2.0
 WELD_TELEMETRY_FRESH_S = 1.0
 WELD_TELEMETRY_CALL_TIMEOUT_S = 3.0
 
@@ -891,6 +895,37 @@ class WeldFlexRobotService:
             "source": "none",
             "age_s": None,
         }
+
+    def pulse_do(self, channel: int, duration_s: float) -> None:
+        """Drive a control-box DO high for `duration_s`, then back low.
+
+        Both writes and the hold happen inside one worker dispatch. The link has
+        a single worker thread, so nothing can be interleaved between the two
+        writes and leave the line latched high, and the `finally` drops it even
+        if the hold is interrupted. `retries=1` rather than `_call`'s default 3
+        because this actuates real hardware — a silent retry of a half-failed
+        pulse would advance the stud feeder a second time.
+        """
+        ch = int(channel)
+        hold = max(0.0, min(float(duration_s), DO_PULSE_MAX_S))
+
+        def set_do_pulse(r):
+            on = r.SetDO(ch, 1)
+            try:
+                time.sleep(hold)
+            finally:
+                off = r.SetDO(ch, 0)
+            return on, off
+
+        on_resp, off_resp = self._call(
+            set_do_pulse, timeout=hold + SDK_TIMEOUT_S, retries=1
+        )
+        on_err, _ = self._unpack(on_resp)
+        off_err, _ = self._unpack(off_resp)
+        if on_err != 0 or off_err != 0:
+            raise RuntimeError(
+                f"SetDO({ch}) failed (high code {on_err}, low code {off_err})"
+            )
 
     def weld_probe(
         self,

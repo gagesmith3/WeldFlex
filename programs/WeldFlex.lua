@@ -86,7 +86,7 @@ for cycleIndex = 1, cycleCount do --{{LOOP_START}}
     if jobAborted then break end
 
     WaitMs(BOUNDARY_MS) --{{CYCLE_MARKER}}
---{{GATE}}
+    --{{GATE}}
 end
 
 -- =========================================

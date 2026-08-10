@@ -171,6 +171,53 @@ def _recipes_enrich(recipes):
         })
     return result
 
+# The one recipe record that backs the Faceplate maintenance page instead of a
+# customer part. Kept in recipes.json (same schema, same _recipes_save/
+# _recipes_load/`/ui/recipes/save`) rather than a parallel settings store, but
+# filtered out of every normal-facing parts list — see _hide_faceplate_recipe
+# — so it can only be reached through /operator/faceplate, not run through the
+# ordinary WeldFlex.lua part pipeline.
+FACEPLATE_RECIPE_NAME = "faceplates"
+
+def _faceplate_recipe():
+    """Find (or create) the faceplates recipe record. Never returns None."""
+    with _rec_lock:
+        recipes = _recipes_load()
+        existing = next((r for r in recipes if r.get('name') == FACEPLATE_RECIPE_NAME), None)
+        if existing:
+            return existing
+        now = datetime.now(timezone.utc).isoformat()
+        created = {
+            'id': str(uuid.uuid4()),
+            'name': FACEPLATE_RECIPE_NAME,
+            'studs': [],
+            'safe_z': 10.0,
+            'part_z': 0.0,
+            'stud_type': 'M4',
+            'substrate': 'Mild Steel',
+            'pressure_setting': 20.0,
+            'created_at': now,
+            'updated_at': now,
+            'times_ran': 0,
+            'avg_cycle_time': None,
+            'last_run': None,
+            'pause_points': [],
+        }
+        recipes.append(created)
+        _recipes_save(recipes)
+        return created
+
+def _hide_faceplate_recipe(recipes):
+    """Drop the faceplates record from a normal parts listing.
+
+    It lives in the same recipes.json as customer parts (see
+    _faceplate_recipe), so anything that lists parts for the operator/manager
+    to pick and run needs this filter — otherwise it would be runnable through
+    the ordinary part pipeline (home moves, timed feed pulse) instead of the
+    faceplate-specific one.
+    """
+    return [r for r in recipes if r.get('name') != FACEPLATE_RECIPE_NAME]
+
 def _parse_studs(text):
     """Parse 'x,y\\nx,y' text → list of {x, y} dicts. Returns (list, error|None)."""
     studs = []
@@ -264,6 +311,7 @@ _ICONS = {
     "wifi":             '<path d="M5 13a10 10 0 0 1 14 0"/><path d="M8.5 16.5a5 5 0 0 1 7 0"/><path d="M2 8.82a15 15 0 0 1 20 0"/><line x1="12" y1="20" x2="12.01" y2="20"/>',
     "bar_chart_2":      '<line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>',
     "zap":              '<path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/>',
+    "arrow_down_to_line": '<path d="M12 17V3"/><path d="m6 11 6 6 6-6"/><path d="M19 21H5"/>',
 }
 
 def icon_safe(name, fallback="circle", width=14, height=14, class_=""):
@@ -366,7 +414,7 @@ def parts():
     recipe_name = request.args.get('recipe_name', None)
     with _rec_lock:
         all_recipes = _recipes_load()
-    enriched = _recipes_enrich(all_recipes)
+    enriched = _recipes_enrich(_hide_faceplate_recipe(all_recipes))
     studs_text = ''
     recipe = None
     if recipe_name is not None:
@@ -497,7 +545,7 @@ def ui_studs_preview():
 def ui_manager_parts_list():
     with _rec_lock:
         recipes = _recipes_load()
-    return jsonify(_recipes_enrich(recipes))
+    return jsonify(_recipes_enrich(_hide_faceplate_recipe(recipes)))
 
 @app.route('/ui/manager/part-points')
 def ui_manager_part_points():
@@ -642,7 +690,160 @@ def job_history_page():
 
 @app.route("/operator/faceplate")
 def faceplate_page():
-    return render_template("faceplate.html", page_title="Faceplate")
+    recipe = _faceplate_recipe()
+    studs = recipe.get('studs') or []
+    target = studs[0] if studs else None
+    return render_template(
+        "faceplate.html", page_title="Faceplate",
+        recipe=recipe, target=target,
+    )
+
+@app.route("/ui/faceplate/move-position", methods=["POST"])
+def ui_faceplate_move_position():
+    """Move weld head to weld spot (X, Y) set in faceplate settings."""
+    if job.snapshot().active:
+        return render_template(
+            "partials/command_result.html", ok=False, title="Move to Position",
+            payload={"error": "A job is running — stop the active job first."},
+        )
+    recipe = _faceplate_recipe()
+    studs = recipe.get('studs') or []
+    if not studs:
+        return render_template(
+            "partials/command_result.html", ok=False, title="Move to Position",
+            payload={"error": "No target set. Save target X/Y in Settings first."},
+        )
+    target = studs[0]
+    safe_z = float(recipe.get('safe_z', 10.0))
+    part_z = float(recipe.get('part_z', 0.0))
+    approach_z = part_z + safe_z
+    x_val = float(target.get('x', 0.0))
+    y_val = float(target.get('y', 0.0))
+
+    program = (
+        "tool = 10\n"
+        "blend = -1\n"
+        "wobj = 4\n"
+        "speed = 25\n"
+        f"faceplateX = {x_val}\n"
+        f"faceplateY = {y_val}\n"
+        f"APPROACH_Z = {approach_z}\n"
+        "PointsOffsetEnable(1, faceplateX, faceplateY, APPROACH_Z, 0, 0, 0)\n"
+        "Lin(zerozero, speed, -1, 0, 1)\n"
+        "PointsOffsetDisable()\n"
+    )
+
+    try:
+        with tempfile.NamedTemporaryFile("w", suffix=".lua", delete=False, encoding="utf-8") as tf:
+            tf.write(program)
+            tmp_path = tf.name
+        try:
+            robot.upload_and_run(tmp_path)
+            ok, payload = True, {"target": f"X={x_val:.1f}, Y={y_val:.1f}, Z={approach_z:.1f}"}
+        finally:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+    except Exception as e:
+        ok, payload = False, {"error": str(e)}
+
+    return render_template("partials/command_result.html", ok=ok, title="Move to Position", payload=payload)
+
+
+@app.route("/ui/faceplate/weld", methods=["POST"])
+@app.route("/ui/faceplate/load", methods=["POST"])
+def ui_faceplate_weld():
+    """Run weld_faceplate.lua on the controller."""
+    recipe = _faceplate_recipe()
+    studs = recipe.get('studs') or []
+    if not studs:
+        return render_template(
+            "partials/command_result.html", ok=False, title="Weld Faceplate",
+            payload={"error": "No faceplate target set — save X/Y in Settings first."},
+        )
+    try:
+        cycles = int(request.form.get('cycles') or 1)
+    except ValueError:
+        cycles = 1
+    try:
+        job.load(
+            "__faceplate__", "Faceplate", studs[:1], cycles,
+            gate_mode="none", kind="faceplate",
+            safe_z=recipe.get('safe_z', 10.0),
+            part_z=recipe.get('part_z', 0.0),
+            pressure_setting=recipe.get('pressure_setting', 20.0),
+            stud_type=recipe.get('stud_type', 'M4'),
+            substrate=recipe.get('substrate', 'Mild Steel'),
+        )
+        job.start()
+        ok, payload = True, {"message": f"Faceplate weld launched ({cycles} cycle{'s' if cycles > 1 else ''})"}
+    except JobError as exc:
+        ok, payload = False, {"error": str(exc)}
+    except Exception as e:
+        ok, payload = False, {"error": str(e)}
+
+    return render_template("partials/command_result.html", ok=ok, title="Weld Faceplate", payload=payload)
+
+
+@app.route("/ui/faceplate/move-home", methods=["POST"])
+def ui_faceplate_move_home():
+    """Move robot to home position (PTP homewf)."""
+    if job.snapshot().active:
+        return render_template(
+            "partials/command_result.html", ok=False, title="Move Home",
+            payload={"error": "A job is running — stop the active job first."},
+        )
+    recipe = _faceplate_recipe()
+    safe_z = float(recipe.get('safe_z', 10.0))
+    part_z = float(recipe.get('part_z', 0.0))
+    approach_z = part_z + safe_z
+
+    program = (
+        "tool = 10\n"
+        "blend = -1\n"
+        "wobj = 4\n"
+        "speed = 25\n"
+        f"APPROACH_Z = {approach_z}\n"
+        "PointsOffsetEnable(1, 0, 0, APPROACH_Z, 0, 0, 0)\n"
+        "Lin(zerozero, speed, -1, 0, 1)\n"
+        "PointsOffsetDisable()\n"
+        "PTP(homewf, speed, -1, 0)\n"
+    )
+
+    try:
+        with tempfile.NamedTemporaryFile("w", suffix=".lua", delete=False, encoding="utf-8") as tf:
+            tf.write(program)
+            tmp_path = tf.name
+        try:
+            robot.upload_and_run(tmp_path)
+            ok, payload = True, {"target": "homewf"}
+        finally:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+    except Exception as e:
+        ok, payload = False, {"error": str(e)}
+
+    return render_template("partials/command_result.html", ok=ok, title="Move Home", payload=payload)
+
+
+@app.route("/ui/faceplate/feed", methods=["POST"])
+def ui_faceplate_feed():
+    """Manually advance the stud feeder — DO1 high for FEED_PULSE_S, then low.
+
+    Refused while a job is active, because DO1 belongs to the running program.
+    A host write during a job would race the running program.
+    """
+    if job.snapshot().active:
+        return render_template(
+            "partials/command_result.html", ok=False, title="Feed",
+            payload={"error": "A job is running — the program owns the feeder output."},
+        )
+    try:
+        robot.pulse_do(FEED_DO, FEED_PULSE_S)
+        ok, payload = True, {}
+    except Exception as e:
+        ok, payload = False, {"error": str(e)}
+    return render_template("partials/command_result.html", ok=ok, title="Feed", payload=payload)
+
 
 @app.route("/operator/calibration")
 def calibration():
@@ -864,6 +1065,13 @@ WELD_TEST_STARTUP_GRACE_S = 3.0
 # tests/test_lua_builder.py asserts the pair still agrees.
 WELD_STUD_DI = int(os.getenv("WELDFLEX_WELD_STUD_DI", "1"))
 WELD_READY_DI = int(os.getenv("WELDFLEX_WELD_READY_DI", "0"))
+# DO1 — stud feeder advance. Same language-boundary problem as the two DIs above:
+# this is a third copy of a number weld.lua owns as DO_FEED, so the same test
+# asserts they agree. The pulse width is deliberately *not* weld.lua's 1 s feed
+# pulse — this is the operator's manual nudge from /operator/faceplate, not the
+# program's feed cycle.
+FEED_DO = int(os.getenv("WELDFLEX_FEED_DO", "1"))
+FEED_PULSE_S = float(os.getenv("WELDFLEX_FEED_PULSE_S", "0.25"))
 # The controller answers FT_GetForceTorqueRCS with 14 ("interface execution
 # failed") the whole time a force-control move — weld.lua's FT_FindSurface —
 # owns the sensor (observed live 2026-07-28). While a program is running that

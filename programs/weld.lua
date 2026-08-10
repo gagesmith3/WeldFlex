@@ -55,7 +55,7 @@ local FIND_ACC  = 0.0
 
 local PRESS_DIR = 1     -- 1 = positive (FT_LinInsertion encoding)
 
-local SEARCH_SPEED_MMS = 5.0
+local SEARCH_SPEED_MMS = 20.0
 local PRESS_SPEED_MMS  = 5.0
 
 local SAFE_Z_MM = (type(WELD_SAFE_Z) == "number" and WELD_SAFE_Z > 0) and WELD_SAFE_Z or 10.0
@@ -492,7 +492,9 @@ local function weldOneStud()
 
     holdAfterWeld()
     retract()
-    feedNextStud()
+    if WELD_SKIP_FEED ~= 1 then
+        feedNextStud()
+    end
     pub(SV_PHASE, PH_DONE)
 end
 

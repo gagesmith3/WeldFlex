@@ -13,6 +13,16 @@ the wrong signal and still "works".
 | **DO0** | Weld trigger (250 ms pulse) | `weld.lua` `DO_WELD` |
 | **DO1** | Stud feeder advance (1 s pulse) | `weld.lua` `DO_FEED`, and `feedCycle.lua` |
 
+**DO1 has a second, different behavior on a faceplate run.** `weld_faceplate.lua`
+(the `/operator/faceplate` maintenance-weld page) holds DO1 **high through the
+inter-cycle pause** instead of the normal 1 s pulse — the operator manually
+feeds the next faceplate while the program is paused, then presses Continue,
+and the next cycle clears DO1 before moving. To keep the normal timed pulse
+from also firing during that path, `weld.lua` gates its own `feedNextStud()`
+call behind a new sentinel (`if WELD_SKIP_FEED ~= 1 then`), which
+`weld_faceplate.lua` sets and `WeldFlex.lua` never does. See
+`weldflex-app`'s `references/routes-and-templates.md`, `faceplate` section.
+
 Corrected 2026-07-28 — DI0/DI1 were previously implemented the other way round,
 with DI0 documented as "stud on work" and the ready line not monitored at all.
 Audit log has the full entry.

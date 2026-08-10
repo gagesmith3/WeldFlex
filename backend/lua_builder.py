@@ -21,6 +21,12 @@ TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "programs" / PROGRAM_NAME
 WELD_PROGRAM_NAME = "weld.lua"
 WELD_PATH = TEMPLATE_PATH.parent / WELD_PROGRAM_NAME
 
+# Single-point maintenance weld for shop fixture faceplates — see
+# build_weld_faceplate_lua() below. Same template-with-markers shape as
+# WeldFlex.lua, just one fixed target instead of a stud list.
+FACEPLATE_PROGRAM_NAME = "weld_faceplate.lua"
+FACEPLATE_TEMPLATE_PATH = TEMPLATE_PATH.parent / FACEPLATE_PROGRAM_NAME
+
 # The no-motion DI monitor and its harness. Same two-file shape as weld.lua: the
 # monitor is upload-gated so the controller's post-upload check (which executes
 # top-level Lua) cannot start its loop, and the generated harness is the caller
@@ -49,6 +55,27 @@ GATE_MODES = ("none", "pause", "di")
 # weld into a part the operator never swapped.
 GATE_DI_OPT_ABORT = 0
 
+# `pause` mode emits the controller's own `Pause(num)` instruction (FR Lua manual
+# §3.1.3) at the gate, so the *program* holds itself at the cycle boundary. `num`
+# is a free-form reason code the manual only ever uses for shop-specific messages
+# ("cylinder not in place"); 0 is its documented "no function" value — the pause
+# with nothing attached, which is what the vendor's own multi-pass welding example
+# (Code 3-49) uses between passes.
+#
+# This replaced a host-issued ProgramPause fired after the manager saw the cycle
+# marker. That could only ever land *near* the boundary, inside the dwell, and on
+# 2026-08-06 it did not land at all — the faceplate run welded straight through
+# every gate. The host still issues one as a backstop (job_manager._gate), but the
+# program no longer depends on it.
+PAUSE_GATE_CODE = 0
+
+# The cycle loop's variable and bound, identical in both templates. The pause gate
+# is emitted as `if <var> < <count> then` so the last cycle does *not* hold — there
+# is no next part to swap in, and a pause nothing releases would strand the run
+# short of its home return. tests/test_lua_builder.py pins both names.
+GATE_LOOP_VAR = "cycleIndex"
+GATE_COUNT_VAR = "cycleCount"
+
 
 def _env_int(name: str, default: int) -> int:
     try:
@@ -70,11 +97,15 @@ def default_boundary_ms(gate_mode: str) -> int:
     """Length of the cycle-boundary dwell, in ms.
 
     The dwell is the only thing that banks a cycle, so it has to be long enough
-    that the manager's 250 ms poll cannot step over it. In `pause` mode it also
-    has to be long enough for a host-issued ProgramPause to *land* — the manager
-    only sends it after seeing the marker, so the round trip has to fit inside
-    the dwell or the robot is already moving to the next part's first stud when
-    the pause takes. The other modes hold in the program itself and don't pay for it.
+    that the manager's 250 ms poll cannot step over it.
+
+    `pause` mode keeps a longer one for a different reason than it used to. The
+    gate itself is now in the program (`Pause()` — see PAUSE_GATE_CODE), so the
+    host no longer has to land a ProgramPause inside the dwell. What the dwell
+    buys instead is the *backstop*: the marker banks the cycle at the start of
+    the dwell but `Pause()` does not run until the end of it, so this is the
+    window `job_manager._gate` waits out before deciding the program did not
+    hold and sending a ProgramPause itself.
     """
     if gate_mode == "pause":
         return _env_int("WELDFLEX_BOUNDARY_PAUSE_MS", 3000)
@@ -97,6 +128,12 @@ class BuiltProgram:
     gate_mode: str
     boundary_ms: int
     program_name: str = PROGRAM_NAME
+    # Total line count of this program's own text. `GetCurrentLine` reports
+    # weld.lua's *own* line numbers while it runs under NewDofile (weld.lua is
+    # ~500 lines; this program is ~100), so CycleTracker uses this as a ceiling
+    # to tell a real caller-file sample from an aliased sub-file one. See
+    # CycleTracker's docstring.
+    program_line_count: int = 0
 
 
 def format_number(value: float | int) -> str:
@@ -135,9 +172,17 @@ def _gate_rows(gate_mode: str, indent: str, gate_di: int, gate_timeout_ms: int) 
             f"{indent}WaitDI({int(gate_di)}, 1, {int(gate_timeout_ms)}, {GATE_DI_OPT_ABORT})",
         ]
     if gate_mode == "pause":
-        # Nothing is emitted: the manager issues ProgramPause when it observes the
-        # cycle edge. Kept as a comment so the uploaded file says which mode built it.
-        return [f"{indent}-- Inter-cycle gate: host-driven pause (gate_mode=pause)."]
+        body = f"{indent}    "
+        return [
+            f"{indent}-- Inter-cycle gate: the program pauses itself here (gate_mode=pause).",
+            f"{indent}-- The host only watches for the paused state and shows Continue; it does",
+            f"{indent}-- not have to land a ProgramPause inside the dwell any more.",
+            f"{indent}-- Skipped after the last cycle: nothing releases it, and the run still",
+            f"{indent}-- has its home return to do.",
+            f"{indent}if {GATE_LOOP_VAR} < {GATE_COUNT_VAR} then",
+            f"{body}Pause({PAUSE_GATE_CODE})",
+            f"{indent}end",
+        ]
     return [f"{indent}-- Inter-cycle gate: none (gate_mode=none)."]
 
 
@@ -272,7 +317,131 @@ def build_weldflex_lua(
         stud_count=len(studs),
         cycles=cycles,
         gate_mode=gate_mode,
+        program_line_count=len(out),
         boundary_ms=dwell_ms,
+    )
+
+
+def build_weld_faceplate_lua(
+    x: float | int,
+    y: float | int,
+    cycles: int,
+    gate_mode: str = "pause",
+    template_path: str | os.PathLike | None = None,
+    gate_di: int | None = None,
+    gate_timeout_ms: int | None = None,
+    boundary_ms: int | None = None,
+    safe_z: float | int | None = None,
+    part_z: float | int | None = None,
+    pressure_setting: str | float | int | None = None,
+    stud_type: str | None = None,
+    substrate: str | None = None,
+    speed: float | int | None = None,
+) -> BuiltProgram:
+    """Substitute programs/weld_faceplate.lua's markers.
+
+    Same template-with-markers/line-tracking contract as build_weldflex_lua —
+    see that function's docstring and this module's docstring for why the
+    line numbers matter. The differences are the single fixed target (two
+    scalar markers instead of a stud list) and no HIGH_Z marker, since a
+    single-point program has no stud-to-stud travel to clear.
+    """
+    if gate_mode not in GATE_MODES:
+        raise ValueError(f"Unknown gate_mode {gate_mode!r}; expected one of {GATE_MODES}")
+    cycles = int(cycles)
+    if cycles < 1:
+        raise ValueError(f"cycles must be >= 1, got {cycles}")
+
+    path = Path(template_path) if template_path else FACEPLATE_TEMPLATE_PATH
+    if not path.is_file():
+        raise FileNotFoundError(f"Lua template not found: {path}")
+    template_lines = path.read_text(encoding="utf-8").splitlines()
+
+    dwell_ms = default_boundary_ms(gate_mode) if boundary_ms is None else int(boundary_ms)
+    safe_z_val = 10.0 if safe_z is None else float(safe_z)
+    part_z_val = 0.0 if part_z is None else float(part_z)
+    press_lbf_val = _parse_pressure(pressure_setting)
+    stud_type_val = stud_type or "M4"
+    substrate_val = substrate or "Mild Steel"
+    speed_val = max(1, min(100, int(speed))) if speed is not None else 25
+    x_val = float(x)
+    y_val = float(y)
+
+    out: list[str] = []
+    loop_start_line = cycle_marker_line = gate_line = 0
+    boundary_seen = False
+
+    for line in template_lines:
+        indent = _indent_of(line)
+        if "--{{FACEPLATE_X}}" in line:
+            out.append(f"{indent}faceplateX = {format_number(x_val)}")
+        elif "--{{FACEPLATE_Y}}" in line:
+            out.append(f"{indent}faceplateY = {format_number(y_val)}")
+        elif "--{{CYCLE_COUNT}}" in line:
+            out.append(f"{indent}cycleCount = {cycles}")
+        elif "--{{BOUNDARY_MS}}" in line:
+            out.append(f"{indent}BOUNDARY_MS = {dwell_ms}")
+            boundary_seen = True
+        elif "--{{SPEED}}" in line:
+            out.append(f"{indent}speed = {speed_val}")
+        elif "--{{SAFE_Z}}" in line:
+            out.append(f"{indent}SAFE_Z = {format_number(safe_z_val)}")
+        elif "--{{PART_Z}}" in line:
+            out.append(f"{indent}PART_Z = {format_number(part_z_val)}")
+        elif "--{{PRESS_LBF}}" in line:
+            out.append(f"{indent}PRESS_LBF = {format_number(press_lbf_val)}")
+        elif "--{{STUD_TYPE}}" in line:
+            out.append(f"{indent}STUD_TYPE = {format_lua_string(stud_type_val)}")
+        elif "--{{SUBSTRATE}}" in line:
+            out.append(f"{indent}SUBSTRATE = {format_lua_string(substrate_val)}")
+        elif "--{{GATE}}" in line:
+            gate_line = len(out) + 1
+            out.extend(
+                _gate_rows(
+                    gate_mode,
+                    indent,
+                    default_gate_di() if gate_di is None else gate_di,
+                    default_gate_timeout_ms() if gate_timeout_ms is None else gate_timeout_ms,
+                )
+            )
+        elif "--{{LOOP_START}}" in line:
+            out.append(line.replace("--{{LOOP_START}}", "-- cycle loop"))
+            loop_start_line = len(out)
+        elif "--{{CYCLE_MARKER}}" in line:
+            out.append(line.replace("--{{CYCLE_MARKER}}", "-- cycle boundary"))
+            cycle_marker_line = len(out)
+        else:
+            out.append(line)
+
+    missing = [
+        name
+        for name, value in (
+            ("--{{LOOP_START}}", loop_start_line),
+            ("--{{CYCLE_MARKER}}", cycle_marker_line),
+            ("--{{GATE}}", gate_line),
+            ("--{{BOUNDARY_MS}}", boundary_seen),
+        )
+        if not value
+    ]
+    if missing:
+        raise RuntimeError(f"{path.name} is missing required marker(s): {', '.join(missing)}")
+    if not (loop_start_line < cycle_marker_line < gate_line):
+        raise RuntimeError(
+            f"{path.name} markers are out of order: loop_start={loop_start_line} "
+            f"cycle_marker={cycle_marker_line} gate={gate_line}"
+        )
+
+    return BuiltProgram(
+        text="\n".join(out) + "\n",
+        loop_start_line=loop_start_line,
+        cycle_marker_line=cycle_marker_line,
+        gate_line=gate_line,
+        stud_count=1,
+        cycles=cycles,
+        gate_mode=gate_mode,
+        program_line_count=len(out),
+        boundary_ms=dwell_ms,
+        program_name=FACEPLATE_PROGRAM_NAME,
     )
 
 

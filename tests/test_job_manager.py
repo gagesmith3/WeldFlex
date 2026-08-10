@@ -144,6 +144,41 @@ def test_load_then_start_reaches_running(tmp_path):
     mgr.shutdown()
 
 
+def test_faceplate_kind_builds_with_the_faceplate_lua_builder(tmp_path, monkeypatch):
+    """load(..., kind="faceplate") must route _launch to build_weld_faceplate_lua,
+    not build_weldflex_lua — the two produce very different programs and a
+    misrouted kind would silently run the wrong one."""
+    import job_manager as jm
+
+    calls = []
+    real_build = jm.build_weld_faceplate_lua
+
+    def spy(x, y, *args, **kwargs):
+        calls.append((x, y))
+        return real_build(x, y, *args, **kwargs)
+
+    monkeypatch.setattr(jm, "build_weld_faceplate_lua", spy)
+
+    robot = FakeRobot()
+    mgr = make_manager(tmp_path, robot)
+    mgr.load("__faceplate__", "Faceplate", [{"x": 12, "y": 34}], cycles=1,
+             gate_mode="pause", kind="faceplate")
+    mgr.start()
+    wait_state(mgr, JobState.RUNNING.value)
+    assert calls == [(12, 34)]
+    mgr.shutdown()
+
+
+def test_faceplate_load_without_a_target_point_fails_at_launch(tmp_path):
+    robot = FakeRobot()
+    mgr = make_manager(tmp_path, robot)
+    mgr.load("__faceplate__", "Faceplate", [], cycles=1, gate_mode="pause", kind="faceplate")
+    mgr.start()
+    wait_state(mgr, JobState.ERROR.value)
+    assert "target point" in (mgr.snapshot().error or "")
+    mgr.shutdown()
+
+
 ILLEGAL = [
     ("start", JobState.IDLE.value),
     ("pause", JobState.IDLE.value),
@@ -299,10 +334,17 @@ def test_lost_link_mid_run_is_interrupted_not_running(tmp_path):
 
 
 def gate_one_cycle(robot, mgr, expect):
-    """Run a cycle to the boundary and wait for the gate to hold there."""
+    """Run a cycle to the boundary and wait for the gate to hold there.
+
+    `program_state=3` is the program pausing *itself* on the `Pause()` the
+    builder emits at the gate line — that, not a host-issued ProgramPause, is
+    what holds the robot.
+    """
     robot.feed(BODY)
-    time.sleep(MONITOR_INTERVAL_S * 2)
-    robot.feed(PAST_MARKER)
+    # The re-arm needs a tick to land on this sample. The monitor is not a
+    # metronome under load, so leave more than the nominal interval.
+    time.sleep(MONITOR_INTERVAL_S * 4)
+    robot.feed(PAST_MARKER, program_state=3)
     wait_state(mgr, JobState.GATED.value)
     assert mgr.snapshot().cycles_done == expect
 
@@ -321,7 +363,8 @@ def test_gate_pause_re_arms_on_every_cycle(tmp_path):
     wait_state(mgr, JobState.RUNNING.value)
 
     gate_one_cycle(robot, mgr, expect=1)
-    assert "pause_program" in robot.calls
+    # The program held itself, so the manager sent nothing to get there.
+    assert "pause_program" not in robot.calls
     assert mgr.continue_().state == JobState.RUNNING.value
 
     gate_one_cycle(robot, mgr, expect=2)           # the one that used to never come
@@ -340,8 +383,75 @@ def test_gate_pause_re_arms_on_every_cycle(tmp_path):
     assert snap.error is None
 
 
-def test_a_gate_that_cannot_hold_stops_the_job(tmp_path):
-    """Fail closed. A gate that cannot pause must not let the program run on."""
+def test_newdofile_aliased_line_does_not_bank_or_gate_early(tmp_path):
+    """2026-08-06 live bug, first caught on weld_faceplate.lua.
+
+    GetCurrentLine reports weld.lua's *own* line numbers (up to ~500) for the
+    whole time it runs under NewDofile. Without a ceiling those numbers alias
+    past cycle_marker_line (~88 here) and the tracker banks + gates seconds
+    into the very first weld — the pause never lands where it should, and the
+    robot just runs straight through looking like a normal completed cycle.
+    """
+    robot = FakeRobot()
+    mgr = make_manager(tmp_path, robot)
+    mgr.load("p1", "Bracket", [{"x": 1, "y": 1}], cycles=2, gate_mode="pause")
+    mgr.start()
+    wait_state(mgr, JobState.RUNNING.value)
+
+    robot.feed(BODY)
+    time.sleep(MONITOR_INTERVAL_S * 2)
+    # A plausible mid-weld.lua sample -- well past PAST_MARKER numerically,
+    # but it is weld.lua's line, not the caller's.
+    robot.feed(350)
+    time.sleep(MONITOR_INTERVAL_S * 2)
+
+    assert mgr.snapshot().cycles_done == 0
+    assert mgr.snapshot().state == JobState.RUNNING.value
+
+    # Only once control genuinely returns to the caller and reaches the real
+    # marker should it bank and gate.
+    robot.feed(PAST_MARKER, program_state=3)
+    wait_state(mgr, JobState.GATED.value)
+    assert mgr.snapshot().cycles_done == 1
+
+
+def test_the_gate_waits_for_the_programs_own_pause(tmp_path):
+    """2026-08-06: the gate moved into the Lua, and this is what that means.
+
+    The manager banks the cycle at the marker — the *start* of the boundary
+    dwell — but the program's `Pause()` is the line after the dwell, so paused
+    does not get reported for BOUNDARY_MS yet. Until it does, the job must stay
+    RUNNING and the manager must not go firing a ProgramPause of its own.
+    """
+    robot = FakeRobot()
+    mgr = make_manager(tmp_path, robot)
+    mgr.load("p1", "Bracket", [{"x": 1, "y": 1}], cycles=3, gate_mode="pause")
+    mgr.start()
+    wait_state(mgr, JobState.RUNNING.value)
+
+    robot.feed(BODY)
+    time.sleep(MONITOR_INTERVAL_S * 2)
+    robot.feed(PAST_MARKER)                     # still running: inside the dwell
+    time.sleep(MONITOR_INTERVAL_S * 3)
+    assert mgr.snapshot().cycles_done == 1
+    assert mgr.snapshot().state == JobState.RUNNING.value
+
+    robot.feed(PAST_MARKER + 1, program_state=3)   # Pause() ran
+    wait_state(mgr, JobState.GATED.value)
+    assert "pause_program" not in robot.calls
+    mgr.shutdown()
+
+
+def test_a_gate_that_cannot_hold_stops_the_job(tmp_path, monkeypatch):
+    """Fail closed. A gate that cannot pause must not let the program run on.
+
+    This is the backstop path: the program never reports paused, so the manager
+    falls back to a host-issued ProgramPause — and when *that* fails too, the
+    run ends rather than carrying on with nobody swapping parts. The dwell is
+    shortened so the test does not sit through the real one waiting for a
+    `Pause()` that is never coming.
+    """
+    monkeypatch.setenv("WELDFLEX_BOUNDARY_PAUSE_MS", "50")
     robot = FakeRobot(fail={"pause_program"})
     mgr = make_manager(tmp_path, robot)
     mgr.load("p1", "Bracket", [{"x": 1, "y": 1}], cycles=3, gate_mode="pause")
@@ -352,7 +462,7 @@ def test_a_gate_that_cannot_hold_stops_the_job(tmp_path):
     time.sleep(MONITOR_INTERVAL_S * 2)
     robot.feed(PAST_MARKER)
 
-    wait_state(mgr, JobState.ERROR.value)
+    wait_state(mgr, JobState.ERROR.value, timeout=8.0)
     assert "Could not hold at the cycle boundary" in mgr.snapshot().error
     assert robot.calls.count("pause_program") == 2      # tried once, retried once
     assert "stop_program" in robot.calls                # then put the robot down
@@ -465,3 +575,28 @@ def test_snapshot_is_immutable_and_json_ready(tmp_path):
 def test_state_sets_are_disjoint():
     assert not ACTIVE_STATES & TERMINAL_STATES
     assert JobState.IDLE.value not in ACTIVE_STATES | TERMINAL_STATES
+
+
+def test_direct_controller_paused_state_gates_job(tmp_path):
+    """When the controller program executes Pause(0) at the cycle boundary,
+    program_state becomes 3 ('paused'). JobManager must transition directly
+    to GATED and bank the cycle without depending on line-number polling."""
+    robot = FakeRobot()
+    mgr = make_manager(tmp_path, robot)
+    mgr.load("p1", "Bracket", [{"x": 10, "y": 20}], cycles=2, gate_mode="pause")
+    mgr.start()
+    wait_state(mgr, JobState.RUNNING.value)
+
+    # Controller hits Pause(0) at end of cycle 1 (program_state_raw=3 -> 'paused')
+    robot.feed(line=75, program_state=3)
+    wait_state(mgr, JobState.GATED.value)
+    snap = mgr.snapshot()
+    assert snap.cycles_done == 1
+    assert snap.state == JobState.GATED.value
+
+    # Operator presses Continue
+    mgr.continue_()
+    wait_state(mgr, JobState.RUNNING.value)
+
+    mgr.shutdown()
+

@@ -32,13 +32,24 @@ Layers, strictly one-way:
   such map existed.
 - `.claude/skills/deployment-targets/` — Windows dev box vs. Raspberry Pi kiosk.
 
-## Two things that are not built yet
+## What's actually built, and what still isn't
 
-Do not write code, docs, or commit messages that assume these work:
+As of the `WeldFlex.lua`/`weld.lua` rewrite (2026-08-03, commits `11aff8c`/
+`e55a18b`): **a run now welds for real.** The cycle loop calls `weld.lua` per
+stud (`NewDofile("/fruser/weld.lua", 1, 1)`), which fires the arc once its two
+DI checks pass. A home approach/return also now exists at both ends of a run.
+Do not describe either of these as unbuilt — that claim is stale and no longer
+true against the committed code.
 
-1. **No return-to-home.** The program just ends after the last cycle.
+What is still missing:
+
+1. **No arm/disarm gate.** `WeldFlex.lua` sets `WELD_ARMED = 1` on every stud,
+   but `weld.lua` never reads it — there is no code path that disarms a run.
+   `weld.lua` fires unconditionally once DI1 (stud on work) and DI0 (welder
+   ready) both read high.
 2. **`pause_points` is a dead field.** Every recipe carries it; nothing reads it.
    Per-stud operator waits do not exist. The per-cycle `gate_mode` is a different
    feature and does not cover this.
 
-Owner is building 1; 2 is deferred to a later refactor.
+2 is deferred to a later refactor. 1 has no owner assigned yet — flag it rather
+than assuming a "dry" or "test" mode exists anywhere in the production path.

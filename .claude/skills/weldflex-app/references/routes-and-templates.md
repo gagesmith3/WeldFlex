@@ -2,19 +2,18 @@
 
 ## Route inventory
 
-Page routes (`app.py`) — verified against the code 2026-07-28:
+Page routes (`app.py`) — verified against the code 2026-08-05:
 ```
 /                                   landing.html
 /operator                           operator.html
 /operator/admin                     admin.html   (hidden — 700ms long-press on header home button, see admin.js)
 /operator/parts                     parts.html
 /operator/job-history               job_history.html
-/operator/faceplate                 faceplate.html   (stub — linked from admin.html's Tools card, no content yet)
+/operator/faceplate                 faceplate.html   (maintenance weld page — see the `faceplate` section below)
 /operator/calibration               calibration.html   (menu page)
 /operator/jog                       jog.html
 /operator/calibration/force-sensor  force_sensor.html
 /operator/tcp-calibrate             tcp_calibrate.html
-/operator/weld-test                 weld_test.html   (bring-up tool — runs programs/weld.lua once)
 /operator/robot-diagnostics         robot_diagnostics.html
 /operator/settings                  settings.html
 /manager                            manager.html   (standalone shell — does not extend base.html)
@@ -24,54 +23,67 @@ There is **no `/operator/liberty`** and no `liberty.html` — the Liberty
 experiment was removed and replaced by `job_manager.py`. Likewise there is no
 `/operator/calibrate`; `calibrate.html` is orphaned (see below).
 
+**`/operator/weld-test` is gone** — deleted in commit `11aff8c` (2026-08-03)
+along with `weld_test.html`, `lua_builder.build_weld_test_lua`, and its
+`/ui/weld-test/*` routes. `app.py` and `robot_service.py` still carry a few
+unreferenced leftovers from it (`_weld_test` dict, `_weld_test_toast()`,
+`_start_weld_telemetry()`, `weld_probe()`) — dead code, not a route to build
+against. If you need "one special Lua run with its own controls" again, the
+`faceplate` feature below is the current pattern: it reuses `JobManager` and
+`partials/current_job.html` rather than a standalone runner.
+
 `/ui/*` endpoints follow `/ui/<feature>/<action>` (e.g.
 `/ui/tcp-calibrate/enable-drag`, `/ui/job/start`, `/ui/jog/move`).
 Multi-word features are hyphenated (`tcp-calibrate`, `studs-preview`), never
 nested further (never `/ui/tcp/calibrate`). Live features: `connection`,
-`diagnostics`, `ft`, `job`, `jog`, `manager`, `parts`, `recipes`, `settings`,
-`tcp-calibrate`, `weld-test`.
+`diagnostics`, `faceplate`, `ft`, `job`, `jog`, `manager`, `parts`, `recipes`,
+`settings`, `tcp-calibrate`.
 
 `ft` is `/ui/ft/{reading,setup,zero,deactivate}`: `reading` is polled at 300 ms
 by `force_sensor.html` (lbs-only Fz readout); `setup` and `zero` are wired to
 that page's Initialize/Zero buttons (toast responses); `deactivate` exists but
 has no UI caller — deliberate, not an orphan to build on.
 
-`weld-test` is `/ui/weld-test/{run,stop,telemetry}` — the bring-up path for
-`programs/weld.lua`, one stud at a time. Things about it that are load-bearing:
+`faceplate` is `POST /ui/faceplate/load` — queues a maintenance weld run for
+shop fixture faceplates through the same `JobManager` real part jobs use.
+Things about it that are load-bearing:
 
-- **`run` refuses while `job.snapshot().active`.** Both this page and the job
-  manager drive `ProgramLoad`/`ProgramRun`; if both owned the controller the
-  manager would count cycles against line numbers from a program it never built.
-- It uploads **two** files per run — a comment-stripped `weld.lua` and a
-  generated harness (`lua_builder.build_weld_test_lua`) — from one temp dir.
-  weld.lua alone faults on its own input contract, and the harness's `NewDofile`
-  resolves at run time, so a stale copy on the controller is what would execute.
-- The harness's frame globals are **parsed out of `WeldFlex.lua`**, not copied,
-  so the test can never approach in a different frame than production. A missing
-  one is a hard build error.
-- Arming is a separate confirmed toggle using `window.confirm`, deliberately not
-  `htmx:confirm` (which fires for every request in HTMX 1.9.x). Default is a dry
-  run; `WELD_ARMED` unset means disarmed.
-- **`run` takes three modes**: dry (default), armed (`armed=1`), and force test
-  (`force_test=1`, its own button — search, hold weld force 5 s, retract, with
-  weld.lua's DI1 gate reported-not-enforced and WELD/FEED unreachable). The
-  Force Test button shares `#wt-params` with Run, so a leftover `armed=1` can
-  ride along — **the route drops `armed` whenever `force_test` is set**, and
-  `build_weld_test_lua` raises on the combination outright. Don't weaken either
-  layer; weld.lua is the third (`DO_WELD_ENABLED` forced 0 in force test).
-- The harness publishes weld.lua's sentinels: `WELD_RUN = 1` (upload gate — the
-  controller's post-upload check executes top-level Lua, see the `fairino-sdk`
-  skill) plus `WELD_ARMED` / `WELD_FORCE_TEST`. All are name-duplicated across
-  the language boundary and pinned by `tests/test_lua_builder.py`.
-- `telemetry` self-throttles like `current_job.html` (400 ms running / 1200 ms
-  idle) because each tick costs three robot RPCs. It reports RPC-observable state
-  only — **there is no SDK call that reads a Lua `print()`**, so don't describe
-  this page as capturing program output. Its probe is all best-effort: DIs show
-  `?` (raw `GetDI` bypass is dead on this firmware) and a force read failing
-  with code 14 *while running* renders as a muted "sensor busy" note, not a
-  warning — the controller refuses FT reads during `FT_FindSurface` moves
-  (`FT_RPC_BUSY_CODE` in `app.py`; `weld_probe` returns `ft_err` instead of
-  raising). A latched controller fault still outranks it via `fault_main`.
+- **It is not a separate job runner.** `JobManager.load()`/`_launch()` gained a
+  `kind` discriminator (`"part"` default, `"faceplate"`); a faceplate job routes
+  `_launch` to `lua_builder.build_weld_faceplate_lua` instead of
+  `build_weldflex_lua`, but reuses every downstream piece as-is — monitor
+  thread, `CycleTracker`, gate handling, run history, and
+  `partials/current_job.html`'s Run/Pause/Resume/Continue/Stop buttons. The
+  page embeds that partial via `htmx_mount('operator-current-job-mount', ...)`
+  — the **same hardcoded mount id** `operator.html` uses, which is what makes
+  the shared control panel work with zero changes to the partial. Consequence:
+  a loaded faceplate job *is* the current job system-wide (visible on the
+  operator home page too), and a part job and a faceplate job can't run
+  concurrently — same physical robot, same singleton run-slot.
+- **Its config lives in `recipes.json`, not a separate settings store.** A
+  reserved recipe record named `faceplates` (found/created by
+  `app._faceplate_recipe()`) carries the single target point plus
+  `safe_z`/`part_z`/`stud_type`/`substrate`/`pressure_setting` — the same
+  fields a part recipe has — and is edited through the existing
+  `/ui/recipes/save` endpoint, `faceplate.html`'s own form. It is filtered out
+  of every normal-facing parts listing (`app._hide_faceplate_recipe()`, applied
+  in `parts()` and `/ui/manager/parts-list`) so it can only be reached through
+  `/operator/faceplate`, not run through the ordinary part pipeline.
+- **`weld_faceplate.lua`** (`programs/weld_faceplate.lua` +
+  `lua_builder.build_weld_faceplate_lua`) is structurally parallel to
+  `WeldFlex.lua` but targets one fixed point. It never approaches `homewf`
+  before the loop starts — it goes straight to the target and stays there for
+  every cycle — but it does return home once, after the loop closes
+  (including a fault-break), same edge-only shape as `WeldFlex.lua`'s home
+  handling just without the starting approach. It also holds DO1 high through
+  the inter-cycle gate instead of
+  `weld.lua`'s normal 1 s pulse — the operator manually feeds the next
+  faceplate while the program is paused (`gate_mode="pause"`, the only mode
+  this path uses), then presses Continue, and the next cycle clears DO1 before
+  moving. `weld.lua`'s own built-in feed pulse is suppressed via a new
+  `WELD_SKIP_FEED = 1` sentinel the faceplate program publishes — `WeldFlex.lua`
+  never sets it, so real part runs are unaffected (pinned by
+  `tests/test_lua_builder.py`).
 
 **Flat exceptions** — only two remain: `/ui/connection` and `/ui/studs-preview`.
 The old flat run verbs (`/ui/run`, `/ui/pause`, `/ui/resume`, `/ui/stop`) and

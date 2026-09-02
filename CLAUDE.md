@@ -43,13 +43,11 @@ true against the committed code.
 
 What is still missing:
 
-1. **No arm/disarm gate.** `WeldFlex.lua` sets `WELD_ARMED = 1` on every stud,
-   but `weld.lua` never reads it — there is no code path that disarms a run.
-   `weld.lua` fires unconditionally once DI1 (stud on work) and DI0 (welder
-   ready) both read high.
+1. **No explicit live-run arming confirmation.** Live jobs automatically set
+  `WELD_ARMED = 1`; dry jobs set it to `0`, completing search, press, hold,
+  retract, and feeder advance without pulsing the DO0 weld trigger.
 2. **`pause_points` is a dead field.** Every recipe carries it; nothing reads it.
    Per-stud operator waits do not exist. The per-cycle `gate_mode` is a different
    feature and does not cover this.
 
-2 is deferred to a later refactor. 1 has no owner assigned yet — flag it rather
-than assuming a "dry" or "test" mode exists anywhere in the production path.
+2 is deferred to a later refactor. 1 has no owner assigned yet.

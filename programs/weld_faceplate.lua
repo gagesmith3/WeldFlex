@@ -16,6 +16,7 @@ PART_Z = 0.0 --{{PART_Z}}
 PRESS_LBF = 20.0 --{{PRESS_LBF}}
 STUD_TYPE = "M4" --{{STUD_TYPE}}
 SUBSTRATE = "Mild Steel" --{{SUBSTRATE}}
+ARM_MODE = "live" --{{ARM_MODE}}
 BOUNDARY_MS = 1500 --{{BOUNDARY_MS}}
 
 -- Home Position (homewf registered point on controller) — disabled for
@@ -32,8 +33,12 @@ for cycleIndex = 1, cycleCount do --{{LOOP_START}}
     weldX = faceplateX
     weldY = faceplateY
     WELD_RUN = 1
+    WELD_ARMED = 0
+    if ARM_MODE == "live" then
+        WELD_ARMED = 1
+    end
     WELD_SAFE_Z = SAFE_Z
-    Z_CLEARANCE = SAFE_Z
+    Z_CLEARANCE = PART_Z + SAFE_Z
     WELD_PART_Z = PART_Z
     WELD_PRESS_LBF = PRESS_LBF
     WELD_STUD_TYPE = STUD_TYPE
@@ -42,8 +47,8 @@ for cycleIndex = 1, cycleCount do --{{LOOP_START}}
     APPROACH_Z = PART_Z + SAFE_Z
 
     -- Move to the fixed target.
-    PointsOffsetEnable(1, faceplateX, faceplateY, APPROACH_Z, 0, 0, 0)
-    Lin(zerozero, speed, -1, 0, 1)
+    PointsOffsetEnable(0, faceplateX, faceplateY, APPROACH_Z, 0, 0, 0)
+    PTP(zerozero, speed, -1, 0)
     PointsOffsetDisable()
 
     -- Execute single-stud weld sequence (search, press, weld, hold, retract).
@@ -68,16 +73,16 @@ if USE_HOME_MOVE == 1 then
     APPROACH_Z = PART_Z + SAFE_Z
 
     -- 1. Elevate straight up from the faceplate target to safe Z clearance.
-    PointsOffsetEnable(1, faceplateX, faceplateY, APPROACH_Z, 0, 0, 0)
-    Lin(zerozero, speed, -1, 0, 1)
+    PointsOffsetEnable(0, faceplateX, faceplateY, APPROACH_Z, 0, 0, 0)
+    PTP(zerozero, speed, -1, 0)
     PointsOffsetDisable()
 
     -- 2. Traverse at safe Z clearance to homewf XY.
-    PointsOffsetEnable(1, 0, 0, APPROACH_Z, 0, 0, 0)
-    Lin(homewf, speed, -1, 0, 1)
+    PointsOffsetEnable(0, 0, 0, APPROACH_Z, 0, 0, 0)
+    PTP(homewf, speed, -1, 0)
     PointsOffsetDisable()
 
     -- 3. Descend to homewf.
-    Lin(homewf, speed, -1, 0, 0)
+    PTP(homewf, speed, -1, 0)
 end
 

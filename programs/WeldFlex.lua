@@ -5,12 +5,13 @@ blend = -1
 wobj = 4
 offsetEnable = 1
 speed = 25 --{{SPEED}}
-SAFE_Z = 10.0 --{{SAFE_Z}}
+SAFE_Z = 60.0 --{{SAFE_Z}}
+RETRACT_Z = 10.0 --{{RETRACT_Z}}
 PART_Z = 0.0 --{{PART_Z}}
-HIGH_Z_CLEARANCE = 50.0 --{{HIGH_Z}}
 PRESS_LBF = 20.0 --{{PRESS_LBF}}
 STUD_TYPE = "M4" --{{STUD_TYPE}}
 SUBSTRATE = "Mild Steel" --{{SUBSTRATE}}
+ARM_MODE = "live" --{{ARM_MODE}}
 BOUNDARY_MS = 1500 --{{BOUNDARY_MS}}
 
 -- Home Position (homewf registered point on controller)
@@ -22,12 +23,9 @@ studs = {
 
 --{{CYCLE_COUNT}}
 
--- Move to starting home position (elevate to safe Z first)
+-- Move to the taught home position, which is already safe.
 if USE_HOME_MOVE == 1 then
-    APPROACH_Z = PART_Z + SAFE_Z
-    PointsOffsetEnable(1, 0, 0, APPROACH_Z, 0, 0, 0)
     Lin(homewf, speed, -1, 0, 1)
-    PointsOffsetDisable()
 end
 
 local jobAborted = false
@@ -37,36 +35,42 @@ local lastWeldY = nil
 for cycleIndex = 1, cycleCount do --{{LOOP_START}}
     for _, stud in ipairs(studs) do
         -- Publish weld.lua input contract globals
-        weldX = stud.y
-        weldY = stud.x
+        weldX = stud.x
+        weldY = stud.y
         WELD_RUN = 1
-        WELD_ARMED = 1
-        WELD_SAFE_Z = SAFE_Z
-        Z_CLEARANCE = SAFE_Z
+        WELD_ARMED = 0
+        if ARM_MODE == "live" then
+            WELD_ARMED = 1
+        end
+        WELD_RETRACT_Z = RETRACT_Z
         WELD_PART_Z = PART_Z
+        Z_CLEARANCE = PART_Z + RETRACT_Z
         WELD_PRESS_LBF = stud.pressLbf or PRESS_LBF
         WELD_STUD_TYPE = STUD_TYPE
         WELD_SUBSTRATE = SUBSTRATE
 
-        APPROACH_Z = PART_Z + SAFE_Z
-        HIGH_Z = APPROACH_Z + HIGH_Z_CLEARANCE
+        APPROACH_Z = PART_Z + RETRACT_Z
+        HIGH_Z = PART_Z + SAFE_Z
 
-        -- 1. If coming from a previous stud, elevate straight UP to high Z level first
-        if lastWeldX ~= nil and lastWeldY ~= nil then
-            PointsOffsetEnable(1, lastWeldX, lastWeldY, HIGH_Z, 0, 0, 0)
+        -- The first move leaves home at high clearance. After each weld,
+        -- weld.lua has already retracted to APPROACH_Z for the local traverse.
+        local travelZ = APPROACH_Z
+        if lastWeldX == nil or lastWeldY == nil then
+            travelZ = HIGH_Z
+        end
+        -- flag=0: offset in the wobj-4 workpiece frame (FR Lua manual §3.2.12),
+        -- not flag=1's tool frame — flag=1 rode the torch's current orientation
+        -- instead of the taught bed axes, which is why Z looked ignored.
+        PointsOffsetEnable(0, weldX, weldY, travelZ, 0, 0, 0)
+        Lin(zerozero, speed, -1, 0, 1)
+        PointsOffsetDisable()
+
+        if travelZ ~= APPROACH_Z then
+            -- Descend from high travel clearance into the first stud's approach level.
+            PointsOffsetEnable(0, weldX, weldY, APPROACH_Z, 0, 0, 0)
             Lin(zerozero, speed, -1, 0, 1)
             PointsOffsetDisable()
         end
-
-        -- 2. Traverse horizontally in X/Y to stud position at high Z level
-        PointsOffsetEnable(1, weldX, weldY, HIGH_Z, 0, 0, 0)
-        Lin(zerozero, speed, -1, 0, 1)
-        PointsOffsetDisable()
-
-        -- 3. Move vertically down into place Z level (APPROACH_Z) over stud
-        PointsOffsetEnable(1, weldX, weldY, APPROACH_Z, 0, 0, 0)
-        Lin(zerozero, speed, -1, 0, 1)
-        PointsOffsetDisable()
 
         lastWeldX = weldX
         lastWeldY = weldY
@@ -83,31 +87,22 @@ for cycleIndex = 1, cycleCount do --{{LOOP_START}}
         end
     end
 
+    -- Clear the part before the next cycle (and on a fault): elevate off the
+    -- last stud, then return to the taught home so the operator can swap parts
+    -- with the head out of the way. Runs every cycle, including the last.
+    if USE_HOME_MOVE == 1 then
+        if lastWeldX ~= nil and lastWeldY ~= nil then
+            PointsOffsetEnable(0, lastWeldX, lastWeldY, HIGH_Z, 0, 0, 0)
+            Lin(zerozero, speed, -1, 0, 1)
+            PointsOffsetDisable()
+        end
+        Lin(homewf, speed, -1, 0, 1)
+        lastWeldX = nil
+        lastWeldY = nil
+    end
+
     if jobAborted then break end
 
     WaitMs(BOUNDARY_MS) --{{CYCLE_MARKER}}
     --{{GATE}}
-end
-
--- =========================================
--- Return to Home Sequence
--- =========================================
-if USE_HOME_MOVE == 1 then
-    APPROACH_Z = PART_Z + SAFE_Z
-    HIGH_Z = APPROACH_Z + HIGH_Z_CLEARANCE
-
-    -- 1. Elevate straight UP to high Z level at current position if returning from a stud
-    if lastWeldX ~= nil and lastWeldY ~= nil then
-        PointsOffsetEnable(1, lastWeldX, lastWeldY, HIGH_Z, 0, 0, 0)
-        Lin(zerozero, speed, -1, 0, 1)
-        PointsOffsetDisable()
-    end
-
-    -- 2. Traverse at safe Z clearance to homewf XY
-    PointsOffsetEnable(1, 0, 0, APPROACH_Z, 0, 0, 0)
-    Lin(homewf, speed, -1, 0, 1)
-    PointsOffsetDisable()
-
-    -- 3. Descend to homewf
-    Lin(homewf, speed, -1, 0, 0)
 end

@@ -24,22 +24,28 @@
         <h4 class="parts-settings-heading">Job Parameters</h4>
         <div class="parts-settings-grid">
           <div class="parts-field-group">
-            <label for="safe_z" class="parts-field-label">Safe Z Level (mm)</label>
-            <input type="number" id="safe_z" name="safe_z" step="0.1"
-                   value="{{ recipe.safe_z if recipe and recipe.safe_z is not none else 10.0 }}"
+            <label for="part_z" class="parts-field-label">Part Z (Surface Height, mm)</label>
+            <input type="number" id="part_z" name="part_z" step="0.1"
+                   value="{{ recipe.part_z if recipe and recipe.part_z is not none else 0.0 }}"
                    class="parts-setting-input">
           </div>
           <div class="parts-field-group">
-            <label for="part_z" class="parts-field-label">Part Z Level (mm)</label>
-            <input type="number" id="part_z" name="part_z" step="0.1"
-                   value="{{ recipe.part_z if recipe and recipe.part_z is not none else 0.0 }}"
+            <label for="retract_z" class="parts-field-label">Retract Height (mm)</label>
+            <input type="number" id="retract_z" name="retract_z" step="0.1"
+                   value="{{ recipe.retract_z if recipe and recipe.retract_z is not none else 10.0 }}"
+                   class="parts-setting-input">
+          </div>
+          <div class="parts-field-group">
+            <label for="safe_z" class="parts-field-label">Safe Z (Home Travel, mm)</label>
+            <input type="number" id="safe_z" name="safe_z" step="0.1"
+                   value="{{ recipe.safe_z if recipe and recipe.safe_z is not none else 60.0 }}"
                    class="parts-setting-input">
           </div>
           <div class="parts-field-group">
             <label for="stud_type" class="parts-field-label">Stud Selector</label>
             <select id="stud_type" name="stud_type" class="parts-setting-select">
               {% set cur_stud = recipe.stud_type if recipe else 'M4' %}
-              {% for opt in ['M3', 'M4', 'M5', 'M6', 'M8', '1/4"'] %}
+              {% for opt in ['M2', 'M2.5', 'M3', 'M4', 'M5', 'M6', 'M8', 'M10', 'M12', '1/8"', '3/16"', '1/4"', '5/16"', '3/8"', '1/2"'] %}
                 <option value="{{ opt }}" {% if cur_stud == opt %}selected{% endif %}>{{ opt }}</option>
               {% endfor %}
             </select>
@@ -59,6 +65,12 @@
                    value="{{ recipe.pressure_setting if recipe and recipe.pressure_setting is not none else 20.0 }}"
                    class="parts-setting-input">
           </div>
+          <div class="parts-field-group">
+            <label for="speed" class="parts-field-label">Motion Speed (%)</label>
+            <input type="number" id="speed" name="speed" step="1" min="1" max="100"
+                   value="{{ recipe.speed if recipe and recipe.speed is not none else 25 }}"
+                   class="parts-setting-input">
+          </div>
         </div>
       </div>
 
@@ -72,7 +84,7 @@
         <div class="parts-run-right">
           {{ action_button('Save', variant='recipe-save', icon='save',
                hx_post='/ui/recipes/save',
-               hx_include='#recipe_name, #studs_text, #coord-table-body input, #safe_z, #part_z, #stud_type, #substrate, #pressure_setting',
+            hx_include='#recipe_name, #studs_text, #coord-table-body input, #part_z, #retract_z, #safe_z, #stud_type, #substrate, #pressure_setting, #speed',
                hx_target='#toast-rack',
                hx_on_after_request="if(event.detail.successful){syncPartsEditorUrl()}") }}
           {{ action_button('Run', variant='run', icon='play',

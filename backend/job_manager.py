@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any, Callable, Sequence
 
 from lua_builder import (
+    ARM_MODES,
     GATE_MODES,
     PROGRAM_NAME,
     WELD_PATH,
@@ -209,6 +210,7 @@ class JobSnapshot:
     part_name: str | None = None
     program: str = PROGRAM_NAME
     gate_mode: str = "pause"
+    arm_mode: str = "live"
     stud_count: int = 0
     cycles_target: int = 0
     cycles_done: int = 0
@@ -261,12 +263,15 @@ class _Session:
     studs: list = field(default_factory=list)
     program: str = PROGRAM_NAME
     gate_mode: str = "pause"
+    arm_mode: str = "live"
     cycles_target: int = 0
-    safe_z: float = 10.0
+    safe_z: float = 60.0
+    retract_z: float = 10.0
     part_z: float = 0.0
     pressure_setting: str = "high"
     stud_type: str = "M4"
     substrate: str = "Mild Steel"
+    speed: float | int | None = None
     started_at: str | None = None
     started_ts: float | None = None
     ended_at: str | None = None
@@ -328,11 +333,14 @@ class JobManager:
         studs: Sequence[dict],
         cycles: int,
         gate_mode: str = "pause",
-        safe_z: float = 10.0,
+        arm_mode: str = "live",
+        safe_z: float = 60.0,
+        retract_z: float = 10.0,
         part_z: float = 0.0,
         pressure_setting: str = "high",
         stud_type: str = "M4",
         substrate: str = "Mild Steel",
+        speed: float | int | None = None,
         kind: str = "part",
     ) -> JobSnapshot:
         """Queue a part (or a faceplate maintenance run) for running.
@@ -345,6 +353,8 @@ class JobManager:
         """
         if gate_mode not in GATE_MODES:
             raise JobError(f"Unknown gate mode {gate_mode!r}")
+        if arm_mode not in ARM_MODES:
+            raise JobError(f"Unknown arm mode {arm_mode!r}")
         cycles = max(1, int(cycles))
         with self._lock:
             state = self._state_locked()
@@ -359,19 +369,22 @@ class JobManager:
                 part_name=part_name,
                 studs=list(studs),
                 gate_mode=gate_mode,
+                arm_mode=arm_mode,
                 cycles_target=cycles,
                 safe_z=float(safe_z),
+                retract_z=float(retract_z),
                 part_z=float(part_z),
                 pressure_setting=str(pressure_setting),
                 stud_type=str(stud_type),
                 substrate=str(substrate),
+                speed=speed,
             )
             snap = self._snapshot_locked()
-        log.info("job loaded run_id=%s part=%r cycles=%d gate=%s studs=%d",
-                 run_id, part_name, cycles, gate_mode, len(studs))
+        log.info("job loaded run_id=%s part=%r cycles=%d gate=%s arm=%s studs=%d",
+                 run_id, part_name, cycles, gate_mode, arm_mode, len(studs))
         self._event(run_id, "load", {"part_id": part_id, "part_name": part_name,
                                      "cycles": cycles, "gate_mode": gate_mode,
-                                     "studs": len(studs)})
+                                     "arm_mode": arm_mode, "studs": len(studs)})
         return snap
 
     def start(self) -> JobSnapshot:
@@ -567,6 +580,7 @@ class JobManager:
             part_name=sess.part_name,
             program=sess.program,
             gate_mode=sess.gate_mode,
+            arm_mode=sess.arm_mode,
             stud_count=len(sess.studs),
             cycles_target=sess.cycles_target,
             cycles_done=sess.cycles_done,
@@ -596,11 +610,14 @@ class JobManager:
                 studs = list(sess.studs)
                 cycles = sess.cycles_target
                 gate_mode = sess.gate_mode
+                arm_mode = sess.arm_mode
                 safe_z = sess.safe_z
+                retract_z = sess.retract_z
                 part_z = sess.part_z
                 pressure_setting = sess.pressure_setting
                 stud_type = sess.stud_type
                 substrate = sess.substrate
+                speed = sess.speed
 
             if kind == "faceplate":
                 if not studs:
@@ -610,22 +627,27 @@ class JobManager:
                     studs[0]["y"],
                     cycles,
                     gate_mode=gate_mode,
+                    arm_mode=arm_mode,
                     safe_z=safe_z,
                     part_z=part_z,
                     pressure_setting=pressure_setting,
                     stud_type=stud_type,
                     substrate=substrate,
+                    speed=speed,
                 )
             else:
                 built = build_weldflex_lua(
                     studs,
                     cycles,
                     gate_mode=gate_mode,
+                    arm_mode=arm_mode,
                     safe_z=safe_z,
+                    retract_z=retract_z,
                     part_z=part_z,
                     pressure_setting=pressure_setting,
                     stud_type=stud_type,
                     substrate=substrate,
+                    speed=speed,
                 )
 
             tmp_dir = tempfile.mkdtemp()
@@ -917,6 +939,7 @@ class JobManager:
                 "error": sess.error,
                 "cycle_times": list(sess.cycle_times),
                 "safe_z": sess.safe_z,
+                "retract_z": sess.retract_z,
                 "part_z": sess.part_z,
                 "pressure_setting": sess.pressure_setting,
                 "stud_type": sess.stud_type,

@@ -104,14 +104,14 @@
                value="{{ recipe.safe_z }}" required>
       </div>
       <div>
-        <label for="fp_part_z">Part Z Level (mm)</label>
+        <label for="fp_part_z">Work Object Z Level (mm)</label>
         <input id="fp_part_z" name="part_z" type="text" inputmode="none" data-kbd="num"
                value="{{ recipe.part_z }}" required>
       </div>
       <div>
         <label for="fp_stud_type">Stud Selector</label>
         <select id="fp_stud_type" name="stud_type">
-          {% for opt in ['M3', 'M4', 'M5', 'M6', 'M8', '1/4"'] %}
+          {% for opt in ['M2', 'M2.5', 'M3', 'M4', 'M5', 'M6', 'M8', 'M10', 'M12', '1/8"', '3/16"', '1/4"', '5/16"', '3/8"', '1/2"'] %}
           <option value="{{ opt }}" {% if recipe.stud_type == opt %}selected{% endif %}>{{ opt }}</option>
           {% endfor %}
         </select>

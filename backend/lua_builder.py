@@ -49,6 +49,7 @@ IO_MONITOR_DEFAULT_MS = 45000
 PRESS_LBF_MAX = 25.0
 
 GATE_MODES = ("none", "pause", "di")
+ARM_MODES = ("live", "dry")
 
 # WaitDI(id, status, maxtime_ms, opt). opt=0 means "stop the program and report a
 # timeout" — the only safe choice here. opt=1 falls through on timeout, which would
@@ -71,8 +72,10 @@ PAUSE_GATE_CODE = 0
 
 # The cycle loop's variable and bound, identical in both templates. The pause gate
 # is emitted as `if <var> < <count> then` so the last cycle does *not* hold — there
-# is no next part to swap in, and a pause nothing releases would strand the run
-# short of its home return. tests/test_lua_builder.py pins both names.
+# is no next part to swap in, and a pause nothing releases would strand the run.
+# (weld_faceplate.lua still has its home return to do after the last cycle;
+# WeldFlex.lua now homes every cycle, including the last, before this gate runs.)
+# tests/test_lua_builder.py pins both names.
 GATE_LOOP_VAR = "cycleIndex"
 GATE_COUNT_VAR = "cycleCount"
 
@@ -177,8 +180,8 @@ def _gate_rows(gate_mode: str, indent: str, gate_di: int, gate_timeout_ms: int) 
             f"{indent}-- Inter-cycle gate: the program pauses itself here (gate_mode=pause).",
             f"{indent}-- The host only watches for the paused state and shows Continue; it does",
             f"{indent}-- not have to land a ProgramPause inside the dwell any more.",
-            f"{indent}-- Skipped after the last cycle: nothing releases it, and the run still",
-            f"{indent}-- has its home return to do.",
+            f"{indent}-- Skipped after the last cycle: nothing releases it, and there is no",
+            f"{indent}-- next part to swap in.",
             f"{indent}if {GATE_LOOP_VAR} < {GATE_COUNT_VAR} then",
             f"{body}Pause({PAUSE_GATE_CODE})",
             f"{indent}end",
@@ -210,13 +213,14 @@ def build_weldflex_lua(
     studs: Sequence[dict],
     cycles: int,
     gate_mode: str = "pause",
+    arm_mode: str = "live",
     template_path: str | os.PathLike | None = None,
     gate_di: int | None = None,
     gate_timeout_ms: int | None = None,
     boundary_ms: int | None = None,
     safe_z: float | int | None = None,
+    retract_z: float | int | None = None,
     part_z: float | int | None = None,
-    high_z: float | int | None = None,
     pressure_setting: str | float | int | None = None,
     stud_type: str | None = None,
     substrate: str | None = None,
@@ -225,6 +229,8 @@ def build_weldflex_lua(
     """Substitute the template's markers and report the generated line numbers."""
     if gate_mode not in GATE_MODES:
         raise ValueError(f"Unknown gate_mode {gate_mode!r}; expected one of {GATE_MODES}")
+    if arm_mode not in ARM_MODES:
+        raise ValueError(f"Unknown arm_mode {arm_mode!r}; expected one of {ARM_MODES}")
     cycles = int(cycles)
     if cycles < 1:
         raise ValueError(f"cycles must be >= 1, got {cycles}")
@@ -235,13 +241,15 @@ def build_weldflex_lua(
     template_lines = path.read_text(encoding="utf-8").splitlines()
 
     dwell_ms = default_boundary_ms(gate_mode) if boundary_ms is None else int(boundary_ms)
-    safe_z_val = 10.0 if safe_z is None else float(safe_z)
+    safe_z_val = 60.0 if safe_z is None else float(safe_z)
+    retract_z_val = 10.0 if retract_z is None else float(retract_z)
     part_z_val = 0.0 if part_z is None else float(part_z)
-    high_z_val = 50.0 if high_z is None else float(high_z)
     press_lbf_val = _parse_pressure(pressure_setting)
     stud_type_val = stud_type or "M4"
     substrate_val = substrate or "Mild Steel"
-    speed_val = max(1, min(100, int(speed))) if speed is not None else 25
+    # Dry runs are for watching travel safely, not production cadence — default
+    # them much slower unless the caller asks for a specific speed.
+    speed_val = max(1, min(100, int(speed))) if speed is not None else (10 if arm_mode == "dry" else 25)
 
     out: list[str] = []
     loop_start_line = cycle_marker_line = gate_line = 0
@@ -256,14 +264,16 @@ def build_weldflex_lua(
         elif "--{{BOUNDARY_MS}}" in line:
             out.append(f"{indent}BOUNDARY_MS = {dwell_ms}")
             boundary_seen = True
+        elif "--{{ARM_MODE}}" in line:
+            out.append(f"{indent}ARM_MODE = {format_lua_string(arm_mode)}")
         elif "--{{SPEED}}" in line:
             out.append(f"{indent}speed = {speed_val}")
         elif "--{{SAFE_Z}}" in line:
             out.append(f"{indent}SAFE_Z = {format_number(safe_z_val)}")
+        elif "--{{RETRACT_Z}}" in line:
+            out.append(f"{indent}RETRACT_Z = {format_number(retract_z_val)}")
         elif "--{{PART_Z}}" in line:
             out.append(f"{indent}PART_Z = {format_number(part_z_val)}")
-        elif "--{{HIGH_Z}}" in line:
-            out.append(f"{indent}HIGH_Z_CLEARANCE = {format_number(high_z_val)}")
         elif "--{{PRESS_LBF}}" in line:
             out.append(f"{indent}PRESS_LBF = {format_number(press_lbf_val)}")
         elif "--{{STUD_TYPE}}" in line:
@@ -327,6 +337,7 @@ def build_weld_faceplate_lua(
     y: float | int,
     cycles: int,
     gate_mode: str = "pause",
+    arm_mode: str = "live",
     template_path: str | os.PathLike | None = None,
     gate_di: int | None = None,
     gate_timeout_ms: int | None = None,
@@ -348,6 +359,8 @@ def build_weld_faceplate_lua(
     """
     if gate_mode not in GATE_MODES:
         raise ValueError(f"Unknown gate_mode {gate_mode!r}; expected one of {GATE_MODES}")
+    if arm_mode not in ARM_MODES:
+        raise ValueError(f"Unknown arm_mode {arm_mode!r}; expected one of {ARM_MODES}")
     cycles = int(cycles)
     if cycles < 1:
         raise ValueError(f"cycles must be >= 1, got {cycles}")
@@ -363,7 +376,7 @@ def build_weld_faceplate_lua(
     press_lbf_val = _parse_pressure(pressure_setting)
     stud_type_val = stud_type or "M4"
     substrate_val = substrate or "Mild Steel"
-    speed_val = max(1, min(100, int(speed))) if speed is not None else 25
+    speed_val = max(1, min(100, int(speed))) if speed is not None else (10 if arm_mode == "dry" else 25)
     x_val = float(x)
     y_val = float(y)
 
@@ -382,6 +395,8 @@ def build_weld_faceplate_lua(
         elif "--{{BOUNDARY_MS}}" in line:
             out.append(f"{indent}BOUNDARY_MS = {dwell_ms}")
             boundary_seen = True
+        elif "--{{ARM_MODE}}" in line:
+            out.append(f"{indent}ARM_MODE = {format_lua_string(arm_mode)}")
         elif "--{{SPEED}}" in line:
             out.append(f"{indent}speed = {speed_val}")
         elif "--{{SAFE_Z}}" in line:

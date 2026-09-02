@@ -23,6 +23,10 @@
         </button>
       </div>
       <div class="pd-header-right-tools">
+        <button type="button" class="pd-tool-btn pd-dry-run-btn" title="Test this design with a dry run" onclick="pdOpenDryRunConfirmModal()">
+          {{ icon_safe('play_circle', width=13, height=13) }}
+          Dry Run
+        </button>
         <button type="button" class="pd-tool-btn save pd-hidden" id="pd-save-btn" onclick="pdSave()">
           {{ icon_safe('save', width=13, height=13) }}
           Save
@@ -36,14 +40,14 @@
       </div>
     </div>
     <div class="pd-canvas-stage">
-      <svg id="pd-bed" viewBox="0 0 508 508" preserveAspectRatio="xMidYMid meet"
+      <svg id="pd-bed" viewBox="0 0 762 762" preserveAspectRatio="xMidYMid meet"
            xmlns="http://www.w3.org/2000/svg">
         <g id="pd-grid"></g>
         <g id="pd-path"></g>
         <g id="pd-points"></g>
       </svg>
     </div>
-    <div class="pd-canvas-coords" id="pd-coords">508 × 508 mm bed</div>
+    <div class="pd-canvas-coords" id="pd-coords">zerozero reference · 762 × 762 mm bed</div>
   </div>
 
   <!-- ── Right: stud list ─────────────────────────────────────── -->
@@ -82,6 +86,18 @@
   </div>
 </div>
 
+<!-- Dry Run Confirmation modal -->
+<div id="pd-dry-run-confirm-modal" class="wf-modal-overlay" hidden>
+  <div class="wf-modal">
+    <p class="wf-modal-msg">Run Dry-Test?</p>
+    <p class="pd-dry-run-msg">Test <strong id="pd-dry-run-part-name"></strong> without firing. The robot will search, press, retract, and reload each stud.</p>
+    <div class="wf-modal-actions">
+      <button type="button" class="btn wf-cancel" onclick="pdCloseDryRunConfirmModal()">Cancel</button>
+      <button type="button" class="btn run" onclick="pdConfirmDryRun()">Run Dry Test</button>
+    </div>
+  </div>
+</div>
+
 <!-- Delete Part modal -->
 <div id="pd-delete-modal" class="wf-modal-overlay" hidden>
   <div class="wf-modal">
@@ -115,22 +131,42 @@
     <p class="wf-modal-msg">Job Settings — <span id="pd-modal-settings-part-name">Part</span></p>
     <div class="pd-modal-form-grid">
       <div class="pd-param-group">
-        <label for="pd-modal-safe-z" class="pd-param-label">Safe Z Level (mm)</label>
-        <input type="number" id="pd-modal-safe-z" class="pd-param-input" step="0.1" value="10.0">
+        <label for="pd-units" class="pd-param-label">Units</label>
+        <select id="pd-units" class="pd-param-select" aria-label="Design units" onchange="pdSetUnits(this.value)">
+          <option value="mm">mm</option>
+          <option value="in">in</option>
+        </select>
       </div>
       <div class="pd-param-group">
-        <label for="pd-modal-part-z" class="pd-param-label">Part Z Level (mm)</label>
-        <input type="number" id="pd-modal-part-z" class="pd-param-input" step="0.1" value="0.0">
+        <label for="pd-modal-part-z" class="pd-param-label">Part Z (Surface Height, <span class="pd-length-unit">mm</span>)</label>
+        <input type="number" id="pd-modal-part-z" class="pd-param-input" step="0.1" value="0.0" inputmode="none" data-kbd="num">
+      </div>
+      <div class="pd-param-group">
+        <label for="pd-modal-retract-z" class="pd-param-label">Retract Height (<span class="pd-length-unit">mm</span>)</label>
+        <input type="number" id="pd-modal-retract-z" class="pd-param-input" step="0.1" value="10.0" inputmode="none" data-kbd="num">
+      </div>
+      <div class="pd-param-group">
+        <label for="pd-modal-safe-z" class="pd-param-label">Safe Z (Home Travel, <span class="pd-length-unit">mm</span>)</label>
+        <input type="number" id="pd-modal-safe-z" class="pd-param-input" step="0.1" value="60.0" inputmode="none" data-kbd="num">
       </div>
       <div class="pd-param-group">
         <label for="pd-modal-stud-type" class="pd-param-label">Stud Selector</label>
         <select id="pd-modal-stud-type" class="pd-param-select">
+          <option value="M2">M2</option>
+          <option value="M2.5">M2.5</option>
           <option value="M3">M3</option>
           <option value="M4">M4</option>
           <option value="M5">M5</option>
           <option value="M6">M6</option>
           <option value="M8">M8</option>
+          <option value="M10">M10</option>
+          <option value="M12">M12</option>
+          <option value='1/8"'>1/8"</option>
+          <option value='3/16"'>3/16"</option>
           <option value='1/4"'>1/4"</option>
+          <option value='5/16"'>5/16"</option>
+          <option value='3/8"'>3/8"</option>
+          <option value='1/2"'>1/2"</option>
         </select>
       </div>
       <div class="pd-param-group">
@@ -144,7 +180,11 @@
       </div>
       <div class="pd-param-group">
         <label for="pd-modal-pressure" class="pd-param-label">Target Pressure (lbf)</label>
-        <input type="number" id="pd-modal-pressure" class="pd-param-input" step="0.1" value="20.0">
+        <input type="number" id="pd-modal-pressure" class="pd-param-input" step="0.1" value="20.0" inputmode="none" data-kbd="num">
+      </div>
+      <div class="pd-param-group">
+        <label for="pd-modal-speed" class="pd-param-label">Motion Speed (%)</label>
+        <input type="number" id="pd-modal-speed" class="pd-param-input" step="1" min="1" max="100" value="25" inputmode="none" data-kbd="num">
       </div>
     </div>
     <div class="wf-modal-actions">

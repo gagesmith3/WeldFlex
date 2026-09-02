@@ -11,7 +11,7 @@ The sequence moves through 6 distinct phases:
 
 1. **SEARCH**: `FT_FindSurface` creeps in until light contact (`CONTACT_FORCE_N = 10 N`), then `DI1` must confirm stud-on-work continuity.
 2. **PRESS**: `FT_Control` regulates target force (`PRESS_TARGET_LBF`, default 20 lbf / 88.96 N) while `FT_LinInsertion` drives in, holding pressure for `PRESS_HOLD_MS`.
-3. **WELD**: Re-checks `DI1`, waits for `DI0` (capacitors charged), then pulses `DO0` for `WELD_PULSE_MS` (250 ms) if `WELD_ARMED = 1`.
+3. **WELD**: Re-checks `DI1` and `DI0` (capacitors charged), then pulses `DO0` for `WELD_PULSE_MS` (250 ms) only if `WELD_ARMED = 1`.
 4. **HOLD**: Remains at pressure for `POST_WELD_HOLD_MS` (500 ms) while weld solidifies.
 5. **RETRACT**: Returns to safe `Z_CLEARANCE` set by caller.
 6. **FEED**: Pulses `DO1` for `FEED_PULSE_MS` (1000 ms) to advance the next stud into the torch.
@@ -67,7 +67,7 @@ After a fault, the program parks ~3s on a unique `WaitMs` line site (`1`, `4`, `
 - `WELD_RUN`: Set to `1` to execute sequence. Controller upload check executes top-level Lua on upload; without `WELD_RUN = 1`, file is define-only.
 
 ### Optional Globals:
-- `WELD_ARMED`: `1` fires `DO0` for real. Any other value (or unset) disarms weld output.
+- `WELD_ARMED`: `1` fires `DO0` for real. Any other value (or unset) suppresses the weld pulse while search, press, hold, retract, and feeder advance still run.
 - `WELD_FORCE_TEST`: `1` = force verification mode. Ignores `DI1` check failure (reports only), stretches hold to 5000 ms, ends after retract, forces `DO0` off.
 - `WELD_PRESS_LBF`: Press target in lbf, overriding 20.0 lbf default (clamped up to `PRESS_TARGET_MAX_LBF = 25.0 lbf`).
 

@@ -132,6 +132,16 @@ def _recipes_load():
         if not r.get('id'):
             r['id'] = str(uuid.uuid4())
             migrated = True
+        if r.get('name') != FACEPLATE_RECIPE_NAME and 'retract_z' not in r:
+            try:
+                retract_z = float(r.get('safe_z', 10.0))
+                safe_z = retract_z + float(r.get('high_z_clearance', 50.0))
+            except (TypeError, ValueError):
+                retract_z, safe_z = 10.0, 60.0
+            r['retract_z'] = retract_z
+            r['safe_z'] = safe_z
+            r.pop('high_z_clearance', None)
+            migrated = True
     if migrated:
         _recipes_save(recipes)
     return recipes
@@ -154,6 +164,7 @@ def _recipes_enrich(recipes):
     result = []
     for r in recipes:
         studs = r.get('studs', [])
+        is_faceplate = r.get('name') == FACEPLATE_RECIPE_NAME
         ts = r.get('updated_at') or r.get('created_at', '')
         try:
             label = datetime.fromisoformat(ts).strftime('%b %d, %Y')
@@ -163,8 +174,10 @@ def _recipes_enrich(recipes):
             **r,
             'studs_count': len(studs),
             'updated_label': label,
-            'safe_z': float(r.get('safe_z', 10.0)),
+            'safe_z': float(r.get('safe_z', 10.0 if is_faceplate else 60.0)),
+            'retract_z': float(r.get('retract_z', 10.0)),
             'part_z': float(r.get('part_z', 0.0)),
+            'units': 'in' if r.get('units') == 'in' else 'mm',
             'stud_type': r.get('stud_type') or 'M4',
             'substrate': r.get('substrate') or 'Mild Steel',
             'pressure_setting': _parse_pressure(r.get('pressure_setting')),
@@ -235,7 +248,7 @@ def _parse_studs(text):
     return studs, None
 
 def _preview_data(studs):
-    BED = 508.0
+    BED = 762.0  # 30in bed, in mm
     return {
         'graph_points': [
             {'x_plot': round((BED - s['x']) / BED * 200, 2),
@@ -442,9 +455,14 @@ def ui_recipes_save():
                                title='Save Recipe', payload={'error': 'Recipe name is required'})
 
     try:
-        safe_z = float(request.form.get('safe_z') or 10.0)
+        safe_z = float(request.form.get('safe_z') or 60.0)
     except ValueError:
-        safe_z = 10.0
+        safe_z = 60.0
+
+    try:
+        retract_z = float(request.form.get('retract_z') or 10.0)
+    except ValueError:
+        retract_z = 10.0
 
     try:
         part_z = float(request.form.get('part_z') or 0.0)
@@ -457,6 +475,13 @@ def ui_recipes_save():
         pressure_setting = float(request.form.get('pressure_setting') or 20.0)
     except (ValueError, TypeError):
         pressure_setting = _parse_pressure(request.form.get('pressure_setting'))
+    units = 'in' if request.form.get('units') == 'in' else 'mm'
+
+    speed_raw = (request.form.get('speed') or '').strip()
+    try:
+        speed = max(1, min(100, int(float(speed_raw)))) if speed_raw else None
+    except ValueError:
+        speed = None
 
     studs_json = (request.form.get('studs_json') or '').strip()
     studs_text = (request.form.get('studs_text') or '').strip()
@@ -480,10 +505,14 @@ def ui_recipes_save():
             existing['name']             = name
             existing['studs']            = studs
             existing['safe_z']           = safe_z
+            existing['retract_z']        = retract_z
             existing['part_z']           = part_z
+            existing.pop('high_z_clearance', None)
+            existing['units']            = units
             existing['stud_type']        = stud_type
             existing['substrate']       = substrate
             existing['pressure_setting'] = pressure_setting
+            existing['speed']            = speed
             existing['updated_at']       = now
             saved_id = existing['id']
         else:
@@ -493,10 +522,13 @@ def ui_recipes_save():
                 'name': name,
                 'studs': studs,
                 'safe_z': safe_z,
+                'retract_z': retract_z,
                 'part_z': part_z,
+                'units': units,
                 'stud_type': stud_type,
                 'substrate': substrate,
                 'pressure_setting': pressure_setting,
+                'speed': speed,
                 'created_at': now,
                 'updated_at': now,
                 'times_ran': 0,
@@ -619,6 +651,14 @@ def ui_job_load():
     recipe = next((r for r in enriched if r.get("id") == part_id), None)
     if not recipe:
         return jsonify({"ok": False, "error": "Part not found"}), 404
+    arm_mode = (request.form.get("arm_mode") or "live").strip().lower()
+    if arm_mode not in ("live", "dry"):
+        arm_mode = "live"
+    speed_raw = (request.form.get("speed") or "").strip()
+    try:
+        speed = max(1, min(100, int(float(speed_raw)))) if speed_raw else recipe.get("speed")
+    except ValueError:
+        speed = recipe.get("speed")
     try:
         job.load(
             part_id,
@@ -626,11 +666,14 @@ def ui_job_load():
             recipe.get("studs", []),
             cycles,
             gate_mode=gate_mode,
-            safe_z=recipe.get("safe_z", 10.0),
+            arm_mode=arm_mode,
+            safe_z=recipe.get("safe_z", 60.0),
+            retract_z=recipe.get("retract_z", 10.0),
             part_z=recipe.get("part_z", 0.0),
             pressure_setting=recipe.get("pressure_setting", "high"),
             stud_type=recipe.get("stud_type", "M4"),
             substrate=recipe.get("substrate", "Mild Steel"),
+            speed=speed,
         )
     except JobError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 409
@@ -728,8 +771,8 @@ def ui_faceplate_move_position():
         f"faceplateX = {x_val}\n"
         f"faceplateY = {y_val}\n"
         f"APPROACH_Z = {approach_z}\n"
-        "PointsOffsetEnable(1, faceplateX, faceplateY, APPROACH_Z, 0, 0, 0)\n"
-        "Lin(zerozero, speed, -1, 0, 1)\n"
+        "PointsOffsetEnable(0, faceplateX, faceplateY, APPROACH_Z, 0, 0, 0)\n"
+        "PTP(zerozero, speed, -1, 0)\n"
         "PointsOffsetDisable()\n"
     )
 
@@ -769,10 +812,12 @@ def ui_faceplate_weld():
             "__faceplate__", "Faceplate", studs[:1], cycles,
             gate_mode="none", kind="faceplate",
             safe_z=recipe.get('safe_z', 10.0),
+            retract_z=recipe.get('retract_z', 10.0),
             part_z=recipe.get('part_z', 0.0),
             pressure_setting=recipe.get('pressure_setting', 20.0),
             stud_type=recipe.get('stud_type', 'M4'),
             substrate=recipe.get('substrate', 'Mild Steel'),
+            speed=recipe.get('speed'),
         )
         job.start()
         ok, payload = True, {"message": f"Faceplate weld launched ({cycles} cycle{'s' if cycles > 1 else ''})"}
@@ -803,8 +848,8 @@ def ui_faceplate_move_home():
         "wobj = 4\n"
         "speed = 25\n"
         f"APPROACH_Z = {approach_z}\n"
-        "PointsOffsetEnable(1, 0, 0, APPROACH_Z, 0, 0, 0)\n"
-        "Lin(zerozero, speed, -1, 0, 1)\n"
+        "PointsOffsetEnable(0, 0, 0, APPROACH_Z, 0, 0, 0)\n"
+        "PTP(zerozero, speed, -1, 0)\n"
         "PointsOffsetDisable()\n"
         "PTP(homewf, speed, -1, 0)\n"
     )
@@ -823,6 +868,62 @@ def ui_faceplate_move_home():
         ok, payload = False, {"error": str(e)}
 
     return render_template("partials/command_result.html", ok=ok, title="Move Home", payload=payload)
+
+
+@app.route("/ui/parts/goto", methods=["POST"])
+def ui_parts_goto():
+    """Move the robot to a single stud's X/Y at retract height.
+
+    Takes x/y/retract_z/part_z straight from the request (the designer's in-memory
+    state, which may be unsaved) rather than the persisted recipe.
+    """
+    if job.snapshot().active:
+        return render_template(
+            "partials/command_result.html", ok=False, title="Goto",
+            payload={"error": "A job is running — stop the active job first."},
+        )
+    try:
+        x = float(request.form.get("x"))
+        y = float(request.form.get("y"))
+    except (TypeError, ValueError):
+        return render_template(
+            "partials/command_result.html", ok=False, title="Goto",
+            payload={"error": "Missing or invalid stud X/Y."},
+        )
+    retract_z = float(request.form.get("retract_z") or 10.0)
+    part_z = float(request.form.get("part_z") or 0.0)
+    approach_z = part_z + retract_z
+
+    # flag=0 offsets in the wobj-4 workpiece frame (per FR Lua manual §3.2.12),
+    # not flag=1's tool frame — the offset is off the taught zerozero point,
+    # which sits at the workpiece origin, so this walks x/y/z along the
+    # workpiece's own axes: +X = bed left-right, +Y = bed depth, +Z = up.
+    # The production program uses this same X/Y order.
+    program = (
+        "tool = 10\n"
+        "blend = -1\n"
+        "wobj = 4\n"
+        "speed = 25\n"
+        f"APPROACH_Z = {approach_z}\n"
+        f"PointsOffsetEnable(0, {x}, {y}, APPROACH_Z, 0, 0, 0)\n"
+        "PTP(zerozero, speed, -1, 0)\n"
+        "PointsOffsetDisable()\n"
+    )
+
+    try:
+        with tempfile.NamedTemporaryFile("w", suffix=".lua", delete=False, encoding="utf-8") as tf:
+            tf.write(program)
+            tmp_path = tf.name
+        try:
+            robot.upload_and_run(tmp_path)
+            ok, payload = True, {"target": f"x={x}, y={y}, z={approach_z}"}
+        finally:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+    except Exception as e:
+        ok, payload = False, {"error": str(e)}
+
+    return render_template("partials/command_result.html", ok=ok, title="Goto", payload=payload)
 
 
 @app.route("/ui/faceplate/feed", methods=["POST"])
@@ -946,7 +1047,8 @@ def ui_tcp_calibrate_record_point():
 @app.route("/ui/tcp-calibrate/apply", methods=["POST"])
 def ui_tcp_calibrate_apply():
     try:
-        tcp_offset = robot.tcp_compute_and_apply()
+        # tool slot 10 — the id every production Lua program (WeldFlex.lua, weld_faceplate.lua) reads.
+        tcp_offset = robot.tcp_compute_and_apply(tool_id=10)
         with _tcp_lock:
             _tcp_calib["applied"] = True
             _tcp_calib["tcp_offset"] = tcp_offset

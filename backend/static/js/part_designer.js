@@ -5,11 +5,15 @@ let _state = {
   activePart:   null,  // display name
   selectedPoint: null,
   points: [],
-  safe_z: 10.0,
+  safe_z: 60.0,
+  retract_z: 10.0,
   part_z: 0.0,
+  units: 'mm',
   stud_type: 'M4',
   substrate: 'Mild Steel',
   pressure_setting: 20.0,
+  speed: 25,
+  arm_mode: 'live',
   isDirty: false,
 };
 
@@ -78,6 +82,11 @@ function pdInit() {
     if (e.target === settingsModal) pdCloseJobSettingsModal();
   });
 
+  const dryRunModal = document.getElementById('pd-dry-run-confirm-modal');
+  if (dryRunModal) dryRunModal.addEventListener('click', e => {
+    if (e.target === dryRunModal) pdCloseDryRunConfirmModal();
+  });
+
   const reportsModal = document.getElementById('pd-reports-modal');
   if (reportsModal) reportsModal.addEventListener('click', e => {
     if (e.target === reportsModal) pdCloseJobReportsModal();
@@ -85,13 +94,23 @@ function pdInit() {
 }
 
 // ── Coordinate helpers (physical ↔ SVG) ──────────────────────────────────────
-// Physical 0,0 is at the bottom-right corner of the 508×508 bed.
-// SVG 0,0 is top-left, so we mirror both axes.
+// Physical 0,0 (zerozero) is at the bottom-left corner of the 762×762 bed.
+// SVG 0,0 is top-left, so we mirror the Y axis only.
 
-const BED = 508;
+const BED = 762; // 30in bed, in mm
+const MM_PER_INCH = 25.4;
 
-function toSVG(px, py)  { return { x: BED - px, y: BED - py }; }
-function toPhys(sx, sy) { return { x: BED - sx, y: BED - sy }; }
+function toSVG(px, py)  { return { x: px, y: BED - py }; }
+function toPhys(sx, sy) { return { x: sx, y: BED - sy }; }
+function isInches() { return _state.units === 'in'; }
+function lengthFactor() { return isInches() ? MM_PER_INCH : 1; }
+function lengthStep() { return isInches() ? '0.0001' : '0.001'; }
+function formatLength(mm) {
+  const decimals = isInches() ? 4 : 3;
+  return Number((mm / lengthFactor()).toFixed(decimals)).toString();
+}
+function parseLength(value) { return parseFloat(value) * lengthFactor(); }
+function unitLabel() { return isInches() ? 'in' : 'mm'; }
 
 // ── Grid ────────────────────────────────────────────────────────────────────
 
@@ -101,7 +120,13 @@ function buildGrid() {
   g.innerHTML = '';
   const SIZE = BED, STEP = 50;
 
-  for (let i = 0; i <= SIZE; i += STEP) {
+  const gridLines = Array.from(
+    { length: Math.floor(SIZE / STEP) + 1 },
+    (_, index) => index * STEP,
+  );
+  if (gridLines.at(-1) !== SIZE) gridLines.push(SIZE);
+
+  for (const i of gridLines) {
     const major = i % 100 === 0;
     const color = major ? '#c8d8e6' : '#e4ecf2';
     const w     = major ? 0.7 : 0.35;
@@ -111,33 +136,32 @@ function buildGrid() {
 
     // Labels for X and Y axes
     if (major && i > 0 && i < SIZE) {
-      // X-axis label (bottom edge: i=0 is 508, i=508 is 0 at zerozero)
-      const physX = BED - i;
+      // X-axis label (bottom edge: i=0 is 0 at zerozero, i=762 is 762)
+      const physX = formatLength(i);
       const tx = svgEl('text', {
-        x: i + 2, y: SIZE - 3,
-        fill:'#9ab0c4', 'font-size':'7', 'font-family':'monospace',
+        x: i + 4, y: SIZE - 6,
+        fill:'#7c95a8', 'font-size':'13', 'font-weight':'600', 'font-family':'monospace',
       });
       tx.textContent = `${physX}`;
       g.appendChild(tx);
 
-      // Y-axis label (left edge: i=0 is 508, i=508 is 0 at zerozero)
-      const physY = BED - i;
+      // Y-axis label (left edge: i=0 is 762, i=762 is 0 at zerozero)
+      const physY = formatLength(BED - i);
       const ty = svgEl('text', {
-        x: 3, y: i - 2,
-        fill:'#9ab0c4', 'font-size':'7', 'font-family':'monospace',
+        x: 4, y: i - 4,
+        fill:'#7c95a8', 'font-size':'13', 'font-weight':'600', 'font-family':'monospace',
       });
       ty.textContent = `${physY}`;
       g.appendChild(ty);
     }
   }
 
-  // Origin marker at SVG bottom-right (physical X=0, Y=0)
+  // Origin marker at SVG bottom-left (physical X=0, Y=0 — zerozero)
   const ox = svgEl('text', {
-    x: SIZE - 3, y: SIZE - 3,
-    'text-anchor': 'end',
-    fill:'#9ab0c4', 'font-size':'7', 'font-family':'monospace',
+    x: 6, y: SIZE - 20,
+    fill:'#5c7fa0', 'font-size':'14', 'font-weight':'700', 'font-family':'monospace',
   });
-  ox.textContent = '0';
+  ox.textContent = `zerozero (${formatLength(0)}, ${formatLength(0)})`;
   g.appendChild(ox);
 
   // Bed border
@@ -228,15 +252,21 @@ function loadPart(id, name, idx) {
       else          { _state.points = data.points.map((p, i) => ({ ...p, id: i + 1 })); }
       if (data.recipe) {
         _currentRecipe = data.recipe;
-        _state.safe_z = data.recipe.safe_z !== undefined ? data.recipe.safe_z : 10.0;
+        _state.safe_z = data.recipe.safe_z !== undefined ? data.recipe.safe_z : 60.0;
+        _state.retract_z = data.recipe.retract_z !== undefined ? data.recipe.retract_z : 10.0;
         _state.part_z = data.recipe.part_z !== undefined ? data.recipe.part_z : 0.0;
+        _state.units = data.recipe.units === 'in' ? 'in' : 'mm';
         _state.stud_type = data.recipe.stud_type || 'M4';
         _state.substrate = data.recipe.substrate || 'Mild Steel';
         _state.pressure_setting = data.recipe.pressure_setting !== undefined ? (parseFloat(data.recipe.pressure_setting) || 20.0) : 20.0;
+        _state.speed = data.recipe.speed !== undefined && data.recipe.speed !== null
+          ? Math.max(1, Math.min(100, Math.round(parseFloat(data.recipe.speed) || 25)))
+          : 25;
       }
       renderPoints();
       renderStudList();
       setCoords(null);
+      syncUnitsControl();
     })
     .catch(() => {
       _state.points = [];
@@ -284,10 +314,10 @@ function renderPoints() {
     }));
 
     const lbl = svgEl('text', {
-      x:sv.x, y:sv.y + 3.5,
+      x:sv.x, y:sv.y + 4,
       'text-anchor':'middle',
       fill: sel ? '#ffffff' : '#275f84',
-      'font-size':'7', 'font-weight':'bold',
+      'font-size':'10', 'font-weight':'bold',
       'font-family':'Segoe UI, sans-serif',
       style:'pointer-events:none; user-select:none',
     });
@@ -313,7 +343,7 @@ function renderPoints() {
 function showTooltip(p) {
   const tip = document.getElementById('pd-tooltip');
   if (!tip) return;
-  tip.innerHTML = `<strong>Point ${p.id}</strong><br>X: ${p.x} mm &nbsp; Y: ${p.y} mm`;
+  tip.innerHTML = `<strong>Point ${p.id}</strong><br>X: ${formatLength(p.x)} ${unitLabel()} &nbsp; Y: ${formatLength(p.y)} ${unitLabel()} from zerozero`;
   tip.classList.remove('pd-hidden');
 }
 
@@ -369,6 +399,8 @@ function pdStartNewPart(name) {
   _state.activePart    = name;
   _state.points        = [];
   _state.selectedPoint = null;
+  _state.units         = 'mm';
+  _state.speed         = 25;
 
   const titleEl = document.getElementById('pd-canvas-part-title');
   if (titleEl) titleEl.textContent = name;
@@ -377,6 +409,7 @@ function pdStartNewPart(name) {
   renderPoints();
   renderStudList();
   setCoords(null);
+  syncUnitsControl();
   pdSetDirty(true);
 
   const coords = document.getElementById('pd-coords');
@@ -406,20 +439,26 @@ function pdSave() {
   if (!name) return;
 
   const studs_json = JSON.stringify(_state.points.map(p => ({ x: p.x, y: p.y })));
-  const safe_z = _state.safe_z !== undefined ? _state.safe_z : 10.0;
+  const safe_z = _state.safe_z !== undefined ? _state.safe_z : 60.0;
+  const retract_z = _state.retract_z !== undefined ? _state.retract_z : 10.0;
   const part_z = _state.part_z !== undefined ? _state.part_z : 0.0;
+  const units = _state.units === 'in' ? 'in' : 'mm';
   const stud_type = _state.stud_type || 'M4';
   const substrate = _state.substrate || 'Mild Steel';
   const pressure_setting = _state.pressure_setting !== undefined ? _state.pressure_setting : 20.0;
+  const speed = _state.speed !== undefined ? _state.speed : 25;
 
   const body = new URLSearchParams({
     recipe_name: name,
     studs_json,
     safe_z,
+    retract_z,
     part_z,
+    units,
     stud_type,
     substrate,
     pressure_setting,
+    speed,
   });
   if (_state.activeId) body.set('recipe_id', _state.activeId);
 
@@ -482,7 +521,7 @@ function pdConfirmDelete() {
         setCoords(null);
         pdSetDirty(false);
         const coords = document.getElementById('pd-coords');
-        if (coords) coords.textContent = '508 × 508 mm bed';
+        if (coords) coords.textContent = 'zerozero reference · 762 × 762 mm bed';
       }
       fetchParts();
     });
@@ -494,8 +533,25 @@ function setCoords(p) {
   const el = document.getElementById('pd-coords');
   if (!el) return;
   el.textContent = p
-    ? `Point ${p.id}  ·  X: ${p.x} mm  ·  Y: ${p.y} mm`
-    : '508 × 508 mm bed';
+    ? `Point ${p.id}  ·  X: ${formatLength(p.x)} ${unitLabel()}  ·  Y: ${formatLength(p.y)} ${unitLabel()} from zerozero`
+    : `zerozero reference · ${formatLength(BED)} × ${formatLength(BED)} ${unitLabel()} bed`;
+}
+
+function syncUnitsControl() {
+  const select = document.getElementById('pd-units');
+  if (select) select.value = _state.units;
+  document.querySelectorAll('.pd-length-unit').forEach(el => { el.textContent = unitLabel(); });
+}
+
+function pdSetUnits(units) {
+  _state.units = units === 'in' ? 'in' : 'mm';
+  buildGrid();
+  renderPoints();
+  renderStudList();
+  const selected = _state.points.find(point => point.id === _state.selectedPoint);
+  setCoords(selected || null);
+  syncUnitsControl();
+  pdSetDirty(true);
 }
 
 // ── Stud list ─────────────────────────────────────────────────────────────────
@@ -520,9 +576,10 @@ function renderStudList() {
       <span class="pd-drag-handle" title="Drag to reorder">⋮⋮</span>
       <span class="pd-stud-num">${p.id}</span>
       <span class="pd-stud-label">X</span>
-      <input class="pd-stud-input" type="number" min="0" max="508" step="1" value="${p.x}" data-pid="${p.id}" data-axis="x">
+      <input class="pd-stud-input" type="number" min="0" max="${formatLength(BED)}" step="${lengthStep()}" value="${formatLength(p.x)}" data-pid="${p.id}" data-axis="x" inputmode="none" data-kbd="num">
       <span class="pd-stud-label">Y</span>
-      <input class="pd-stud-input" type="number" min="0" max="508" step="1" value="${p.y}" data-pid="${p.id}" data-axis="y">
+      <input class="pd-stud-input" type="number" min="0" max="${formatLength(BED)}" step="${lengthStep()}" value="${formatLength(p.y)}" data-pid="${p.id}" data-axis="y" inputmode="none" data-kbd="num">
+      <button class="pd-stud-goto-btn" data-pid="${p.id}" title="Move robot to this stud (retract height)">⌖</button>
       <button class="pd-stud-delete-btn" data-pid="${p.id}" title="Remove stud">×</button>
     </div>
   `).join('');
@@ -599,14 +656,24 @@ function renderStudList() {
     input.addEventListener('change', () => {
       const pid  = parseInt(input.dataset.pid);
       const axis = input.dataset.axis;
-      const val  = Math.round(Math.max(0, Math.min(BED, parseFloat(input.value) || 0)));
-      input.value = val;
+      const val  = Math.max(0, Math.min(BED, parseLength(input.value) || 0));
+      input.value = formatLength(val);
       const p = _state.points.find(pt => pt.id === pid);
       if (!p) return;
       p[axis] = val;
       renderPoints();
       pdSetDirty(true);
       if (_state.selectedPoint === pid) setCoords(p);
+    });
+  });
+
+  el.querySelectorAll('.pd-stud-goto-btn').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const pid = parseInt(btn.dataset.pid);
+      const p = _state.points.find(pt => pt.id === pid);
+      if (!p) return;
+      pdGotoStud(p, btn);
     });
   });
 
@@ -629,6 +696,22 @@ function renderStudList() {
   });
 }
 
+function pdGotoStud(p, btn) {
+  if (btn) btn.disabled = true;
+  const retract_z = _state.retract_z !== undefined ? _state.retract_z : 10.0;
+  const part_z = _state.part_z !== undefined ? _state.part_z : 0.0;
+  fetch('/ui/parts/goto', {
+    method: 'POST',
+    body: new URLSearchParams({ x: p.x, y: p.y, retract_z, part_z }),
+  })
+    .then(r => r.text())
+    .then(html => {
+      const rack = document.getElementById('toast-rack');
+      if (rack) rack.innerHTML = html;
+    })
+    .finally(() => { if (btn) btn.disabled = false; });
+}
+
 // ── SVG helper ────────────────────────────────────────────────────────────────
 
 function svgEl(tag, attrs = {}) {
@@ -645,23 +728,32 @@ function pdOpenJobSettingsModal() {
   const nameEl = document.getElementById('pd-modal-settings-part-name');
   if (nameEl) nameEl.textContent = _state.activePart || 'Untitled';
 
-  const safeZ = _state.safe_z !== undefined ? _state.safe_z : 10.0;
+  const safeZ = _state.safe_z !== undefined ? _state.safe_z : 60.0;
+  const retractZ = _state.retract_z !== undefined ? _state.retract_z : 10.0;
   const partZ = _state.part_z !== undefined ? _state.part_z : 0.0;
   const studType = _state.stud_type || 'M4';
   const substrate = _state.substrate || 'Mild Steel';
   const pressure = _state.pressure_setting || '20.0';
+  const speed = _state.speed !== undefined ? _state.speed : 25;
+  const armMode = _state.arm_mode === 'dry' ? 'dry' : 'live';
 
   const mSafeZ = document.getElementById('pd-modal-safe-z');
+  const mRetractZ = document.getElementById('pd-modal-retract-z');
   const mPartZ = document.getElementById('pd-modal-part-z');
   const mStudType = document.getElementById('pd-modal-stud-type');
   const mSubstrate = document.getElementById('pd-modal-substrate');
   const mPressure = document.getElementById('pd-modal-pressure');
+  const mSpeed = document.getElementById('pd-modal-speed');
+  const mArmMode = document.getElementById('pd-modal-arm-mode');
 
-  if (mSafeZ) mSafeZ.value = safeZ;
-  if (mPartZ) mPartZ.value = partZ;
+  if (mSafeZ) { mSafeZ.value = formatLength(safeZ); mSafeZ.step = lengthStep(); }
+  if (mRetractZ) { mRetractZ.value = formatLength(retractZ); mRetractZ.step = lengthStep(); }
+  if (mPartZ) { mPartZ.value = formatLength(partZ); mPartZ.step = lengthStep(); }
   if (mStudType) mStudType.value = studType;
   if (mSubstrate) mSubstrate.value = substrate;
   if (mPressure) mPressure.value = pressure;
+  if (mSpeed) mSpeed.value = speed;
+  if (mArmMode) mArmMode.value = armMode;
 
   modal.removeAttribute('hidden');
 }
@@ -673,16 +765,23 @@ function pdCloseJobSettingsModal() {
 
 function pdSaveJobSettingsModal() {
   const mSafeZ = document.getElementById('pd-modal-safe-z')?.value;
+  const mRetractZ = document.getElementById('pd-modal-retract-z')?.value;
   const mPartZ = document.getElementById('pd-modal-part-z')?.value;
   const mStudType = document.getElementById('pd-modal-stud-type')?.value;
   const mSubstrate = document.getElementById('pd-modal-substrate')?.value;
   const mPressure = document.getElementById('pd-modal-pressure')?.value;
+  const mSpeed = document.getElementById('pd-modal-speed')?.value;
 
-  if (mSafeZ !== undefined) _state.safe_z = parseFloat(mSafeZ) || 10.0;
-  if (mPartZ !== undefined) _state.part_z = parseFloat(mPartZ) || 0.0;
+  if (mSafeZ !== undefined) _state.safe_z = parseLength(mSafeZ) || 60.0;
+  if (mRetractZ !== undefined) _state.retract_z = parseLength(mRetractZ) || 10.0;
+  if (mPartZ !== undefined) _state.part_z = parseLength(mPartZ) || 0.0;
   if (mStudType !== undefined) _state.stud_type = mStudType;
   if (mSubstrate !== undefined) _state.substrate = mSubstrate;
   if (mPressure !== undefined) _state.pressure_setting = parseFloat(mPressure) || 20.0;
+  if (mSpeed !== undefined) {
+    const speed = Math.round(parseFloat(mSpeed));
+    _state.speed = Number.isFinite(speed) ? Math.max(1, Math.min(100, speed)) : 25;
+  }
 
   pdCloseJobSettingsModal();
   pdSetDirty(true);
@@ -749,6 +848,62 @@ function pdOpenJobReportsModal() {
 function pdCloseJobReportsModal() {
   const modal = document.getElementById('pd-reports-modal');
   if (modal) modal.setAttribute('hidden', '');
+}
+
+// ── Dry Run Confirmation ──────────────────────────────────────────────────────
+
+function pdOpenDryRunConfirmModal() {
+  if (!_state.activeId && !_state.activePart) return;
+  const modal = document.getElementById('pd-dry-run-confirm-modal');
+  const nameEl = document.getElementById('pd-dry-run-part-name');
+  if (!modal) return;
+  if (nameEl) nameEl.textContent = _state.activePart || 'Untitled';
+  modal.removeAttribute('hidden');
+}
+
+function pdCloseDryRunConfirmModal() {
+  const modal = document.getElementById('pd-dry-run-confirm-modal');
+  if (modal) modal.setAttribute('hidden', '');
+}
+
+function pdConfirmDryRun() {
+  if (!_state.activeId && !_state.activePart) {
+    pdCloseDryRunConfirmModal();
+    return;
+  }
+  pdCloseDryRunConfirmModal();
+  // Save first to ensure current state is persisted
+  pdSave();
+  // Brief delay to ensure save completes before loading
+  setTimeout(() => {
+    const partId = _state.activeId;
+    const partName = _state.activePart;
+    if (partId) {
+      const speed = Number.isFinite(_state.speed) ? Math.max(1, Math.min(100, Math.round(_state.speed))) : 25;
+      fetch('/ui/job/load', {
+        method: 'POST',
+        body: new URLSearchParams({
+          recipe_id: partId,
+          cycles: 1,
+          gate_mode: 'none',
+          arm_mode: 'dry',
+          speed,
+        })
+      })
+      .then(r => r.json())
+      .then(data => {
+        if (data.ok) {
+          // Open the operator page in a new tab so the job can run alongside the designer
+          window.open('/operator', '_blank');
+        } else {
+          alert(`Failed to load job: ${data.error || 'Unknown error'}`);
+        }
+      })
+      .catch(err => {
+        alert(`Error loading dry run: ${err}`);
+      });
+    }
+  }, 100);
 }
 
 // ── Rename Part ───────────────────────────────────────────────────────────────

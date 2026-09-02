@@ -15,10 +15,11 @@ WeldFlex's job is to own everything *around* the motion:
 The operator-facing intent is captured in [`orderofevent.md`](../orderofevent.md)
 at the repo root; that file is the spec, this one maps it onto the code.
 
-> **A run welds for real.** As of the 2026-08-03 rewrite (commits `11aff8c`/
-> `e55a18b`) the generated program calls `programs/weld.lua` per stud, which
-> fires the arc once its two DI checks pass. There is no arm/disarm gate —
-> see [Not yet implemented](#not-yet-implemented), gap 1.
+> **A live run welds for real.** As of the 2026-08-03 rewrite (commits
+> `11aff8c`/`e55a18b`) the generated program calls `programs/weld.lua` per
+> stud, which fires the arc once its two DI checks pass. A dry run follows the
+> same search, press, hold, retract, and feeder sequence, but sets
+> `WELD_ARMED = 0` so it never pulses the weld trigger output.
 
 ## The four layers
 
@@ -115,7 +116,7 @@ assume they work.
 
 | # | Gap | Detail | Owner |
 |---|---|---|---|
-| 1 | **No arm/disarm gate** | `WeldFlex.lua`'s cycle loop calls `programs/weld.lua` per stud (`NewDofile("/fruser/weld.lua", 1, 1)`) and it fires the arc for real. `WeldFlex.lua` sets `WELD_ARMED = 1` on every stud, but `weld.lua` never reads that global — there is no code path that disarms a run. `weld.lua` fires unconditionally once DI1 (stud on work) and DI0 (welder ready) both read high. | Unassigned — flag before assuming a "dry" or "test" mode exists in the production path |
+| 1 | **No explicit live-run arming confirmation** | Live jobs set `WELD_ARMED = 1` automatically; dry jobs set it to `0` and run the same motion/process sequence without pulsing DO0. There is no separate arm/disarm confirmation between loading a live job and starting it. | Unassigned |
 | 2 | **User-entered waits are a dead field** | Every recipe carries a `pause_points: []` written at [`app.py:382`](../backend/app.py#L382), but nothing reads it — not `lua_builder.py`, not the part designer. `lua_builder._stud_rows` consumes only `x` and `y`. The per-cycle `gate_mode` is a *different* feature and does not cover this. | Deferred — wait system to be refactored later |
 | 3 | **The telemetry cutover is half done** | Program state, current line and fault codes now come from the port-8083 push. Force still rides the legacy CNDE stream — on a port the live `.env` does not set, defaulting to one that has never worked here — so **assume force may be dead in production until proven on hardware**. DI still rides the controller-Lua sysvar relay, and cycle counting still rides XML-RPC. | Gage — in progress; see `docs/ROBOT_TELEMETRY.md` |
 

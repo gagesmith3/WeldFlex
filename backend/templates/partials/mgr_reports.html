@@ -103,8 +103,9 @@
           <span><strong>Stud Type:</strong> <span id="mgr-modal-stud-type">—</span></span>
           <span><strong>Substrate:</strong> <span id="mgr-modal-substrate">—</span></span>
           <span><strong>Pressure:</strong> <span id="mgr-modal-pressure">—</span> lbf</span>
-          <span><strong>Safe Z:</strong> <span id="mgr-modal-safe-z">—</span> mm</span>
           <span><strong>Part Z:</strong> <span id="mgr-modal-part-z">—</span> mm</span>
+          <span><strong>Retract:</strong> <span id="mgr-modal-retract-z">—</span> mm</span>
+          <span><strong>Safe Z:</strong> <span id="mgr-modal-safe-z">—</span> mm</span>
           <span><strong>Studs:</strong> <span id="mgr-modal-stud-count">—</span></span>
         </div>
       </div>
@@ -268,7 +269,11 @@
     document.getElementById('mgr-modal-stud-type').textContent = run && run.stud_type ? run.stud_type : 'M4';
     document.getElementById('mgr-modal-substrate').textContent = run && run.substrate ? run.substrate : 'Mild Steel';
     document.getElementById('mgr-modal-pressure').textContent = run && run.pressure_setting !== undefined ? run.pressure_setting : '20';
-    document.getElementById('mgr-modal-safe-z').textContent = run && run.safe_z !== undefined ? run.safe_z : '10.0';
+    const isNewHeightContract = run && run.retract_z !== undefined;
+    document.getElementById('mgr-modal-safe-z').textContent = run && run.safe_z !== undefined
+      ? (isNewHeightContract ? run.safe_z : run.safe_z + (run.high_z_clearance || 50.0)) : '60.0';
+    document.getElementById('mgr-modal-retract-z').textContent = run
+      ? (isNewHeightContract ? run.retract_z : (run.safe_z || 10.0)) : '10.0';
     document.getElementById('mgr-modal-part-z').textContent = run && run.part_z !== undefined ? run.part_z : '0.0';
     document.getElementById('mgr-modal-stud-count').textContent = run && run.stud_count !== undefined ? run.stud_count : '—';
 

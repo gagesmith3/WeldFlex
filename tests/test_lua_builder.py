@@ -45,32 +45,78 @@ def test_weldflex_lua_substitutes_recipe_parameters():
     built = build_weldflex_lua(
         [{"x": 10, "y": 20}],
         cycles=1,
-        safe_z=15.5,
+        safe_z=60.0,
+        retract_z=15.5,
         part_z=2.0,
         pressure_setting="low",
         stud_type="M6",
         substrate="Stainless Steel",
+        speed=42,
     )
-    assert "SAFE_Z = 15.5" in built.text
+    assert "SAFE_Z = 60" in built.text
+    assert "RETRACT_Z = 15.5" in built.text
     assert "PART_Z = 2" in built.text
     assert "PRESS_LBF = 17" in built.text
     assert 'STUD_TYPE = "M6"' in built.text
     assert 'SUBSTRATE = "Stainless Steel"' in built.text
+    assert "speed = 42" in built.text
     assert "--{{" not in built.text
 
 
-def test_weldflex_lua_high_z_safe_travel_sequence():
+def test_weldflex_lua_publishes_part_z_for_weld_retraction():
+    built = build_weldflex_lua(
+        [{"x": 10, "y": 20}], cycles=1, part_z=63.5, retract_z=25.4
+    )
+    assert "PART_Z = 63.5" in built.text
+    assert "WELD_RETRACT_Z = RETRACT_Z" in built.text
+    assert "WELD_PART_Z = PART_Z" in built.text
+
+
+def test_weldflex_lua_keeps_part_designer_x_y_order():
+    built = build_weldflex_lua([{"x": 10, "y": 20}], cycles=1)
+
+    assert "weldX = stud.x" in built.text
+    assert "weldY = stud.y" in built.text
+    assert "weldX = stud.y" not in built.text
+    assert "weldY = stud.x" not in built.text
+
+
+def test_weldflex_lua_uses_independent_retract_and_safe_heights():
     built = build_weldflex_lua(
         [{"x": 10, "y": 20}, {"x": 30, "y": 40}],
         cycles=1,
-        safe_z=10.0,
-        part_z=0.0,
-        high_z=60.0,
+        safe_z=60.0,
+        retract_z=10.0,
+        part_z=2.0,
     )
-    assert "HIGH_Z_CLEARANCE = 60" in built.text
-    assert "HIGH_Z = APPROACH_Z + HIGH_Z_CLEARANCE" in built.text
-    assert "PointsOffsetEnable(1, weldX, weldY, HIGH_Z, 0, 0, 0)" in built.text
-    assert "PointsOffsetEnable(1, weldX, weldY, APPROACH_Z, 0, 0, 0)" in built.text
+    assert "APPROACH_Z = PART_Z + RETRACT_Z" in built.text
+    assert "HIGH_Z = PART_Z + SAFE_Z" in built.text
+    assert "local travelZ = APPROACH_Z" in built.text
+    assert "if lastWeldX == nil or lastWeldY == nil then" in built.text
+    assert "travelZ = HIGH_Z" in built.text
+    assert "PointsOffsetEnable(0, weldX, weldY, travelZ, 0, 0, 0)" in built.text
+    assert built.text.count("Lin(homewf, speed, -1, 0, 1)") == 2
+    assert "PointsOffsetEnable(0, 0, 0, APPROACH_Z, 0, 0, 0)" not in built.text
+
+
+def test_weldflex_lua_returns_home_every_cycle_before_the_gate():
+    """The operator needs the head clear of the part to swap it, on every
+    cycle boundary — not just once after the whole run finishes. The Lua
+    loop body is only emitted once in the text (the runtime `for` loop
+    repeats it), so the home-return block must sit *inside* the loop, before
+    the boundary dwell/gate, rather than appearing once after it.
+    """
+    built = build_weldflex_lua([{"x": 10, "y": 20}], cycles=3)
+    lines = built.text.splitlines()
+    # One initial move to home before the loop, one return-home block inside it.
+    assert built.text.count("Lin(homewf, speed, -1, 0, 1)") == 2
+    home_idxs = [i for i, l in enumerate(lines, 1) if "Lin(homewf" in l]
+    # The in-loop home return precedes that cycle's boundary dwell and gate.
+    assert home_idxs[-1] < built.cycle_marker_line < built.gate_line
+    # Nothing homes after the loop any more — it is done every cycle instead.
+    assert not any(i > built.gate_line for i in home_idxs)
+
+
 
 
 def test_weldflex_lua_substitutes_numeric_pressure_setting():
@@ -80,6 +126,30 @@ def test_weldflex_lua_substitutes_numeric_pressure_setting():
         pressure_setting="22.5",
     )
     assert "PRESS_LBF = 22.5" in built.text
+
+
+def test_weldflex_lua_supports_live_and_dry_run_arming():
+    live = build_weldflex_lua([{"x": 10, "y": 20}], cycles=1, arm_mode="live")
+    dry = build_weldflex_lua([{"x": 10, "y": 20}], cycles=1, arm_mode="dry", speed=42)
+    assert 'ARM_MODE = "live"' in live.text
+    assert 'ARM_MODE = "dry"' in dry.text
+    assert "WELD_ARMED = 1" in live.text
+    assert "WELD_ARMED = 0" in dry.text
+    assert "speed = 42" in dry.text
+
+
+def test_faceplate_lua_uses_the_goto_coordinate_and_arming_contract():
+    built = build_weld_faceplate_lua(150, 381, cycles=1, arm_mode="live", part_z=5, safe_z=10)
+
+    assert "weldX = faceplateX" in built.text
+    assert "weldY = faceplateY" in built.text
+    assert "WELD_ARMED = 0" in built.text
+    assert 'if ARM_MODE == "live" then' in built.text
+    assert "Z_CLEARANCE = PART_Z + SAFE_Z" in built.text
+    assert "PointsOffsetEnable(0, faceplateX, faceplateY, APPROACH_Z, 0, 0, 0)" in built.text
+    assert "PointsOffsetEnable(1," not in built.text
+    assert "PTP(zerozero, speed, -1, 0)" in built.text
+    assert "Lin(zerozero" not in built.text
 
 
 def test_marker_line_really_is_the_boundary_dwell():
@@ -161,8 +231,9 @@ def test_pause_gate_holds_in_the_program_and_skips_the_last_cycle(builder):
     into the next cycle. The hold has to be an instruction the program executes.
 
     The last cycle is deliberately exempt. Nothing releases a pause the manager
-    never gates on (`done < target`), and the run still has its home return to
-    do after the loop.
+    never gates on (`done < target`). weld_faceplate.lua still has its home
+    return to do after the loop; WeldFlex.lua now homes every cycle, including
+    the last, before this gate ever runs.
     """
     built = builder("pause")
     lines = built.text.splitlines()
@@ -217,6 +288,7 @@ def test_format_number():
     assert format_number(373.0) == "373"
     assert format_number(-20.5) == "-20.5"
     assert format_number(1.250) == "1.25"
+    assert format_number(100.001) == "100.001"
 
 
 def test_format_lua_string():
@@ -261,6 +333,14 @@ def test_the_press_guard_declines_below_its_own_threshold():
                      weld, re.M), "the guard is no longer gated on the press target"
 
 
+def test_force_control_uses_negative_fz_for_compression():
+    """The regulator needs a signed target; insertion only needs a magnitude."""
+    weld = WELD_PATH.read_text(encoding="utf-8")
+    control = re.search(r"local function ftControlPress\(flag\)(.*?)\nend", weld, re.S)
+    assert control, "weld.lua no longer defines the FT_Control helper"
+    assert "0.0, 0.0, -PRESS_TARGET_N, 0.0, 0.0, 0.0" in control.group(1)
+
+
 def test_a_fault_does_not_erase_which_collision_lever_took():
     """fault() runs forceControlOff() on its way out, which releases the collision
     guard. The release used to publish GUARD_RELEASED unconditionally, so every
@@ -282,6 +362,32 @@ def test_weld_lua_upload_gate_matches_weldflex():
     template = TEMPLATE_PATH.read_text(encoding="utf-8")
     assert "if WELD_RUN == 1 then" in weld
     assert "WELD_RUN = 1" in template
+
+
+def test_dry_run_executes_every_phase_except_the_arc_pulse():
+    """A dry run must handle a real stud exactly like production, except DO0 stays off."""
+    code = strip_lua_comments(WELD_PATH.read_text(encoding="utf-8"))
+
+    def function_body(name, next_name):
+        return code.split(f"local function {name}()", 1)[1].split(
+            f"local function {next_name}()", 1
+        )[0]
+
+    readiness = function_body("waitForWeldReady", "requireContract")
+    search = function_body("searchForStud", "pressToForce")
+    press = function_body("pressToForce", "fireWeld")
+    fire = function_body("fireWeld", "holdAfterWeld")
+    feed = function_body("feedNextStud", "weldOneStud")
+
+    assert "while readDI(DI_WELD_READY) ~= 1 do" in readiness
+    assert "FT_FindSurface" in search
+    assert "FT_Control" in press and "FT_LinInsertion" in press
+    assert "writeDO(DO_FEED, 1)" in feed
+    for phase in (readiness, search, press, feed):
+        assert "WELD_ARMED" not in phase
+
+    assert fire.index("if WELD_ARMED ~= 1 then") < fire.index("writeDO(DO_WELD, 1)")
+    assert fire.index("return") < fire.index("writeDO(DO_WELD, 1)")
 
 
 def test_weld_di_map_agrees_across_the_language_boundary():

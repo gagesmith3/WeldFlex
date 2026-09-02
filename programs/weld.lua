@@ -49,17 +49,18 @@ local READY_SAMPLE_MS    = 100
 
 -- FT_FindSurface & FT_LinInsertion parameters
 local FIND_RCS  = 0     -- 0 = tool frame, 1 = base frame
-local FIND_DIR  = 1     -- 1 = positive, 2 = negative
+local FIND_DIR  = 2     -- 1 = positive, 2 = negative (flipped with TCP Z, 2026-09-01)
 local FIND_AXIS = 3     -- 3 = Z axis
 local FIND_ACC  = 0.0
 
-local PRESS_DIR = 1     -- 1 = positive (FT_LinInsertion encoding)
+local PRESS_DIR = 0     -- 0 = negative (FT_LinInsertion encoding; flipped with TCP Z, 2026-09-01)
 
-local SEARCH_SPEED_MMS = 20.0
-local PRESS_SPEED_MMS  = 5.0
+local SEARCH_SPEED_MMS = 50.0
+local PRESS_SPEED_MMS  = 10.0
 
-local SAFE_Z_MM = (type(WELD_SAFE_Z) == "number" and WELD_SAFE_Z > 0) and WELD_SAFE_Z or 10.0
-local Z_CLEARANCE = SAFE_Z_MM
+local RETRACT_Z_MM = (type(WELD_RETRACT_Z) == "number" and WELD_RETRACT_Z > 0) and WELD_RETRACT_Z or 10.0
+local PART_Z_MM = (type(WELD_PART_Z) == "number") and WELD_PART_Z or 0.0
+local Z_CLEARANCE = PART_Z_MM + RETRACT_Z_MM
 local SEARCH_MAX_MM   = 100.0
 local PRESS_MAX_MM    = 60.0
 local PRESS_ADJUST_MM = 60.0
@@ -80,7 +81,7 @@ local USE_PRESS_COLL_OFF   = 1
 local PRESS_COLL_OFF_LEVEL = 10
 
 -- ===== Retract =====
-local RETRACT_SPEED = 10
+local RETRACT_SPEED = 25
 
 
 -- =========================================
@@ -171,7 +172,8 @@ end
 -- =========================================
 
 local function moveToZ(zOffset, vel)
-    PointsOffsetEnable(1, weldX, weldY, zOffset, 0, 0, 0)
+    -- flag=0: workpiece frame, matching WeldFlex.lua (see its comment).
+    PointsOffsetEnable(0, weldX, weldY, zOffset, 0, 0, 0)
     PTP(zerozero, vel, -1, 0)
     PointsOffsetDisable()
 end
@@ -221,6 +223,8 @@ end
 local function ftControlPress(flag)
     return FT_Control(flag, FTC_SENSOR_NUM,
         0, 0, 1, 0, 0, 0,
+        -- FT_Control takes signed Fz; compression is negative in this frame.
+        -- FT_LinInsertion keeps its threshold positive below.
         0.0, 0.0, -PRESS_TARGET_N, 0.0, 0.0, 0.0,
         FTC_GAIN_P, 0.0, 0.0, 0.0, 0.0, 0.0,
         0, 0,
@@ -333,8 +337,8 @@ local function requireContract()
     if weldX == nil or weldY == nil then
         error("[WELD] weldX/weldY not set — WeldFlex.lua must publish the stud offset")
     end
-    if WELD_SAFE_Z == nil and Z_CLEARANCE == nil then
-        error("[WELD] WELD_SAFE_Z not set — WeldFlex.lua must publish the safe Z")
+    if WELD_RETRACT_Z == nil and Z_CLEARANCE == nil then
+        error("[WELD] WELD_RETRACT_Z not set — WeldFlex.lua must publish the retract Z")
     end
 end
 
@@ -432,6 +436,11 @@ local function fireWeld()
         fault(string.format("DI%d (weld ready) dropped before the weld pulse", DI_WELD_READY), 11)
     end
 
+    if WELD_ARMED ~= 1 then
+        print("[WELD] Dry-run: WELD_ARMED is not 1; skipping arc pulse.")
+        return
+    end
+
     print(string.format("[WELD] FIRING ARC: DO%d output set HIGH for %d ms", DO_WELD, WELD_PULSE_MS))
     writeDO(DO_WELD, 1)
     WaitMs(WELD_PULSE_MS)
@@ -462,6 +471,7 @@ end
 
 local function weldOneStud()
     requireContract()
+    if WELD_ARMED == nil then WELD_ARMED = 0 end
     if WELD_FAULT == 1 or faulting then return end
 
     pub(SV_PHASE, PH_ENTER)

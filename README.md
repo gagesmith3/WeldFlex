@@ -10,10 +10,16 @@ never has to touch the teach pendant.
 **Normal operation:** pick a part → enter a cycle count → the job loads into the
 Job Manager → hit Run → it runs the requested cycles → it completes.
 
-> ⚠️ **WeldFlex does not weld yet.** The generated program moves the head to each
-> stud and dwells; the weld call, the return-to-home, and per-stud operator waits
-> are all still to be built. See
+> **A live run welds for real.** The generated program searches, presses, fires
+> the weld output after its interlock checks, retracts, advances the feeder, and
+> returns home between cycles. A dry run follows the same sequence but suppresses
+> the weld output. Per-stud operator waits are not implemented. See
 > [Not yet implemented](docs/ARCHITECTURE.md#not-yet-implemented).
+
+> **Pendant preflight:** Set the FAIRINO pendant's **Auto Speed** to **100%**
+> before running a part. It globally limits the program's requested speed,
+> including Dynamic Speed Compensation (DSC); a lower pendant setting prevents
+> a generated 100% stud-to-stud move from reaching its intended speed.
 
 Full picture — the four layers, how a part becomes a program,
  job states, and the

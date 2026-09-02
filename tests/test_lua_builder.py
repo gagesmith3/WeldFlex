@@ -3,6 +3,8 @@ import re
 import pytest
 
 from lua_builder import (
+    DscCalibration,
+    DynamicStudLeg,
     FACEPLATE_TEMPLATE_PATH,
     GATE_DI_OPT_ABORT,
     IO_MONITOR_DEFAULT_MS,
@@ -16,6 +18,7 @@ from lua_builder import (
     build_io_monitor_lua,
     build_weld_faceplate_lua,
     build_weldflex_lua,
+    dynamic_stud_legs,
     format_lua_string,
     format_number,
     strip_lua_comments,
@@ -63,6 +66,96 @@ def test_weldflex_lua_substitutes_recipe_parameters():
     assert "--{{" not in built.text
 
 
+def test_dynamic_stud_legs_choose_fastest_speed_that_meets_reload_window():
+    calibration = DscCalibration(
+        rate_100_pct_mms=200.0,
+        fixed_overhead_ms=150.0,
+        safety_margin_ms=0,
+    )
+    legs = dynamic_stud_legs(
+        [{"x": 0, "y": 0}, {"x": 20, "y": 0}, {"x": 120, "y": 0}],
+        stud_reload_ms=600,
+        feed_pulse_ms=250,
+        calibration=calibration,
+    )
+
+    assert legs == [
+        None,
+        # 20 mm at 50% is 350 ms; 51% would arrive too early.
+        DynamicStudLeg(50, 0),
+        # Even 100% takes 650 ms, so this longest leg stays at full speed.
+        DynamicStudLeg(100, 0),
+    ]
+
+
+def test_dynamic_stud_legs_wait_after_a_very_short_move():
+    calibration = DscCalibration(
+        rate_100_pct_mms=200.0,
+        fixed_overhead_ms=0.0,
+        safety_margin_ms=0,
+    )
+    legs = dynamic_stud_legs(
+        [{"x": 0, "y": 0}, {"x": 0.1, "y": 0}],
+        stud_reload_ms=600,
+        feed_pulse_ms=250,
+        calibration=calibration,
+    )
+
+    assert legs[1].speed_pct == 1
+    assert legs[1].wait_ms == 300
+
+
+def test_dynamic_stud_legs_require_an_accepted_machine_calibration(monkeypatch):
+    monkeypatch.delenv("WELDFLEX_DSC_CALIBRATED", raising=False)
+
+    with pytest.raises(ValueError, match="WELDFLEX_DSC_CALIBRATED=1"):
+        dynamic_stud_legs([{"x": 0, "y": 0}, {"x": 20, "y": 0}])
+
+
+def test_weldflex_lua_emits_dynamic_stud_to_stud_travel(monkeypatch):
+    monkeypatch.setenv("WELDFLEX_DSC_CALIBRATED", "1")
+    monkeypatch.setenv("WELDFLEX_DSC_RATE_100_PCT_MMS", "200")
+    monkeypatch.setenv("WELDFLEX_DSC_FIXED_OVERHEAD_MS", "150")
+    monkeypatch.setenv("WELDFLEX_DSC_SAFETY_MARGIN_MS", "0")
+    monkeypatch.setenv("WELDFLEX_FEED_PULSE_MS", "250")
+
+    built = build_weldflex_lua(
+        [{"x": 0, "y": 0}, {"x": 20, "y": 0}, {"x": 120, "y": 0}],
+        cycles=1,
+        dsc_enabled=True,
+        stud_reload_ms=600,
+    )
+
+    assert "{x=0, y=0}," in built.text
+    assert "{x=20, y=0, s2sSpeed=50, s2sWaitMs=0}," in built.text
+    assert "{x=120, y=0, s2sSpeed=100, s2sWaitMs=0}," in built.text
+    assert "FEED_PULSE_MS = 250" in built.text
+    assert "Lin(zerozero, travelSpeed, -1, 0, 0)" in built.text
+    assert "WELD_FEED_PULSE_MS = FEED_PULSE_MS" in built.text
+
+
+def test_weldflex_lua_keeps_legacy_travel_when_dsc_is_disabled(monkeypatch):
+    monkeypatch.delenv("WELDFLEX_DSC_CALIBRATED", raising=False)
+
+    built = build_weldflex_lua(
+        [{"x": 0, "y": 0}, {"x": 20, "y": 0}],
+        cycles=1,
+        dsc_enabled=False,
+    )
+
+    assert ", s2sSpeed=" not in built.text
+    assert ", s2sWaitMs=" not in built.text
+
+
+def test_weld_lua_uses_the_builder_feed_pulse_when_supplied():
+    weld = WELD_PATH.read_text(encoding="utf-8")
+
+    assert "type(WELD_FEED_PULSE_MS) == \"number\"" in weld
+    assert "WELD_FEED_PULSE_MS >= 1" in weld
+    assert "WELD_FEED_PULSE_MS <= 10000" in weld
+    assert "WaitMs(FEED_PULSE_MS)" in weld
+
+
 def test_weldflex_lua_publishes_part_z_for_weld_retraction():
     built = build_weldflex_lua(
         [{"x": 10, "y": 20}], cycles=1, part_z=63.5, retract_z=25.4
@@ -95,8 +188,17 @@ def test_weldflex_lua_uses_independent_retract_and_safe_heights():
     assert "if lastWeldX == nil or lastWeldY == nil then" in built.text
     assert "travelZ = HIGH_Z" in built.text
     assert "PointsOffsetEnable(0, weldX, weldY, travelZ, 0, 0, 0)" in built.text
-    assert built.text.count("Lin(homewf, speed, -1, 0, 1)") == 2
+    assert built.text.count("Lin(homewf, speed, -1, 0, 0)") == 2
     assert "PointsOffsetEnable(0, 0, 0, APPROACH_Z, 0, 0, 0)" not in built.text
+
+
+def test_weldflex_lua_uses_global_point_offsets_without_inline_lin_offsets():
+    built = build_weldflex_lua([{"x": 10, "y": 20}, {"x": 30, "y": 40}], cycles=1)
+
+    assert built.text.count("Lin(homewf, speed, -1, 0, 0)") == 2
+    assert "Lin(zerozero, travelSpeed, -1, 0, 0)" in built.text
+    assert built.text.count("Lin(zerozero, speed, -1, 0, 0)") == 2
+    assert "Lin(zerozero, travelSpeed, -1, 0, 1)" not in built.text
 
 
 def test_weldflex_lua_returns_home_every_cycle_before_the_gate():
@@ -109,7 +211,7 @@ def test_weldflex_lua_returns_home_every_cycle_before_the_gate():
     built = build_weldflex_lua([{"x": 10, "y": 20}], cycles=3)
     lines = built.text.splitlines()
     # One initial move to home before the loop, one return-home block inside it.
-    assert built.text.count("Lin(homewf, speed, -1, 0, 1)") == 2
+    assert built.text.count("Lin(homewf, speed, -1, 0, 0)") == 2
     home_idxs = [i for i, l in enumerate(lines, 1) if "Lin(homewf" in l]
     # The in-loop home return precedes that cycle's boundary dwell and gate.
     assert home_idxs[-1] < built.cycle_marker_line < built.gate_line

@@ -272,6 +272,8 @@ class _Session:
     stud_type: str = "M4"
     substrate: str = "Mild Steel"
     speed: float | int | None = None
+    dsc_enabled: bool = False
+    stud_reload_ms: int | None = None
     started_at: str | None = None
     started_ts: float | None = None
     ended_at: str | None = None
@@ -341,6 +343,8 @@ class JobManager:
         stud_type: str = "M4",
         substrate: str = "Mild Steel",
         speed: float | int | None = None,
+        dsc_enabled: bool = False,
+        stud_reload_ms: int | None = None,
         kind: str = "part",
     ) -> JobSnapshot:
         """Queue a part (or a faceplate maintenance run) for running.
@@ -378,6 +382,8 @@ class JobManager:
                 stud_type=str(stud_type),
                 substrate=str(substrate),
                 speed=speed,
+                dsc_enabled=bool(dsc_enabled),
+                stud_reload_ms=stud_reload_ms,
             )
             snap = self._snapshot_locked()
         log.info("job loaded run_id=%s part=%r cycles=%d gate=%s arm=%s studs=%d",
@@ -618,6 +624,8 @@ class JobManager:
                 stud_type = sess.stud_type
                 substrate = sess.substrate
                 speed = sess.speed
+                dsc_enabled = sess.dsc_enabled
+                stud_reload_ms = sess.stud_reload_ms
 
             if kind == "faceplate":
                 if not studs:
@@ -648,6 +656,8 @@ class JobManager:
                     stud_type=stud_type,
                     substrate=substrate,
                     speed=speed,
+                    dsc_enabled=dsc_enabled,
+                    stud_reload_ms=stud_reload_ms,
                 )
 
             tmp_dir = tempfile.mkdtemp()

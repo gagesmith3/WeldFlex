@@ -182,11 +182,12 @@ def test_faceplate_load_without_a_target_point_fails_at_launch(tmp_path):
 def test_load_accepts_arm_mode_and_passes_it_to_generated_program(tmp_path, monkeypatch):
     import job_manager as jm
 
+    monkeypatch.setenv("WELDFLEX_DSC_CALIBRATED", "1")
     real_build = jm.build_weldflex_lua
     seen = []
 
     def spy(studs, cycles, gate_mode="pause", arm_mode="live", **kwargs):
-        seen.append((arm_mode, kwargs.get("speed")))
+        seen.append((arm_mode, kwargs.get("speed"), kwargs.get("dsc_enabled"), kwargs.get("stud_reload_ms")))
         return real_build(studs, cycles, gate_mode=gate_mode, arm_mode=arm_mode, **kwargs)
 
     monkeypatch.setattr(jm, "build_weldflex_lua", spy)
@@ -196,10 +197,11 @@ def test_load_accepts_arm_mode_and_passes_it_to_generated_program(tmp_path, monk
     mgr.load(
         "p1", "Bracket", [{"x": 1, "y": 2}], cycles=1,
         gate_mode="none", arm_mode="dry", speed=42,
+        dsc_enabled=True, stud_reload_ms=600,
     )
     mgr.start()
     wait_state(mgr, JobState.RUNNING.value)
-    assert seen == [("dry", 42)]
+    assert seen == [("dry", 42, True, 600)]
     mgr.shutdown()
 
 

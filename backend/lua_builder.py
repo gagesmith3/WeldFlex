@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import re
+from math import ceil, hypot
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
@@ -51,6 +52,23 @@ PRESS_LBF_MAX = 25.0
 GATE_MODES = ("none", "pause", "di")
 ARM_MODES = ("live", "dry")
 
+# Dynamic speed compensation stays opt-in until measurements from the actual
+# controller motion path have established a conservative timing model. The
+# default rate is deliberately not used while calibration is disabled.
+DSC_CALIBRATED_ENV = "WELDFLEX_DSC_CALIBRATED"
+DSC_RATE_100_PCT_MMS_ENV = "WELDFLEX_DSC_RATE_100_PCT_MMS"
+DSC_FIXED_OVERHEAD_MS_ENV = "WELDFLEX_DSC_FIXED_OVERHEAD_MS"
+DSC_SAFETY_MARGIN_MS_ENV = "WELDFLEX_DSC_SAFETY_MARGIN_MS"
+FEED_PULSE_MS_ENV = "WELDFLEX_FEED_PULSE_MS"
+
+DSC_DEFAULT_RATE_100_PCT_MMS = 180.0
+DSC_DEFAULT_FIXED_OVERHEAD_MS = 0.0
+DSC_DEFAULT_SAFETY_MARGIN_MS = 50
+FEED_PULSE_MS_DEFAULT = 250
+STUD_RELOAD_MS_DEFAULT = 600
+STUD_RELOAD_MS_MIN = 1
+STUD_RELOAD_MS_MAX = 10_000
+
 # WaitDI(id, status, maxtime_ms, opt). opt=0 means "stop the program and report a
 # timeout" — the only safe choice here. opt=1 falls through on timeout, which would
 # weld into a part the operator never swapped.
@@ -85,6 +103,130 @@ def _env_int(name: str, default: int) -> int:
         return int(os.getenv(name, str(default)))
     except (TypeError, ValueError):
         return default
+
+
+def _env_bounded_float(name: str, default: float, minimum: float, maximum: float) -> float:
+    try:
+        value = float(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, min(maximum, value))
+
+
+def _env_bounded_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    return max(minimum, min(maximum, _env_int(name, default)))
+
+
+@dataclass(frozen=True)
+class DscCalibration:
+    """Conservative time model for a blocking `Lin` move at a speed percent.
+
+    The model is `fixed_overhead_ms + 100000 * distance / (rate * percent)`.
+    Calibration must make it a lower bound on actual travel time, so DSC never
+    lets a move reach its target before the feeder's reload window closes.
+    """
+
+    rate_100_pct_mms: float
+    fixed_overhead_ms: float
+    safety_margin_ms: int
+
+
+@dataclass(frozen=True)
+class DynamicStudLeg:
+    """Generated settings for travel into one non-first stud."""
+
+    speed_pct: int
+    wait_ms: int
+
+
+def default_feed_pulse_ms() -> int:
+    """Electrical feeder trigger duration, configured per machine."""
+    return _env_bounded_int(FEED_PULSE_MS_ENV, FEED_PULSE_MS_DEFAULT, 1, 10_000)
+
+
+def default_dsc_calibration() -> DscCalibration | None:
+    """Return accepted machine calibration, or None while DSC is uncommissioned."""
+    if os.getenv(DSC_CALIBRATED_ENV, "0") != "1":
+        return None
+    return DscCalibration(
+        rate_100_pct_mms=_env_bounded_float(
+            DSC_RATE_100_PCT_MMS_ENV,
+            DSC_DEFAULT_RATE_100_PCT_MMS,
+            1.0,
+            5_000.0,
+        ),
+        fixed_overhead_ms=_env_bounded_float(
+            DSC_FIXED_OVERHEAD_MS_ENV,
+            DSC_DEFAULT_FIXED_OVERHEAD_MS,
+            0.0,
+            10_000.0,
+        ),
+        safety_margin_ms=_env_bounded_int(
+            DSC_SAFETY_MARGIN_MS_ENV,
+            DSC_DEFAULT_SAFETY_MARGIN_MS,
+            0,
+            10_000,
+        ),
+    )
+
+
+def _dsc_move_time_ms(distance_mm: float, speed_pct: int, calibration: DscCalibration) -> float:
+    return calibration.fixed_overhead_ms + (
+        100_000.0 * distance_mm / (calibration.rate_100_pct_mms * speed_pct)
+    )
+
+
+def dynamic_stud_legs(
+    studs: Sequence[dict],
+    stud_reload_ms: int | float | None = None,
+    feed_pulse_ms: int | None = None,
+    calibration: DscCalibration | None = None,
+) -> list[DynamicStudLeg | None]:
+    """Choose the fastest safe compensation for each destination stud.
+
+    The reload deadline starts when the feeder pulse starts. The pulse completes
+    before this outer program begins its next `Lin`, leaving reload minus pulse
+    duration plus a calibration margin for the travel and any residual wait.
+    """
+    try:
+        reload_ms = int(float(STUD_RELOAD_MS_DEFAULT if stud_reload_ms is None else stud_reload_ms))
+    except (TypeError, ValueError):
+        raise ValueError(f"stud_reload_ms must be an integer, got {stud_reload_ms!r}") from None
+    if not STUD_RELOAD_MS_MIN <= reload_ms <= STUD_RELOAD_MS_MAX:
+        raise ValueError(
+            f"stud_reload_ms must be {STUD_RELOAD_MS_MIN}-{STUD_RELOAD_MS_MAX}, got {reload_ms}"
+        )
+    if calibration is None:
+        calibration = default_dsc_calibration()
+    if calibration is None:
+        raise ValueError(
+            f"Dynamic speed compensation requires {DSC_CALIBRATED_ENV}=1 after hardware calibration"
+        )
+
+    pulse_ms = default_feed_pulse_ms() if feed_pulse_ms is None else int(feed_pulse_ms)
+    if pulse_ms < 1:
+        raise ValueError(f"feed_pulse_ms must be positive, got {pulse_ms}")
+    target_move_ms = max(0, reload_ms - pulse_ms + calibration.safety_margin_ms)
+    legs: list[DynamicStudLeg | None] = [None]
+
+    for previous_stud, current_stud in zip(studs, studs[1:]):
+        distance_mm = hypot(
+            float(current_stud["x"]) - float(previous_stud["x"]),
+            float(current_stud["y"]) - float(previous_stud["y"]),
+        )
+        selected_speed = 1
+        selected_wait_ms = 0
+        for speed_pct in range(100, 0, -1):
+            move_time_ms = _dsc_move_time_ms(distance_mm, speed_pct, calibration)
+            if move_time_ms >= target_move_ms:
+                selected_speed = speed_pct
+                break
+        else:
+            move_time_ms = _dsc_move_time_ms(distance_mm, selected_speed, calibration)
+            selected_wait_ms = max(0, ceil(target_move_ms - move_time_ms))
+        legs.append(DynamicStudLeg(speed_pct=selected_speed, wait_ms=selected_wait_ms))
+
+    return legs
 
 
 def default_gate_di() -> int:
@@ -159,13 +301,24 @@ def format_lua_string(value: str) -> str:
     return f'"{escaped}"'
 
 
-def _stud_rows(studs: Sequence[dict], indent: str) -> list[str]:
+def _stud_rows(
+    studs: Sequence[dict],
+    indent: str,
+    dynamic_legs: Sequence[DynamicStudLeg | None] | None = None,
+) -> list[str]:
     if not studs:
         return [f"{indent}-- (no studs defined for this part)"]
-    return [
-        f"{indent}{{x={format_number(s['x'])}, y={format_number(s['y'])}}},"
-        for s in studs
-    ]
+    if dynamic_legs is not None and len(dynamic_legs) != len(studs):
+        raise ValueError("dynamic stud leg count must match stud count")
+
+    rows = []
+    for index, stud in enumerate(studs):
+        row = f"{indent}{{x={format_number(stud['x'])}, y={format_number(stud['y'])}"
+        leg = dynamic_legs[index] if dynamic_legs is not None else None
+        if leg is not None:
+            row += f", s2sSpeed={leg.speed_pct}, s2sWaitMs={leg.wait_ms}"
+        rows.append(row + "},")
+    return rows
 
 
 def _gate_rows(gate_mode: str, indent: str, gate_di: int, gate_timeout_ms: int) -> list[str]:
@@ -225,6 +378,8 @@ def build_weldflex_lua(
     stud_type: str | None = None,
     substrate: str | None = None,
     speed: float | int | None = None,
+    dsc_enabled: bool = False,
+    stud_reload_ms: int | float | None = None,
 ) -> BuiltProgram:
     """Substitute the template's markers and report the generated line numbers."""
     if gate_mode not in GATE_MODES:
@@ -250,15 +405,22 @@ def build_weldflex_lua(
     # Dry runs are for watching travel safely, not production cadence — default
     # them much slower unless the caller asks for a specific speed.
     speed_val = max(1, min(100, int(speed))) if speed is not None else (10 if arm_mode == "dry" else 25)
+    feed_pulse_ms = default_feed_pulse_ms()
+    dynamic_legs = (
+        dynamic_stud_legs(studs, stud_reload_ms, feed_pulse_ms)
+        if dsc_enabled
+        else None
+    )
 
     out: list[str] = []
     loop_start_line = cycle_marker_line = gate_line = 0
     boundary_seen = False
+    feed_pulse_seen = False
 
     for line in template_lines:
         indent = _indent_of(line)
         if "--{{STUDS}}" in line:
-            out.extend(_stud_rows(studs, indent))
+            out.extend(_stud_rows(studs, indent, dynamic_legs))
         elif "--{{CYCLE_COUNT}}" in line:
             out.append(f"{indent}cycleCount = {cycles}")
         elif "--{{BOUNDARY_MS}}" in line:
@@ -268,6 +430,9 @@ def build_weldflex_lua(
             out.append(f"{indent}ARM_MODE = {format_lua_string(arm_mode)}")
         elif "--{{SPEED}}" in line:
             out.append(f"{indent}speed = {speed_val}")
+        elif "--{{FEED_PULSE_MS}}" in line:
+            out.append(f"{indent}FEED_PULSE_MS = {feed_pulse_ms}")
+            feed_pulse_seen = True
         elif "--{{SAFE_Z}}" in line:
             out.append(f"{indent}SAFE_Z = {format_number(safe_z_val)}")
         elif "--{{RETRACT_Z}}" in line:
@@ -308,6 +473,7 @@ def build_weldflex_lua(
             ("--{{CYCLE_MARKER}}", cycle_marker_line),
             ("--{{GATE}}", gate_line),
             ("--{{BOUNDARY_MS}}", boundary_seen),
+            ("--{{FEED_PULSE_MS}}", feed_pulse_seen),
         )
         if not value
     ]

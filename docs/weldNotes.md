@@ -14,7 +14,9 @@ The sequence moves through 6 distinct phases:
 3. **WELD**: Re-checks `DI1` and `DI0` (capacitors charged), then pulses `DO0` for `WELD_PULSE_MS` (250 ms) only if `WELD_ARMED = 1`.
 4. **HOLD**: Remains at pressure for `POST_WELD_HOLD_MS` (500 ms) while weld solidifies.
 5. **RETRACT**: Returns to safe `Z_CLEARANCE` set by caller.
-6. **FEED**: Pulses `DO1` for `FEED_PULSE_MS` (1000 ms) to advance the next stud into the torch.
+6. **FEED**: Pulses `DO1` for `WELD_FEED_PULSE_MS` (250 ms by default) to
+  trigger the next stud. The pulse ends before the outer program travels;
+  mechanical reload continues during the following stud-to-stud move.
 
 > [!IMPORTANT]
 > Any phase unable to reach its required condition retracts to safe Z, ensures `DO0` is off, drops force overlays, and raises a Lua error (`error()`).
@@ -70,6 +72,49 @@ After a fault, the program parks ~3s on a unique `WaitMs` line site (`1`, `4`, `
 - `WELD_ARMED`: `1` fires `DO0` for real. Any other value (or unset) suppresses the weld pulse while search, press, hold, retract, and feeder advance still run.
 - `WELD_FORCE_TEST`: `1` = force verification mode. Ignores `DI1` check failure (reports only), stretches hold to 5000 ms, ends after retract, forces `DO0` off.
 - `WELD_PRESS_LBF`: Press target in lbf, overriding 20.0 lbf default (clamped up to `PRESS_TARGET_MAX_LBF = 25.0 lbf`).
+- `WELD_FEED_PULSE_MS`: Feeder trigger duration in ms, provided by the
+  generated parent program. Values outside 1-10000 ms use the 250 ms default.
+
+## 3.1 Dynamic Stud-to-Stud Speed Compensation
+
+When a recipe enables Dynamic Speed Compensation, `WeldFlex.lua` emits a speed
+and optional dwell for every destination after the first stud. The feeder's
+reload timer begins with the prior `DO1` pulse. After the electrical pulse ends,
+the next horizontal move and any generated dwell consume the rest of the
+recipe's reload time.
+
+DSC applies only to the post-weld horizontal move at retract height. Home,
+first-stud approach, descent, and return-to-home continue using the recipe's
+normal motion speed. It is disabled by default and refuses to build until
+`WELDFLEX_DSC_CALIBRATED=1` confirms a dry-run calibration for the controller's
+actual `Lin` timing model. The machine-level calibration values live in `.env`;
+restart the backend after changing them.
+
+### Commissioning Preconditions
+
+The FAIRINO pendant's **Auto Speed** is a global cap on the program's requested
+motion percentage. It must be set to **100%** before timing DSC, running a DSC
+part, or accepting a calibration. A pendant Auto Speed of 25% made a generated
+100% long stud-to-stud move run at roughly a quarter of its expected speed during
+the 2026-09-02 `allentown_mini` validation; the DSC model cannot compensate past
+its own 100% ceiling.
+
+Use percentage-mode linear moves with no inline offset while a
+`PointsOffsetEnable(0, ...)` global workpiece offset is active:
+
+```lua
+PointsOffsetEnable(0, weldX, weldY, travelZ, 0, 0, 0)
+Lin(zerozero, travelSpeed, -1, 0, 0)
+PointsOffsetDisable()
+```
+
+The fifth `Lin` argument is the instruction's inline `offset_flag`, not a
+speed-mode selector. Passing `1` there enables a second workpiece/base offset;
+it is incorrect when the offset is already supplied by `PointsOffsetEnable`.
+The 2026-09-02 hardware check showed the corrected `0` form tracks the expected
+travel behavior more closely. Physical-speed `Lin` mode is a separate,
+uncommissioned interface and must not reuse DSC's percentage values without a
+new timing calibration.
 
 ---
 

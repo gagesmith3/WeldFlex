@@ -68,7 +68,7 @@ rather than a line number the host has to catch mid-flight.
 ## How a part becomes a program
 
 The studs are **inlined at build time**, not read at runtime. `lua_builder.py`
-substitutes five `--{{MARKER}}` lines in the `programs/WeldFlex.lua` template and
+substitutes named `--{{MARKER}}` lines in the `programs/WeldFlex.lua` template and
 re-uploads the whole file on every run, replacing `/fruser/WeldFlex.lua` on the
 controller.
 
@@ -81,16 +81,24 @@ Consequences worth knowing:
 
 - Never edit the copy on the controller. Edit `programs/WeldFlex.lua`, which is
   the only place motion parameters (`tool`, `wobj`, `speed`, `Z_CLEARANCE`) live.
-- Those parameters are **hardcoded for every part** — none of them is a
-  `--{{MARKER}}`, so `lua_builder.py` passes them through untouched and every
-  recipe runs with the same speed and clearance. Making one per-part means adding
-  a marker, a `build_weldflex_lua()` branch, a recipe field, and a `_launch()`
-  hand-off.
+- Recipe values such as speed and clearance are emitted through markers. When a
+  part enables Dynamic Speed Compensation, the builder additionally emits a
+  speed and possible dwell for each non-first stud-to-stud move. DSC never
+  changes home, first-stud approach, descent, or return-home speed, and it stays
+  unavailable until a machine-specific dry-run timing calibration is accepted.
+  The pendant's Auto Speed is a global multiplier/cap over those percentages;
+  set it to 100% before calibrating or running DSC, or even a generated 100%
+  leg will be limited below its intended speed.
+- `WeldFlex.lua` applies each stud position through
+  `PointsOffsetEnable(0, ...)`, so percentage-mode `Lin` calls must use
+  `Lin(point, speed, -1, 0, 0)`. Its final `0` means no *inline* offset; it is
+  not a speed setting. Do not set it to `1` unless the full inline offset
+  argument list follows.
 - `tool` and `wobj` are **coordinate-frame slot ids**, not speeds — `tool` is the
   `SetToolCoord` id (1–15) the TCP calibration writes to, `wobj` the
-  `SetWObjCoord` id. `speed` is the joint-speed percent passed to `PTP`. They look
-  interchangeable in the file header and are not; renaming one to the other would
-  silently drop the calibrated frame.
+  `SetWObjCoord` id. `speed` is the requested motion percentage passed to the
+  generated `Lin` moves. They look interchangeable in the file header and are
+  not; renaming one to the other would silently drop the calibrated frame.
 - The checked-in template is valid standalone Lua — a zero-stud, one-cycle no-op —
   so it can be syntax-checked on its own.
 - Moving a marker line is safe. Deleting one raises at build time.

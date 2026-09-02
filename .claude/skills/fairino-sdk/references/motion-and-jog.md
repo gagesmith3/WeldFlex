@@ -60,10 +60,9 @@ documents the underlying SDK calls it's built from.
 Everything above is the **Python SDK**. The Lua programs in `programs/` run on
 the controller and use a *different, separate* instruction set — `PTP(...)`,
 `Lin(...)`, `PointsOffsetEnable(...)`, `WaitMs(...)`, `WaitDI(...)`,
-`SPLCSetDO(...)`. **This instruction set is documented nowhere in this repo.**
-`docs/fairino-doc-en-readthedocs-io-en-latest.pdf` is the Python SDK reference,
-and no `.lua` examples ship with the vendor SDK. What follows is inferred from
-the programs themselves — treat it as a working theory, not vendor truth.
+`SPLCSetDO(...)`. The controller-Lua source of truth is
+`docs/FR Lua programmingscript.txt`, Table 3-15 (the text extract is OCR-lossy,
+so trust its parameter table and paired examples over its wrapped prototype).
 
 `PTP(point, vel, blend, offset_flag)` as used in `programs/WeldFlex.lua:39`:
 
@@ -93,3 +92,25 @@ whether they are inert leftovers from pendant-generated code. The `PTP`/`Lin`
 calls pass literals and never reference them. Until that is settled, **do not
 rename or delete them** — if the runtime does read `tool`, dropping it falls
 back to an uncalibrated frame and every point moves somewhere wrong.
+
+### `Lin(point, ovl, blendR, search, offset_flag, ...)`
+
+`ovl` is a requested percentage, not a physical TCP velocity. The pendant's
+Auto Speed acts as a global cap over it: during `allentown_mini` DSC validation
+on 2026-09-02, pendant Auto Speed at 25% prevented a generated 100% long move
+from reaching its intended speed. Set the pendant to 100% before timing or
+running DSC.
+
+When `PointsOffsetEnable(0, x, y, z, rx, ry, rz)` supplies the position offset,
+the matching percentage-mode call is:
+
+```lua
+Lin(zerozero, ovl, -1, 0, 0)
+```
+
+The fifth value is `offset_flag`: `0` means no inline offset, `1` means an
+inline base/workpiece offset, and `2` means an inline tool offset. It is not
+`velAccParamMode`. Do not pass `1` there without all six inline offset values.
+For physical speed, the full form instead appends `velAccParamMode=1`, then
+physical `speed` in mm/s and `acc` in mm/s^2; those values need independent
+hardware calibration before use in WeldFlex.

@@ -13,6 +13,8 @@ let _state = {
   substrate: 'Mild Steel',
   pressure_setting: 20.0,
   speed: 25,
+  dsc_enabled: false,
+  stud_reload_ms: 600,
   arm_mode: 'live',
   isDirty: false,
 };
@@ -262,6 +264,8 @@ function loadPart(id, name, idx) {
         _state.speed = data.recipe.speed !== undefined && data.recipe.speed !== null
           ? Math.max(1, Math.min(100, Math.round(parseFloat(data.recipe.speed) || 25)))
           : 25;
+        _state.dsc_enabled = data.recipe.dsc_enabled === true;
+        _state.stud_reload_ms = normalizeStudReloadMs(data.recipe.stud_reload_ms);
       }
       renderPoints();
       renderStudList();
@@ -401,6 +405,8 @@ function pdStartNewPart(name) {
   _state.selectedPoint = null;
   _state.units         = 'mm';
   _state.speed         = 25;
+  _state.dsc_enabled   = false;
+  _state.stud_reload_ms = 600;
 
   const titleEl = document.getElementById('pd-canvas-part-title');
   if (titleEl) titleEl.textContent = name;
@@ -447,6 +453,8 @@ function pdSave() {
   const substrate = _state.substrate || 'Mild Steel';
   const pressure_setting = _state.pressure_setting !== undefined ? _state.pressure_setting : 20.0;
   const speed = _state.speed !== undefined ? _state.speed : 25;
+  const dsc_enabled = _state.dsc_enabled === true ? '1' : '0';
+  const stud_reload_ms = normalizeStudReloadMs(_state.stud_reload_ms);
 
   const body = new URLSearchParams({
     recipe_name: name,
@@ -459,6 +467,8 @@ function pdSave() {
     substrate,
     pressure_setting,
     speed,
+    dsc_enabled,
+    stud_reload_ms,
   });
   if (_state.activeId) body.set('recipe_id', _state.activeId);
 
@@ -735,6 +745,8 @@ function pdOpenJobSettingsModal() {
   const substrate = _state.substrate || 'Mild Steel';
   const pressure = _state.pressure_setting || '20.0';
   const speed = _state.speed !== undefined ? _state.speed : 25;
+  const dscEnabled = _state.dsc_enabled === true;
+  const studReloadMs = normalizeStudReloadMs(_state.stud_reload_ms);
   const armMode = _state.arm_mode === 'dry' ? 'dry' : 'live';
 
   const mSafeZ = document.getElementById('pd-modal-safe-z');
@@ -744,6 +756,8 @@ function pdOpenJobSettingsModal() {
   const mSubstrate = document.getElementById('pd-modal-substrate');
   const mPressure = document.getElementById('pd-modal-pressure');
   const mSpeed = document.getElementById('pd-modal-speed');
+  const mDscEnabled = document.getElementById('pd-modal-dsc-enabled');
+  const mStudReloadMs = document.getElementById('pd-modal-stud-reload-ms');
   const mArmMode = document.getElementById('pd-modal-arm-mode');
 
   if (mSafeZ) { mSafeZ.value = formatLength(safeZ); mSafeZ.step = lengthStep(); }
@@ -753,7 +767,11 @@ function pdOpenJobSettingsModal() {
   if (mSubstrate) mSubstrate.value = substrate;
   if (mPressure) mPressure.value = pressure;
   if (mSpeed) mSpeed.value = speed;
+  if (mDscEnabled) mDscEnabled.checked = dscEnabled;
+  if (mStudReloadMs) mStudReloadMs.value = studReloadMs;
   if (mArmMode) mArmMode.value = armMode;
+
+  pdSyncDscControls();
 
   modal.removeAttribute('hidden');
 }
@@ -771,6 +789,8 @@ function pdSaveJobSettingsModal() {
   const mSubstrate = document.getElementById('pd-modal-substrate')?.value;
   const mPressure = document.getElementById('pd-modal-pressure')?.value;
   const mSpeed = document.getElementById('pd-modal-speed')?.value;
+  const mDscEnabled = document.getElementById('pd-modal-dsc-enabled')?.checked;
+  const mStudReloadMs = document.getElementById('pd-modal-stud-reload-ms')?.value;
 
   if (mSafeZ !== undefined) _state.safe_z = parseLength(mSafeZ) || 60.0;
   if (mRetractZ !== undefined) _state.retract_z = parseLength(mRetractZ) || 10.0;
@@ -782,10 +802,23 @@ function pdSaveJobSettingsModal() {
     const speed = Math.round(parseFloat(mSpeed));
     _state.speed = Number.isFinite(speed) ? Math.max(1, Math.min(100, speed)) : 25;
   }
+  if (mDscEnabled !== undefined) _state.dsc_enabled = mDscEnabled;
+  if (mStudReloadMs !== undefined) _state.stud_reload_ms = normalizeStudReloadMs(mStudReloadMs);
 
   pdCloseJobSettingsModal();
   pdSetDirty(true);
   pdSave();
+}
+
+function normalizeStudReloadMs(value) {
+  const reloadMs = Math.round(parseFloat(value));
+  return Number.isFinite(reloadMs) ? Math.max(1, Math.min(10000, reloadMs)) : 600;
+}
+
+function pdSyncDscControls() {
+  const toggle = document.getElementById('pd-modal-dsc-enabled');
+  const reload = document.getElementById('pd-modal-stud-reload-ms');
+  if (reload) reload.disabled = !toggle?.checked;
 }
 
 function pdOpenJobReportsModal() {

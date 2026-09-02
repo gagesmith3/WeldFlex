@@ -17,7 +17,9 @@ local DO_FEED    = 1       -- Stud feeder advance output
 -- ===== Timing (ms) =====
 local WELD_PULSE_MS     = 250
 local POST_WELD_HOLD_MS = 500
-local FEED_PULSE_MS     = 1000
+local FEED_PULSE_MS = (type(WELD_FEED_PULSE_MS) == "number"
+    and WELD_FEED_PULSE_MS >= 1
+    and WELD_FEED_PULSE_MS <= 10000) and WELD_FEED_PULSE_MS or 250
 
 -- ===== Force Config =====
 local N_PER_LBF = 4.448222

@@ -30,6 +30,9 @@ from lua_builder import (
     format_number,
     strip_lua_comments,
     _parse_pressure,
+    STUD_RELOAD_MS_DEFAULT,
+    STUD_RELOAD_MS_MAX,
+    STUD_RELOAD_MS_MIN,
 )
 from robot_service import STATE_MAP as ROBOT_STATE_MAP, WeldFlexRobotService
 
@@ -121,6 +124,13 @@ _tcp_lock = threading.Lock()
 _RECIPES_PATH = os.path.join(os.path.dirname(__file__), 'recipes.json')
 _rec_lock = threading.Lock()
 
+def _parse_stud_reload_ms(value):
+    try:
+        reload_ms = int(float(value))
+    except (TypeError, ValueError):
+        return STUD_RELOAD_MS_DEFAULT
+    return max(STUD_RELOAD_MS_MIN, min(STUD_RELOAD_MS_MAX, reload_ms))
+
 def _recipes_load():
     try:
         with open(_RECIPES_PATH) as f:
@@ -181,6 +191,8 @@ def _recipes_enrich(recipes):
             'stud_type': r.get('stud_type') or 'M4',
             'substrate': r.get('substrate') or 'Mild Steel',
             'pressure_setting': _parse_pressure(r.get('pressure_setting')),
+            'dsc_enabled': bool(r.get('dsc_enabled', False)),
+            'stud_reload_ms': _parse_stud_reload_ms(r.get('stud_reload_ms')),
         })
     return result
 
@@ -482,6 +494,8 @@ def ui_recipes_save():
         speed = max(1, min(100, int(float(speed_raw)))) if speed_raw else None
     except ValueError:
         speed = None
+    dsc_enabled = request.form.get('dsc_enabled') == '1'
+    stud_reload_ms = _parse_stud_reload_ms(request.form.get('stud_reload_ms'))
 
     studs_json = (request.form.get('studs_json') or '').strip()
     studs_text = (request.form.get('studs_text') or '').strip()
@@ -513,6 +527,8 @@ def ui_recipes_save():
             existing['substrate']       = substrate
             existing['pressure_setting'] = pressure_setting
             existing['speed']            = speed
+            existing['dsc_enabled']      = dsc_enabled
+            existing['stud_reload_ms']   = stud_reload_ms
             existing['updated_at']       = now
             saved_id = existing['id']
         else:
@@ -529,6 +545,8 @@ def ui_recipes_save():
                 'substrate': substrate,
                 'pressure_setting': pressure_setting,
                 'speed': speed,
+                'dsc_enabled': dsc_enabled,
+                'stud_reload_ms': stud_reload_ms,
                 'created_at': now,
                 'updated_at': now,
                 'times_ran': 0,
@@ -674,6 +692,8 @@ def ui_job_load():
             stud_type=recipe.get("stud_type", "M4"),
             substrate=recipe.get("substrate", "Mild Steel"),
             speed=speed,
+            dsc_enabled=recipe.get("dsc_enabled", False),
+            stud_reload_ms=recipe.get("stud_reload_ms"),
         )
     except JobError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 409

@@ -183,8 +183,20 @@
         <input type="number" id="pd-modal-pressure" class="pd-param-input" step="0.1" value="20.0" inputmode="none" data-kbd="num">
       </div>
       <div class="pd-param-group">
-        <label for="pd-modal-speed" class="pd-param-label">Motion Speed (%)</label>
+        <label for="pd-modal-speed" class="pd-param-label">Home / Approach Speed (%)</label>
         <input type="number" id="pd-modal-speed" class="pd-param-input" step="1" min="1" max="100" value="25" inputmode="none" data-kbd="num">
+      </div>
+      <div class="pd-param-group">
+        <label for="pd-modal-dsc-enabled" class="pd-param-label">Dynamic Speed Compensation</label>
+        <label class="pd-toggle">
+          <input type="checkbox" id="pd-modal-dsc-enabled" onchange="pdSyncDscControls()">
+          <span class="pd-toggle-track" aria-hidden="true"></span>
+          <span class="pd-toggle-value">Enabled</span>
+        </label>
+      </div>
+      <div class="pd-param-group">
+        <label for="pd-modal-stud-reload-ms" class="pd-param-label">Stud Reload Time (ms)</label>
+        <input type="number" id="pd-modal-stud-reload-ms" class="pd-param-input" step="1" min="1" max="10000" value="600" inputmode="none" data-kbd="num">
       </div>
     </div>
     <div class="wf-modal-actions">

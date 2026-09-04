@@ -81,6 +81,21 @@
         {{ (job.cycles_done ~ ' / ' ~ job.cycles_target) if job.cycles_target else '— / —' }}
       </strong>
     </div>
+    <div class="metric-card">
+      <div class="metric-icon">{{ icon_safe('zap', fallback='circle', width=14, height=14) }}</div>
+      <span class="metric-label">Press Target</span>
+      <strong class="metric-value">
+        {% if conn.target_press_lbf is not none %}{{ '%.1f'|format(conn.target_press_lbf) }} lbf{% else %}—{% endif %}
+      </strong>
+      <span class="metric-label">Recipe {{ job.pressure_setting or '—' }} lbf</span>
+    </div>
+    <div class="metric-card">
+      <div class="metric-icon">{{ icon_safe('activity', fallback='circle', width=14, height=14) }}</div>
+      <span class="metric-label">Live Fz</span>
+      <strong class="metric-value">
+        {% if conn.force_lbf is not none %}{{ '%+.1f'|format(conn.force_lbf) }} lbf{% else %}—{% endif %}
+      </strong>
+    </div>
   </div>
 
   {% if job.cycles_target %}

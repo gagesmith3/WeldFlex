@@ -43,27 +43,27 @@ def TestCustomWeaveSetPara(self):
 
     robot.WeaveSetPara(0, 9, 1.000000, 1, 5.000000, 6.000000, 5.000000, 50, 100, 100, 0, 1, 0.000000, 0.000000)
 
-    desc_p1 = [-288.650, 367.807, 288.404, 0.000, -0.001, 0.001]
-    desc_p2 = [-431.714, 367.815, 288.415, 0.001, 0.001, 0.000]
-    desc_p3 = [-348.666, 427.798, 288.404, -0.000, -0.000, 0.001]
-    j1 = [140.656, -84.560, -91.707, -93.734, 90.000, 50.655]
-    j2 = [149.873, -98.298, -77.599, -94.103, 90.000, 59.873]
-    j3 = [139.773, -96.173, -80.014, -93.814, 90.000, 49.772]
+    desc_p1 = [-668.674,50.127,211.698,-176.978,5.333,10.535]
+    desc_p2 = [-529.591,-77.247,204.008,-178.889,1.356,-14.668]
+    desc_p3 = [-529.593,282.831,204.007,-178.890,1.357,-14.667]
+    j1 = [-12.938,-58.855,91.909,-129.146,-90.652,66.633]
+    j2 = [-2.427,-73.309,113.912,-131.693,-91.373,102.241]
+    j3 = [-37.804,-66.024,103.325,-128.984,-90.488,66.870]
 
     epos = [0.0] * 4
     offset_pos = [0.0] * 6
 
-    robot.MoveJ(joint_pos=j1, tool=3, user=0, vel=100)
+    robot.MoveJ(joint_pos=j1, tool=0, user=0, vel=100)
     robot.WeaveStart(0)
-    robot.Circle(desc_pos_p=desc_p3, tool_p=3, user_p=0, vel_p=50, desc_pos_t=desc_p2, tool_t=3, user_t=0, vel_t=50, oacc=10)
+    robot.Circle(desc_pos_p=desc_p3, tool_p=0, user_p=0, vel_p=50, desc_pos_t=desc_p2, tool_t=0, user_t=0, vel_t=50, oacc=10)
     robot.WeaveEnd(0)
-    robot.MoveJ(joint_pos=j1, tool=3, user=0, vel=100)
+    robot.MoveJ(joint_pos=j1, tool=0, user=0, vel=100)
     robot.WeaveStart(0)
-    robot.MoveC(desc_pos_p=desc_p3, tool_p=3, user_p=0, vel_p=50, desc_pos_t=desc_p2, tool_t=3, user_t=0, vel_t=50)
+    robot.MoveC(desc_pos_p=desc_p3, tool_p=0, user_p=0, vel_p=50, desc_pos_t=desc_p2, tool_t=0, user_t=0, vel_t=50)
     robot.WeaveEnd(0)
-    robot.MoveJ(joint_pos=j1, tool=3, user=0, vel=100)
+    robot.MoveJ(joint_pos=j1, tool=0, user=0, vel=100)
     robot.WeaveStart(0)
-    robot.MoveL(desc_pos=desc_p2, tool=3, user=0, vel=100, ovl=10, speedPercent=100)
+    robot.MoveL(desc_pos=desc_p2, tool=0, user=0, vel=100, ovl=10, speedPercent=100)
     robot.WeaveEnd(0)
 
     robot.CloseRPC()

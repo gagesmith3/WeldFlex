@@ -25,7 +25,8 @@ local FEED_PULSE_MS = (type(WELD_FEED_PULSE_MS) == "number"
 local N_PER_LBF = 4.448222
 local CONTACT_FORCE_N = 10.0
 
-local PRESS_TARGET_MAX_LBF = 25.0
+-- FT_LinInsertion accepts at most 100 N; leave conversion margin below it.
+local PRESS_TARGET_MAX_LBF = 22.0
 local PRESS_TARGET_LBF     = 20.0
 if type(WELD_PRESS_LBF) == "number"
    and WELD_PRESS_LBF > 0
@@ -44,7 +45,12 @@ local PRESS_HOLD_MS = 1000
 
 -- ===== FT_Control & Motion Parameters =====
 local FTC_SENSOR_NUM = 1
-local FTC_GAIN_P     = 0.005
+if type(WELD_FT_SENSOR_NUM) == "number"
+   and WELD_FT_SENSOR_NUM >= 1
+   and WELD_FT_SENSOR_NUM <= 255 then
+    FTC_SENSOR_NUM = WELD_FT_SENSOR_NUM
+end
+local FTC_GAIN_P     = 0.0001
 
 local READY_TIMEOUT_MS   = 5000
 local READY_SAMPLE_MS    = 100
@@ -57,8 +63,10 @@ local FIND_ACC  = 0.0
 
 local PRESS_DIR = 0     -- 0 = negative (FT_LinInsertion encoding; flipped with TCP Z, 2026-09-01)
 
-local SEARCH_SPEED_MMS = 50.0
-local PRESS_SPEED_MMS  = 10.0
+-- FAIRINO documents 3 mm/s as the FT_FindSurface default. Keep the first
+-- contact gentle; constant-force insertion begins only after this completes.
+local SEARCH_SPEED_MMS = 3.0
+local PRESS_SPEED_MMS  = 1.0
 
 local RETRACT_Z_MM = (type(WELD_RETRACT_Z) == "number" and WELD_RETRACT_Z > 0) and WELD_RETRACT_Z or 10.0
 local PART_Z_MM = (type(WELD_PART_Z) == "number") and WELD_PART_Z or 0.0
@@ -234,7 +242,7 @@ local function ftControlPress(flag)
         0.0, 0, 0,
         2.0, 2.0, 8.0, 8.0,
         0.2, 0.2, 1.0, 1.0,
-        flag)
+        0)
 end
 
 local function ftGuardPress(flag)
@@ -318,13 +326,14 @@ local function fault(msg, site)
     moveToZ(Z_CLEARANCE, RETRACT_SPEED)
     print("[WELD] FAULT: " .. msg)
     beacon(site)
+    return true
 end
 
 local function waitForWeldReady()
     local waited = 0
     while readDI(DI_WELD_READY) ~= 1 do
         if waited >= READY_TIMEOUT_MS then
-            fault(string.format("DI%d (caps at charge) never came up within %d ms — welder off, not ready, or unwired",
+            return fault(string.format("DI%d (caps at charge) never came up within %d ms — welder off, not ready, or unwired",
                 DI_WELD_READY, READY_TIMEOUT_MS), 11)
         end
         WaitMs(READY_SAMPLE_MS)
@@ -357,7 +366,7 @@ local function searchForStud()
     local ret = ftCall(FT_FindSurface, FIND_RCS, FIND_DIR, FIND_AXIS,
                        SEARCH_SPEED_MMS, FIND_ACC, SEARCH_MAX_MM, CONTACT_FORCE_N)
     if ftRefused(ret) then
-        fault(string.format("FT_FindSurface refused the approach (code %s), no surface within %.1f mm",
+        return fault(string.format("FT_FindSurface refused the approach (code %s), no surface within %.1f mm",
             tostring(ret), SEARCH_MAX_MM), 1)
     end
 
@@ -369,7 +378,7 @@ local function searchForStud()
     end
 
     if readDI(DI_STUD_ON_WORK) ~= 1 then
-        fault(string.format("touched a surface but DI%d (stud on work) is not active",
+        return fault(string.format("touched a surface but DI%d (stud on work) is not active",
             DI_STUD_ON_WORK), 4)
     end
 
@@ -380,10 +389,10 @@ local function pressToForce()
     local holdMs = PRESS_HOLD_MS
 
     if type(FT_Control) ~= "function" then
-        fault("FT_Control is not available in this controller's Lua", 9)
+        return fault("FT_Control is not available in this controller's Lua", 9)
     end
     if type(FT_LinInsertion) ~= "function" then
-        fault("FT_LinInsertion is not available in this controller's Lua", 9)
+        return fault("FT_LinInsertion is not available in this controller's Lua", 9)
     end
 
     pressCollisionGuard(1)
@@ -397,14 +406,14 @@ local function pressToForce()
     pub(SV_PHASE, PH_PRESS_ON)
     local ret = ftCall(ftControlPress, 1)
     if ftRefused(ret) then
-        fault(string.format("FT_Control refused to start (code %s)", tostring(ret)), 9)
+        return fault(string.format("FT_Control refused to start (code %s)", tostring(ret)), 9)
     end
 
     pub(SV_PHASE, PH_PRESS_INSERT)
     ret = ftCall(FT_LinInsertion, FIND_RCS, PRESS_TARGET_N,
                  PRESS_SPEED_MMS, 0.0, PRESS_MAX_MM, PRESS_DIR)
-    if ret ~= nil and type(ret) == "number" and ret < 0 then
-        fault(string.format("FT_LinInsertion refused the press (code %s)", tostring(ret)), 5)
+    if ftRefused(ret) then
+        return fault(string.format("FT_LinInsertion refused the press (code %s)", tostring(ret)), 5)
     end
 
     local zNow = readToolZ()
@@ -431,11 +440,11 @@ local function fireWeld()
         DI_STUD_ON_WORK, d1, DI_WELD_READY, d0))
 
     if d1 ~= 1 then
-        fault(string.format("DI%d (stud on work) dropped before the weld pulse", DI_STUD_ON_WORK), 10)
+        return fault(string.format("DI%d (stud on work) dropped before the weld pulse", DI_STUD_ON_WORK), 10)
     end
 
     if d0 ~= 1 then
-        fault(string.format("DI%d (weld ready) dropped before the weld pulse", DI_WELD_READY), 11)
+        return fault(string.format("DI%d (weld ready) dropped before the weld pulse", DI_WELD_READY), 11)
     end
 
     if WELD_ARMED ~= 1 then

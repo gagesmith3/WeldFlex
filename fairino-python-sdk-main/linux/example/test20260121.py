@@ -11,7 +11,7 @@ import time
 def TestPhotoelectricSensorTCPCalib(self):
     offset = [10.0, 10.0, 3.0]
     TCP = [0.0] * 6
-    rtn, TCP = robot.PhotoelectricSensorTCPCalibration("/fruser/FR_CalibrateTheToolTcp.lua", offset)
+    rtn, TCP = robot.PhotoelectricSensorTCPCalibration("FR_CalibrateTheToolTcp-061101.lua", offset)
     print(f"PhotoelectricSensorTCPCalibration rtn is {rtn},{TCP[0]},{TCP[1]},{TCP[2]},{TCP[3]},{TCP[4]},{TCP[5]}")
     robot.CloseRPC()
     return 0

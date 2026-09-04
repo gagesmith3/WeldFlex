@@ -8,7 +8,7 @@ robot = Robot.RPC('192.168.58.2')
 
 import time
 def move1(self):
-    rtn = robot.LaserSensorRecordandReplay(0, 10, 1, 0, 0.1, 1, 1, 10, 100)
+    rtn = robot.LaserSensorRecordandReplay(0, 10, 1, 0, 0.1, 1, 0, 10, 100)
     print(f"LaserSensorRecordandReplay rtn is {rtn}")
     rtn = robot.MoveStationary()
     print(f"MoveStationary rtn is {rtn}")

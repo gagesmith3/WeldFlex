@@ -2,20 +2,36 @@
 from time import sleep
 import time
 from fairino import Robot
+from fairino.Robot import RobotState, SetRobotRealtimeStateConfig
 
 # 与机器人控制器建立连接
-robot = Robot.RPC('192.168.58.2')
+# robot = Robot.RPC('192.168.58.2')
 
 
-def TestServoJUDP(self):
+def TestServoJUDP():
     # 设置简单的回调
     def callback(src_type, count, cmd_id, data_len, content):
         print("回调函数: cmd_id={} count={} data_len={} content={}".format(cmd_id, count, data_len, content))
         return 0
 
+    states = [
+        RobotState.JointCurPos,  # 关节当前位置
+        RobotState.ToolCurPos,  # 工具当前位置
+        RobotState.MotionDone,  # 运动完成信号
+    ]
+    period_ms = 4
+    ret = SetRobotRealtimeStateConfig(states, period_ms)
+    print(f"  配置结果: {ret}")
+    if ret != 0:
+        print("✗ 配置失败")
+        return None
+    print(f"✓ 已配置 {len(states)} 个状态字段，周期 {period_ms}ms")
+
+
+    robot = Robot.RPC('192.168.58.2')
     robot.SetUDPCmdRpyCallback(callback)
     # # 初始化关节位置和外部轴位置
-    j= [105, -108, 74, -66, -88.893, -1.621]
+    j= [0, -90, 90, 0, 0, 0]
     offset_pos = [0, 0, 0, 0, 0, 0]
     epos = [0, 0, 0, 0]
     # # 移动到初始位置
@@ -37,11 +53,11 @@ def TestServoJUDP(self):
         print(f"GetActualJointPosDegree errcode:{ret}")
     while 1:
         count = 300
-        result = robot.ServoMoveStart(cmdType=1)
-        print("ServoMoveStart返回结果: {}".format(result))
+        # result = robot.ServoMoveStart(cmdType=0)
+        # print("ServoMoveStart返回结果: {}".format(result))
         while count > 0:
             result = robot.ServoJ(joint_pos=j, axisPos=epos, acc=acc, vel=vel, cmdT=cmdT,
-                         filterT=filterT, gain=gain, id=cmdID, cmdType=1)
+                         filterT=filterT, gain=gain, id=cmdID, cmdType=0)
             j[0] += dt
             j[1] += dt
             j[2] += dt
@@ -50,17 +66,17 @@ def TestServoJUDP(self):
             j[5] += dt
             # epos[0] += dt
             count -= 1
-            print("返回结果: {}".format(result))
+            # print("返回结果: {}".format(result))
             time.sleep(0.01)
-        result = robot.ServoMoveEnd(cmdType=1)
-        print("ServoMoveEnd返回结果: {}".format(result))
+        # result = robot.ServoMoveEnd(cmdType=0)
+        # print("ServoMoveEnd返回结果: {}".format(result))
 
         count = 300
-        result = robot.ServoMoveStart(cmdType=1)
-        print("ServoMoveStart返回结果: {}".format(result))
+        # result = robot.ServoMoveStart(cmdType=0)
+        # print("ServoMoveStart返回结果: {}".format(result))
         while count > 0:
             result = robot.ServoJ(joint_pos=j, axisPos=epos, acc=acc, vel=vel, cmdT=cmdT,
-                         filterT=filterT, gain=gain, id=cmdID, cmdType=1)
+                         filterT=filterT, gain=gain, id=cmdID, cmdType=0)
             j[0] -= dt
             j[1] -= dt
             j[2] -= dt
@@ -69,9 +85,9 @@ def TestServoJUDP(self):
             j[5] -= dt
             # epos[0] -= dt
             count -= 1
-            print("ServoJ返回结果: {}".format(result))
+            # print("ServoJ返回结果: {}".format(result))
             time.sleep(0.01)
-        result = robot.ServoMoveEnd(cmdType=1)
+        # result = robot.ServoMoveEnd(cmdType=0)
         print("ServoMoveEnd返回结果: {}".format(result))
     robot.CloseRPC()
     return 0
@@ -210,6 +226,6 @@ def TestSendUDPFrame(self):
     robot.CloseRPC()
     time.sleep(1)
 
-TestServoJUDP(robot)
+TestServoJUDP()
 #TestServoJTUDP(robot)
 # TestSendUDPFrame(robot)

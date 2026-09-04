@@ -62,22 +62,22 @@ def test_firmware_upgrade_mt(self):
 def TestFirmWareUpgrade(self):
     robot.RobotEnable(0)
     time.sleep(0.2)  # 200ms
-    rtn = robot.JointAllParamUpgrade("D://zUP/MT/joint0603/jointallparameters.db")
+    rtn = robot.JointAllParamUpgrade("D://zUP/jointallparameters.db")
     print(f"robot JointAllParamUpgrade rtn is {rtn}")
 
-    rtn = robot.SetCtrlFirmwareUpgrade(2, "D://zUP/MT/FAIR_Cobot_Cbd_Asix_V2.0.bin")
+    rtn = robot.SetCtrlFirmwareUpgrade(2, "D://zUP/FAIR_Cobot_Cbd_Asix_V2.0.bin")
     print(f"robot SetCtrlFirmwareUpgrade rtn is {rtn}")
-    rtn = robot.SetEndFirmwareUpgrade(2, "D://zUP/MT/FAIR_Cobot_Axle_Asix_V2.4.bin")
+    rtn = robot.SetEndFirmwareUpgrade(2, "D://zUP/FAIR_Cobot_Axle_Asix_V2.4.bin")
     print(f"robot SetEndFirmwareUpgrade rtn is {rtn}")
 
     robot.SetSysServoBootMode()
     time.sleep(0.2)  # 200ms
 
-    rtn = robot.SetCtrlFirmwareUpgrade(1, "D://zUP/MT/FR_CTRL_PRIMCU_FV201412_MAIN_U4_T01_20250630(MT).bin")
+    rtn = robot.SetCtrlFirmwareUpgrade(1, "D://zUP/FR_CTRL_PRIMCU_FV201013_MAIN_U4_T01_20260424.bin")
     print(f"robot SetCtrlFirmwareUpgrade rtn is {rtn}")
-    rtn = robot.SetEndFirmwareUpgrade(1, "D://zUP/MT/FR_END_FV2010010_MAIN_U1_T01_20250603.bin")
+    rtn = robot.SetEndFirmwareUpgrade(1, "D://zUP/FR_END_FV201013_MAIN_U1_T01_20260407.bin")
     print(f"robot SetEndFirmwareUpgrade rtn is {rtn}")
-    rtn = robot.SetJointFirmwareUpgrade(1, "D://zUP/MT/FR_SERVO_FV504215_MAIN_U7_T07_20250603.bin")
+    rtn = robot.SetJointFirmwareUpgrade(1, "D://zUP/FR_SERVO_FV504316_MAIN_U7_T07_20250715.bin")
     print(f"robot SetJointFirmwareUpgrade rtn is {rtn}")
     robot.CloseRPC()
 
@@ -89,5 +89,5 @@ def test(self):
 
 # test_firmware_upgrade(robot)
 # test_firmware_upgrade_mt(robot)
-# TestFirmWareUpgrade(robot)
-test(robot)
+TestFirmWareUpgrade(robot)
+# test(robot)

@@ -62,12 +62,25 @@ class FakeRobot:
         with self._lock:
             return FakeSnap(**vars(self.snap))
 
+    def get_universal_state(self):
+        return self.snapshot()
+
     def set_running_hint(self, running):
         self.running_hint = running
 
     def upload_program(self, path, replace=False):
         self._maybe_fail("upload_program")
         return "WeldFlex.lua"
+
+    def ft_config(self):
+        self._maybe_fail("ft_config")
+        return {"number": 7, "company": 24, "device": 0}
+
+    def start_job_telemetry(self):
+        self._maybe_fail("start_job_telemetry")
+
+    def stop_job_telemetry(self):
+        self._maybe_fail("stop_job_telemetry")
 
     def run_program(self, name):
         self._maybe_fail("run_program")
@@ -140,7 +153,24 @@ def test_load_then_start_reaches_running(tmp_path):
     mgr.start()
     wait_state(mgr, JobState.RUNNING.value)
     assert "upload_program" in robot.calls and "run_program" in robot.calls
+    assert "start_job_telemetry" in robot.calls
     assert robot.running_hint is True
+    mgr.shutdown()
+
+
+def test_monitor_uses_8083_first_observation_during_force_operations(tmp_path):
+    """The RPC heartbeat stops during an F/T operation while 8083 still reports run."""
+    robot = FakeRobot()
+    rpc_snapshot = FakeSnap(state="faulted", connected=False, program_state_raw=1)
+    feed_snapshot = FakeSnap(state="telemetry", connected=False, program_state_raw=2)
+    robot.snapshot = lambda: rpc_snapshot
+    robot.get_universal_state = lambda: feed_snapshot
+    mgr = make_manager(tmp_path, robot)
+    mgr.load("p1", "Bracket", [{"x": 1, "y": 2}], cycles=1, gate_mode="none")
+    mgr.start()
+
+    assert wait_for(lambda: mgr._session is not None and mgr._session.seen_running)
+    assert mgr.snapshot().state == JobState.RUNNING.value
     mgr.shutdown()
 
 
@@ -202,6 +232,29 @@ def test_load_accepts_arm_mode_and_passes_it_to_generated_program(tmp_path, monk
     mgr.start()
     wait_state(mgr, JobState.RUNNING.value)
     assert seen == [("dry", 42, True, 600)]
+    mgr.shutdown()
+
+
+def test_launch_uses_the_controller_assigned_force_sensor_number(tmp_path, monkeypatch):
+    import job_manager as jm
+
+    real_build = jm.build_weldflex_lua
+    seen = []
+
+    def spy(studs, cycles, **kwargs):
+        seen.append(kwargs["ft_sensor_num"])
+        return real_build(studs, cycles, **kwargs)
+
+    monkeypatch.setattr(jm, "build_weldflex_lua", spy)
+
+    robot = FakeRobot()
+    mgr = make_manager(tmp_path, robot)
+    mgr.load("p1", "Bracket", [{"x": 1, "y": 2}], cycles=1, gate_mode="none")
+    mgr.start()
+    wait_state(mgr, JobState.RUNNING.value)
+
+    assert seen == [7]
+    assert "ft_config" in robot.calls
     mgr.shutdown()
 
 

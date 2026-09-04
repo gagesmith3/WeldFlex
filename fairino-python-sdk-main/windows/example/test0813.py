@@ -1,3 +1,5 @@
+import array
+import ctypes
 from time import sleep
 from fairino import Robot
 # A connection is established with the robot controller. A successful connection returns a robot object
@@ -6,7 +8,7 @@ robot = Robot.RPC('192.168.58.2')
 import time
 
 def testSucker(self):
-    robot.OpenLuaUpload("C://项目/外设SDK/CtrlDev_sucker.lua")
+    robot.OpenLuaUpload("D://zUP/CtrlDev_sucker.lua")
     time.sleep(2)
     robot.UnloadCtrlOpenLUA(1)
     robot.LoadCtrlOpenLUA(1)
@@ -28,22 +30,22 @@ def testSucker(self):
     robot.CloseRPC()
 
 def testFieldBusBoard(self):
-    robot.OpenLuaUpload("D://zUP/外设/CtrlDev_field.lua")
-    time.sleep(2)
-    robot.SetCtrlOpenLUAName(3,"CtrlDev_field.lua")
-    robot.UnloadCtrlOpenLUA(3)
-    robot.LoadCtrlOpenLUA(3)
-    time.sleep(8)
+    # robot.OpenLuaUpload("D://zUP/外设/CtrlDev_field.lua")
+    # time.sleep(2)
+    # robot.SetCtrlOpenLUAName(3,"CtrlDev_field.lua")
+    # robot.UnloadCtrlOpenLUA(3)
+    # robot.LoadCtrlOpenLUA(3)
+    # time.sleep(8)
 
     rtn,type_, version, conn_state = robot.GetFieldBusConfig()
     print(f"type is {type_}, version is {version}, connState is {conn_state}")
 
     # Write digital outputs
-    ctrl = [1, 0, 1]  # DO0=1, DO1=0, DO2=1
+    ctrl = [1,0,1]  # DO0=1, DO1=0, DO2=1
     robot.FieldBusSlaveWriteDO(0, 3, ctrl)
 
     # Write analog output
-    ctrl_ao = [0x1000]  # AO2 = 0x1000
+    ctrl_ao = [30.4]  # AO2 = 0x1000
     robot.FieldBusSlaveWriteAO(2, 1, ctrl_ao)
 
     for i in range(100):
@@ -251,7 +253,7 @@ def testSuckerMove(self):
     robot.CloseRPC()
 
 
-# testSucker(robot)
+testSucker(robot)
 # testSetSuckerCtrl(robot)
 # testGetSuckerState(robot)
 # testWaitSuckerState(robot)

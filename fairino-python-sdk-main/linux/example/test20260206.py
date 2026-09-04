@@ -24,7 +24,7 @@ def TestDOReset(self):
     robot.SetOutputResetExtAO(resetFlag, resumeReloadFlag)
     robot.SetOutputResetSmartToolDO(resetFlag, resumeReloadFlag)
 
-    robot.ProgramLoad("/fruser/test.lua")
+    robot.ProgramLoad("test0610.lua")
     robot.ProgramRun()
 
     time.sleep(2)

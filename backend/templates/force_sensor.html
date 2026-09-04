@@ -16,24 +16,20 @@
 
     {{ htmx_mount('ft-readout', '/ui/ft/reading', 'load, every 300ms', 'innerHTML') }}
 
+    <div id="ft-setup-status" class="ft-setup-status" aria-live="polite"></div>
+
     <div class="ft-actions">
       <button type="button" class="btn ft-action-btn"
-              hx-post="/ui/ft/setup" hx-target="#toast-rack" hx-swap="innerHTML"
+              hx-post="/ui/ft/inspect" hx-target="#ft-setup-status" hx-swap="innerHTML"
               hx-disabled-elt="this">
-        <span class="ft-btn-label">Initialize</span>
-        <span class="ft-btn-busy">Initializing…</span>
-      </button>
-      <button type="button" class="btn ft-action-btn"
-              hx-post="/ui/ft/zero" hx-target="#toast-rack" hx-swap="innerHTML"
-              hx-disabled-elt="this">
-        <span class="ft-btn-label">Zero</span>
-        <span class="ft-btn-busy">Zeroing…</span>
+        <span class="ft-btn-label">Inspect F/T Setup</span>
+        <span class="ft-btn-busy">Inspecting…</span>
       </button>
     </div>
 
     <p class="panel-note ft-help-note">
-      Initialize configures and activates the sensor — it takes about 10 seconds and
-      the readout pauses while it runs. Zero re-tares the reading; run it unloaded.
+      F/T configuration, zeroing, and payload identification are managed from the
+      pendant during commissioning.
     </p>
 
   </section>

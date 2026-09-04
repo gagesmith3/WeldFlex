@@ -9,6 +9,7 @@ robot = Robot.RPC('192.168.58.2')
 
 def TestRobotCtrl(self):
     '''机器人控制'''
+    time.sleep(1)
     error,version = robot.GetSDKVersion()
     print(f"SDK version: {version}")
     error,ip = robot.GetControllerIP()
@@ -32,6 +33,14 @@ def TestRobotCtrl(self):
     robot.Mode(0)
     time.sleep(1)
     robot.Mode(1)
+    time.sleep(1)
+    rtn = robot.HiSpeedManualSwitch(1)
+    print(f"change high speed mode : {rtn}")
+    time.sleep(1)
+    rtn = robot.HiSpeedManualSwitch(0)
+    print(f"change low speed mode : {rtn}")
+    time.sleep(3)
+    robot.ShutDownRobotOS()
     # print("\nPress any key to exit!")
     robot.CloseRPC()
 
@@ -150,15 +159,15 @@ def TestSpiral(self):
     epos = [0, 0, 0, 0]  # 外部轴位置
 
     # 螺旋运动参数配置
-    sp = [5,5.0,50.0,10.0,10.0,0]
+    sp = [2,30.0,50.0,10.0,10.0,0,1]
 
     # 运动参数
     tool = 0  # 工具坐标系编号
     user = 0  # 用户坐标系编号
-    vel = 100.0  # 速度百分比
-    acc = 100.0  # 加速度百分比
-    ovl = 100.0  # 速度缩放因子
-    blendT = 0.0  # 过渡时间
+    vel = 30.0  # 速度百分比
+    acc = 60.0  # 加速度百分比
+    ovl = 10.0  # 速度缩放因子
+    blendT = -1  # 过渡时间
     flag = 2  # 运动标志位
 
     robot.SetSpeed(20)  # 设置全局速度
@@ -213,26 +222,25 @@ def TestServoJ(self):
 def TestServoCart(self):
     """笛卡尔空间伺服运动测试函数"""
     # 初始化笛卡尔位姿
-    desc_pos_dt = [0.0,0.0,0.0,0.0,0.0,0.0]  # [x, y, z, rx, ry, rz]
-    desc_pos_dt[2] = -0.5  # z轴偏移-0.5mm
-
-    # 运动参数配置
-    pos_gain = [0.0, 0.0, 1.0, 0.0, 0.0, 0.0]  # 位置增益（仅在z轴生效）
-    mode = 2  # 运动模式
-    vel = 0.0  # 速度
-    acc = 0.0  # 加速度
-    cmdT = 0.008  # 命令周期（秒）
-    filterT = 0.0  # 滤波时间
-    gain = 0.0  # 增益系数
-    flag = 0  # 运动标志位
-    count = 100  # 循环次数
-
-    robot.SetSpeed(20)  # 设置全局速度
-
-    while count > 0:
-        robot.ServoCart(mode=mode, desc_pos=desc_pos_dt, pos_gain=pos_gain, acc=acc, vel=vel, cmdT=cmdT, filterT=filterT, gain=gain)
+    desc_pos_dt = [83.00800, 50.525000, 29.246, 179.629, -7.138, -166.975]
+    exaxis = [100.0, 0.0, 0.0, 0.0]
+    pos_gain = [0.0] * 6
+    mode = 0
+    vel = 0.0
+    acc = 0.0
+    cmdT = 0.001
+    filterT = 0.0
+    gain = 0.0
+    flag = 0
+    count = 5000
+    robot.SetSpeed(20)
+    error, desc_pos_dt = robot.GetActualTCPPose()
+    while count:
+        rtn = robot.ServoCart(mode, desc_pos_dt, exaxis, pos_gain, acc, vel, cmdT, filterT, gain)
+        print(f"ServoCart rtn is {rtn}")
         count -= 1
-        time.sleep(cmdT)  # 等待一个命令周期
+        desc_pos_dt[0] += 0.01
+        exaxis[0] += 0.01
     robot.CloseRPC()
 
 
@@ -546,16 +554,17 @@ def TestDOReset(self):
 
     # 重置各类输出信号
     resetFlag = 1
-    robot.SetOutputResetCtlBoxDO(resetFlag)    # 重置控制箱DO
-    robot.SetOutputResetCtlBoxAO(resetFlag)    # 重置控制箱AO
-    robot.SetOutputResetAxleDO(resetFlag)      # 重置轴DO
-    robot.SetOutputResetAxleAO(resetFlag)      # 重置轴AO
-    robot.SetOutputResetExtDO(resetFlag)       # 重置扩展DO
-    robot.SetOutputResetExtAO(resetFlag)       # 重置扩展AO
-    robot.SetOutputResetSmartToolDO(resetFlag) # 重置智能工具DO
+    reloadFlag = 1
+    robot.SetOutputResetCtlBoxDO(resetFlag , reloadFlag)    # 重置控制箱DO
+    robot.SetOutputResetCtlBoxAO(resetFlag, reloadFlag)    # 重置控制箱AO
+    robot.SetOutputResetAxleDO(resetFlag, reloadFlag)      # 重置轴DO
+    robot.SetOutputResetAxleAO(resetFlag, reloadFlag)      # 重置轴AO
+    robot.SetOutputResetExtDO(resetFlag, reloadFlag)       # 重置扩展DO
+    robot.SetOutputResetExtAO(resetFlag, reloadFlag)       # 重置扩展AO
+    robot.SetOutputResetSmartToolDO(resetFlag, reloadFlag) # 重置智能工具DO
 
     # 加载并运行Lua程序
-    robot.ProgramLoad("/fruser/test0610.lua")
+    robot.ProgramLoad("/fruser/test.lua")
     robot.ProgramRun()
 
     # 关闭连接
@@ -676,9 +685,11 @@ def TestWobjCoord(self):
 
     # 获取工件坐标系偏移量
     # getWobjDesc = DescPose()
-    rtn,getWobjDesc = robot.GetWObjOffset(0)
-    print(
-        f"GetWObjOffset    {rtn}  coord is {getWobjDesc[0]} {getWobjDesc[1]} {getWobjDesc[2]} {getWobjDesc[3]} {getWobjDesc[4]} {getWobjDesc[5]}")
+    rtn,getWobjDesc = robot.GetWObjOffset(1)
+    print(f"GetWObjOffset    {rtn}")
+    if rtn == 0:
+        print(
+            f"GetWObjOffset    {rtn}  coord is {getWobjDesc[0]} {getWobjDesc[1]} {getWobjDesc[2]} {getWobjDesc[3]} {getWobjDesc[4]} {getWobjDesc[5]}")
 
     robot.CloseRPC()  # 关闭连接
 
@@ -707,8 +718,8 @@ def TestExtCoord(self):
     rtn,coordRtn = robot.ComputeExTCF()
     print(f"ComputeExTCF {rtn}  coord is {coordRtn[0]} {coordRtn[1]} {coordRtn[2]} {coordRtn[3]} {coordRtn[4]} {coordRtn[5]}")
 
-    robot.SetExToolCoord(1, coordRtn, offdese)
-    robot.SetExToolList(1, coordRtn, offdese)
+    robot.SetExToolCoord(21, coordRtn, offdese)
+    robot.SetExToolList(21, coordRtn, offdese)
 
     robot.CloseRPC()
 
@@ -885,9 +896,9 @@ def TestPowerLimit(self):
     robot.ServoJTStart()  # Start servoJT mode
 
     while count > 0:
-        error = robot.ServoJT(torques, 0.001)
+        error = robot.ServoJT(torques, 0.01)
         count -= 1
-        time.sleep(0.001)  # 1ms delay
+        time.sleep(0.1)  # 1ms delay
 
     error = robot.ServoJTEnd()
 
@@ -910,7 +921,7 @@ def TestServoJT(self):
     while count > 0:
         error = robot.ServoJT(torques, 0.001)
         count -= 1
-        time.sleep(0.001)  # 1ms delay
+        time.sleep(0.1)  # 1ms delay
 
     # End servoJT mode
     error = robot.ServoJTEnd()
@@ -1100,16 +1111,18 @@ def TestGetTeachPoint(self):
     print(f"dh is: {dh[0]} {dh[1]} {dh[2]} {dh[3]} {dh[4]} {dh[5]}")
 
     error,sn = robot.GetRobotSN()
-    print(f"robot SN is {sn[0]}")
+    print(f"error is {error} ")
+    if error == 0:
+        print(f"robot SN is {sn[0]}")
 
     robot.CloseRPC()
 
 
 def TestTraj(self):
-    rtn = robot.TrajectoryJUpLoad("D://zUP/traj.txt")
+    rtn = robot.TrajectoryJUpLoad("D://zUP/horse.txt")
     print(f"Upload TrajectoryJ A {rtn}")
 
-    traj_file_name = "/fruser/traj/traj.txt"
+    traj_file_name = "horse.txt"
     rtn = robot.LoadTrajectoryJ(traj_file_name, 100, 1)
     print(f"LoadTrajectoryJ {traj_file_name}, rtn is: {rtn}")
 
@@ -1126,7 +1139,7 @@ def TestTraj(self):
     rtn,traj_num = robot.GetTrajectoryPointNum()
     print(f"GetTrajectoryStartPose rtn is: {rtn}, traj num is: {traj_num}")
 
-    rtn = robot.SetTrajectoryJSpeed(50.0)
+    rtn = robot.SetTrajectoryJSpeed(50.0,0)
     print(f"SetTrajectoryJSpeed is: {rtn}")
 
     traj_force = [0.0,0.0,0.0,0.0,0.0,0.0]
@@ -1171,7 +1184,7 @@ def testtpd(self):
     print(f"Delete TrajectoryJ B {rtn}")
 
 def TestLuaOp(self):
-    program_name = "/fruser/test0610.lua"
+    program_name = "test0610.lua"
     loaded_name = ""
     state = 0
     line = 0
@@ -1207,17 +1220,17 @@ def TestLUAUpDownLoad(self):
     for name in luaNames:
         print(name)
 
-    # 下载lua
-    rtn = robot.LuaDownLoad("test0610.lua", "D://zDOWN/")
-    print(f"LuaDownLoad rtn is:{rtn}")
-
-    # 上传lua
-    rtn = robot.LuaUpload("D://zDOWN/test0610.lua")
-    print(f"LuaUpload rtn is:{rtn}")
-
-    # 删除lua
-    rtn = robot.LuaDelete("test0610.lua")
-    print(f"LuaDelete rtn is:{rtn}")
+    # # 下载lua
+    # rtn = robot.LuaDownLoad("test0610.lua", "D://zDOWN/")
+    # print(f"LuaDownLoad rtn is:{rtn}")
+    #
+    # # 上传lua
+    # rtn = robot.LuaUpload("D://zDOWN/test0610.lua")
+    # print(f"LuaUpload rtn is:{rtn}")
+    #
+    # # 删除lua
+    # rtn = robot.LuaDelete("test0610.lua")
+    # print(f"LuaDelete rtn is:{rtn}")
 
     robot.CloseRPC()
 
@@ -1253,45 +1266,45 @@ def TestGripper(self):
 
     error = robot.MoveGripper(index, 90, 50, 50, max_time, block, 0, 0, 0, 0)
     print(f"MoveGripper retval is:{error}")
-    time.sleep(1)
+    time.sleep(3)
     error = robot.MoveGripper(index, 30, 50, 0, max_time, block, 0, 0, 0, 0)
     print(f"MoveGripper retval is:{error}")
-
+    time.sleep(3)
     error, [fault, status] = robot.GetGripperMotionDone()
     print(f"motion status:{fault},{status}")
 
-    error, [fault, active_status] = robot.GetGripperActivateStatus()
+    error, fault, active_status = robot.GetGripperActivateStatus()
     print(f"gripper active fault is:{fault},status is:{active_status}")
 
-    error, [fault, current_pos] = robot.GetGripperCurPosition()
+    error, fault, current_pos = robot.GetGripperCurPosition()
     print(f"fault is:{fault},current position is:{current_pos}")
 
-    error, [fault, current] = robot.GetGripperCurCurrent()
+    error, fault, current = robot.GetGripperCurCurrent()
     print(f"fault is:{fault},current current is:{current}")
 
-    error, [fault, voltage] = robot.GetGripperVoltage()
+    error, fault, voltage = robot.GetGripperVoltage()
     print(f"fault is:{fault},current voltage is:{voltage}")
 
-    error, [fault, temp] = robot.GetGripperTemp()
+    error, fault, temp = robot.GetGripperTemp()
     print(f"fault is:{fault},current temperature is:{temp}")
 
-    error, [fault, speed] = robot.GetGripperCurSpeed()
+    error, fault, speed = robot.GetGripperCurSpeed()
     print(f"fault is:{fault},current speed is:{speed}")
 
-    retval = 0
-    prepick_pose = [0.0]*6
-    postpick_pose = [0.0]*6
-
-    p1Desc = [-419.524, -13.000, 351.569, -178.118, 0.314, 3.833]
-    p2Desc = [-321.222, 185.189, 335.520, -179.030, -1.284, -29.869]
-
-    retval, prepick_pose = robot.ComputePrePick(p1Desc, 10, 0)
-    print(f"ComputePrePick retval is:{retval}")
-    print(f"xyz is:{prepick_pose[0]},{prepick_pose[1]},{prepick_pose[2]};rpy is:{prepick_pose[3]},{prepick_pose[4]},{prepick_pose[5]}")
-
-    retval, postpick_pose = robot.ComputePostPick(p2Desc, -10, 0)
-    print(f"ComputePostPick retval is:{retval}")
-    print(f"xyz is:{postpick_pose[0]},{postpick_pose[1]},{postpick_pose[2]};rpy is:{postpick_pose[3]},{postpick_pose[4]},{postpick_pose[5]}")
+    # retval = 0
+    # prepick_pose = [0.0]*6
+    # postpick_pose = [0.0]*6
+    #
+    # p1Desc = [-419.524, -13.000, 351.569, -178.118, 0.314, 3.833]
+    # p2Desc = [-321.222, 185.189, 335.520, -179.030, -1.284, -29.869]
+    #
+    # retval, prepick_pose = robot.ComputePrePick(p1Desc, 10, 0)
+    # print(f"ComputePrePick retval is:{retval}")
+    # print(f"xyz is:{prepick_pose[0]},{prepick_pose[1]},{prepick_pose[2]};rpy is:{prepick_pose[3]},{prepick_pose[4]},{prepick_pose[5]}")
+    #
+    # retval, postpick_pose = robot.ComputePostPick(p2Desc, -10, 0)
+    # print(f"ComputePostPick retval is:{retval}")
+    # print(f"xyz is:{postpick_pose[0]},{postpick_pose[1]},{postpick_pose[2]};rpy is:{postpick_pose[3]},{postpick_pose[4]},{postpick_pose[5]}")
 
     robot.CloseRPC()
 
@@ -1313,71 +1326,56 @@ def TestRotGripperState(self):
 
 
 def TestConveyor(self):
-    retval = robot.ConveyorStartEnd(1)
-    print(f"ConveyorStartEnd retval is:{retval}")
+    # 定义点位
+    pos1 = [-354.549, 63.914, 270.176, -179.679, -0.134, 2.468]
+    pos2 = [-351.203, -213.393, 351.054, -179.932, -0.508, 2.472]
 
-    retval = robot.ConveyorPointIORecord()
-    print(f"ConveyorPointIORecord retval is:{retval}")
-
-    retval = robot.ConveyorPointARecord()
-    print(f"ConveyorPointARecord retval is:{retval}")
-
-    retval = robot.ConveyorRefPointRecord()
-    print(f"ConveyorRefPointRecord retval is:{retval}")
-
-    retval = robot.ConveyorPointBRecord()
-    print(f"ConveyorPointBRecord retval is:{retval}")
-
-    retval = robot.ConveyorStartEnd(0)
-    print(f"ConveyorStartEnd retval is:{retval}")
-
-    param = [1.0, 10000.0, 200.0, 0.0, 0.0, 20.0]
-    retval = robot.ConveyorSetParam(param,0)
-    print(f"ConveyorSetParam retval is:{retval}")
-
+    # 设置传送带抓取点补偿
     cmp = [0.0, 0.0, 0.0]
-    retval = robot.ConveyorCatchPointComp(cmp)
-    print(f"ConveyorCatchPointComp retval is:{retval}")
+    rtn = robot.ConveyorCatchPointComp(cmp)
+    if rtn != 0:
+        print(f"ConveyorCatchPointComp failed, rtn={rtn}")
+        return
+    print(f"ConveyorCatchPointComp: rtn {rtn}")
 
-    index = 1
-    max_time = 30000
-    block = 0
-    retval = 0
+    # 移动到抓取点上方
+    rtn = robot.MoveCart(desc_pos=pos1, tool=1, user=0, vel=30.0, acc=180.0, ovl=100.0, blendT=-1.0, config=-1)
+    print(f"MoveCart: rtn {rtn}")
 
-    p1Desc = [-419.524, -13.000, 351.569, -178.118, 0.314, 3.833]
-    p2Desc = [-321.222, 185.189, 335.520, -179.030, -1.284, -29.869]
+    # 传送带工件IO检测
+    rtn = robot.ConveyorIODetect(10000)
+    print(f"ConveyorIODetect: rtn {rtn}")
 
-    retval = robot.MoveCart(p1Desc, 1, 0, 100.0)
-    print(f"MoveCart retval is:{retval}")
+    # 配置传送带跟踪抓取
+    robot.ConveyorGetTrackData(1)
 
-    retval = robot.WaitMs(1)
-    print(f"WaitMs retval is:{retval}")
+    # 跟踪开始
+    rtn = robot.ConveyorTrackStart(1)
+    print(f"ConveyorTrackStart: rtn {rtn}")
 
-    retval = robot.ConveyorIODetect(10000)
-    print(f"ConveyorIODetect retval is:{retval}")
+    # 跟踪移动到抓取点
+    rtn = robot.ConveyorTrackMoveL(name="cvrCatchPoint", tool=1, wobj=0, vel=100.0, acc=0.0, ovl=100.0,blendR=-1.0)
+    print(f"ConveyorTrackMoveL: rtn {rtn}")
 
-    # retval = robot.ConveyorGetTrackData(1)
-    # print(f"ConveyorGetTrackData retval is:{retval}")
+    # 夹爪闭合抓取
+    rtn = robot.MoveGripper(2, 29, 60, 50, 30000, 0, 0, 0, 50, 50)
+    print(f"MoveGripper: rtn {rtn}")
 
-    retval = robot.ConveyorTrackStart(1)
-    print(f"ConveyorTrackStart retval is:{retval}")
+    # 跟踪移动到抬起点
+    rtn = robot.ConveyorTrackMoveL(name="cvrRaisePoint", tool=1, wobj=0, vel=100.0, acc=0.0, ovl=100.0,blendR=-1.0)
+    print(f"ConveyorTrackMoveL: rtn {rtn}")
 
-    retval = robot.ConveyorTrackMoveL("cvrCatchPoint", 1, 0, 100)
-    print(f"TrackMoveL retval is:{retval}")
+    # 传送带跟踪停止
+    rtn = robot.ConveyorTrackEnd()
+    print(f"ConveyorTrackEnd: rtn {rtn}")
 
-    retval = robot.MoveGripper(index, 51, 40, 30, max_time, block, 0, 0, 0, 0)
-    print(f"MoveGripper retval is:{retval}")
+    # 移动到放置点
+    rtn = robot.MoveCart(desc_pos=pos2, tool=1, user=0, vel=30.0, acc=180.0, ovl=100.0, blendT=-1.0, config=-1)
+    print(f"MoveCart: rtn {rtn}")
 
-    retval = robot.ConveyorTrackMoveL("cvrRaisePoint", 1, 0, 100)
-    print(f"TrackMoveL retval is:{retval}")
-
-    retval = robot.ConveyorTrackEnd()
-    print(f"ConveyorTrackEnd retval is:{retval}")
-
-    robot.MoveCart(p2Desc, 1, 0, 100.0, 100.0)
-
-    retval = robot.MoveGripper(index, 100, 40, 10, max_time, block, 0, 0, 0, 0)
-    print(f"MoveGripper retval is:{retval}")
+    # 夹爪张开放置
+    rtn = robot.MoveGripper(2, 100, 60, 30, 30000, 0, 0, 0, 50, 50)
+    print(f"MoveGripper: rtn {rtn}")
 
     robot.CloseRPC()
 
@@ -1412,7 +1410,7 @@ def TestExDevProtocol(self):
 
 
 def TestAxleLua(self):
-    robot.AxleLuaUpload("D://zUP/AXLE_LUA_End_DaHuan.lua")
+    # robot.AxleLuaUpload("D://zUP/AXLE_LUA_End_DaHuan.lua")
 
     param = [7, 8, 1, 0, 5, 3, 1]  # 对应AxleComParam参数
     robot.SetAxleCommunicationParam(7, 8, 1, 0, 5, 3, 1)
@@ -1428,11 +1426,13 @@ def TestAxleLua(self):
     error,forceEnable, gripperEnable, ioEnable = robot.GetAxleLuaEnableDeviceType()
     print(f"GetAxleLuaEnableDeviceType param is:{forceEnable} {gripperEnable} {ioEnable}")
 
-    func = [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]
-    robot.SetAxleLuaGripperFunc(1, func)
-    error,getFunc = robot.GetAxleLuaGripperFunc(1)
-
-    error,getforceEnable, getgripperEnable, getioEnable = robot.GetAxleLuaEnableDevice()
+    func = [ 0,1,1,1,1,0,1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
+    robot.SetAxleLuaGripperFunc(2, func)
+    print(f"SetAxleLuaGripperFunc param i")
+    error,getFunc = robot.GetAxleLuaGripperFunc(2)
+    print(f"GetAxleLuaGripperFunc param i", getFunc)
+    error,getforceEnable, getgripperEnable, getioEnable ,dexhandEnable= robot.GetAxleLuaEnableDevice()
+    print(f"GetAxleLuaEnableDevice param i")
 
     print("\ngetforceEnable status:", end=" ")
     for i in range(8):
@@ -1445,13 +1445,16 @@ def TestAxleLua(self):
     print("\ngetioEnable status:", end=" ")
     for i in range(8):
         print(f"{getioEnable[i]},", end="")
-    print()
 
-    robot.ActGripper(1, 0)
+    print("\ndexhandEnable status:", end=" ")
+    for i in range(16):
+        print(f"{dexhandEnable[i]},", end="")
+
+    robot.ActGripper(2, 0)
     time.sleep(2)
-    robot.ActGripper(1, 1)
+    robot.ActGripper(2, 1)
     time.sleep(2)
-    robot.MoveGripper(1, 90, 10, 100, 50000, 0, 0, 0, 0, 0)
+    robot.MoveGripper(2, 1, 10, 100, 50000, 0, 0, 0, 0, 0)
 
     while True:
         error,pkg = robot.GetRobotRealTimeState()
@@ -1481,12 +1484,10 @@ def TestSetWeldParam(self):
     end_time = 0
 
     error, start_current, start_voltage, start_time, weld_current, weld_voltage, end_current,end_voltage, end_time = robot.WeldingGetProcessParam(1)
-    print(
-        f"the Num 1 process param is {start_current} {start_voltage} {start_time} {weld_current} {weld_voltage} {end_current} {end_voltage} {end_time}")
+    print(f"the Num 1 process param is {start_current} {start_voltage} {start_time} {weld_current} {weld_voltage} {end_current} {end_voltage} {end_time}")
 
     error, start_current, start_voltage, start_time, weld_current, weld_voltage, end_current,end_voltage, end_time = robot.WeldingGetProcessParam(2)
-    print(
-        f"the Num 2 process param is {start_current} {start_voltage} {start_time} {weld_current} {weld_voltage} {end_current} {end_voltage} {end_time}")
+    print(f"the Num 2 process param is {start_current} {start_voltage} {start_time} {weld_current} {weld_voltage} {end_current} {end_voltage} {end_time}")
 
     rtn = robot.WeldingSetCurrentRelation(0, 400, 0, 10, 0)
     print(f"WeldingSetCurrentRelation rtn is: {rtn}")
@@ -1548,9 +1549,13 @@ def TestSetWeldParam(self):
 
     robot.SetWeldMachineCtrlModeExtDoNum(17)
     for i in range(5):
-        robot.SetWeldMachineCtrlMode(0)
+        robot.SetWeldMachineCtrlMode(0,1)
+        error,getCtrlMode=robot.GetWeldMachineCtrlMode
+        print(f"GetWeldMachineCtrlMode = {getCtrlMode}")
         time.sleep(1)
-        robot.SetWeldMachineCtrlMode(1)
+        robot.SetWeldMachineCtrlMode(1,1)
+        error, getCtrlMode = robot.GetWeldMachineCtrlMode
+        print(f"GetWeldMachineCtrlMode = {getCtrlMode}")
         time.sleep(1)
 
     robot.CloseRPC()
@@ -1582,11 +1587,11 @@ def TestSegWeld(self):
     robot.WeldingSetCurrent(1, 230, 0, 0)
     robot.WeldingSetVoltage(1, 24, 0, 1)
 
-    p1Desc = [228.879, -503.594, 453.984, -175.580, 8.293, 171.267]
-    p1Joint = [102.700, -85.333, 90.518, -102.365, -83.932, 22.134]
+    p1Desc = [-529.591,-77.247,204.008,-178.889,1.356,-14.668]
+    p1Joint = [-2.427,-73.309,113.912,-131.693,-91.373,102.241]
 
-    p2Desc = [-333.302, -435.580, 449.866, -174.997, 2.017, 109.815]
-    p2Joint = [41.862, -85.333, 90.526, -100.587, -90.014, 22.135]
+    p2Desc = [-529.593,282.831,204.007,-178.890,1.357,-14.667]
+    p2Joint = [-37.804,-66.024,103.325,-128.984,-90.488,66.870]
 
     exaxisPos = [0, 0, 0, 0]
     offdese = [0, 0, 0, 0, 0, 0]
@@ -1598,32 +1603,32 @@ def TestSegWeld(self):
 
 
 def TestWeave(self):
-    p1Desc = [228.879, -503.594, 453.984, -175.580, 8.293, 171.267]
-    p1Joint = [102.700, -85.333, 90.518, -102.365, -83.932, 22.134]
+    p1Desc = [-529.591,-77.247,204.008,-178.889,1.356,-14.668]
+    p1Joint = [-2.427,-73.309,113.912,-131.693,-91.373,102.241]
 
-    p2Desc = [-333.302, -435.580, 449.866, -174.997, 2.017, 109.815]
-    p2Joint = [41.862, -85.333, 90.526, -100.587, -90.014, 22.135]
+    p2Desc = [-529.593,282.831,204.007,-178.890,1.357,-14.667]
+    p2Joint = [-37.804,-66.024,103.325,-128.984,-90.488,66.870]
 
     exaxisPos = [0, 0, 0, 0]
     offdese = [0, 0, 0, 0, 0, 0]
 
-    robot.MoveJ(joint_pos= p1Joint,tool= 13,user= 0)
+    robot.MoveJ(joint_pos= p1Joint,tool= 0,user= 0)
     robot.WeaveStartSim(0)
-    robot.MoveL(desc_pos= p2Desc,tool= 13,user= 0)
+    robot.MoveL(desc_pos= p2Desc,tool= 0,user= 0)
     robot.WeaveEndSim(0)
-    robot.MoveJ(joint_pos= p1Joint,tool= 13,user= 0)
+    robot.MoveJ(joint_pos= p1Joint,tool= 0,user= 0)
     robot.WeaveInspectStart(0)
-    robot.MoveL(desc_pos= p2Desc,tool= 13,user= 0,)
+    robot.MoveL(desc_pos= p2Desc,tool= 0,user= 0,)
     robot.WeaveInspectEnd(0)
 
     robot.WeldingSetVoltage(1, 19, 0, 0)
     robot.WeldingSetCurrent(1, 190, 0, 0)
-    robot.MoveL(desc_pos= p1Desc,tool= 1,user= 1,vel= 100,acc= 100,ovl= 50)
+    robot.MoveL(desc_pos= p1Desc,tool= 0,user= 0,vel= 100,acc= 100,ovl= 50)
     robot.ARCStart(1, 0, 10000)
     robot.ArcWeldTraceControl(1, 0, 1, 0.06, 5, 5, 60, 1, 0.06, 5, 5, 80, 0, 0, 4, 1, 10, 0, 0)
     robot.WeaveStart(0)
     robot.WeaveChangeStart(1, 0, 50, 30)
-    robot.MoveL(desc_pos= p2Desc,tool= 1,user= 1,vel= 100)
+    robot.MoveL(desc_pos= p2Desc,tool= 0,user= 0,vel= 100)
     robot.WeaveChangeEnd()
     robot.WeaveEnd(0)
     robot.ArcWeldTraceControl(0, 0, 1, 0.06, 5, 5, 60, 1, 0.06, 5, 5, 80, 0, 0, 4, 1, 10, 0, 0)
@@ -1650,17 +1655,17 @@ def TestWelding(self):
     robot.WeldingSetCurrent(1, 230, 0, 0)
     robot.WeldingSetVoltage(1, 24, 0, 1)
     # Position definitions
-    p1Desc = [228.879, -503.594, 453.984, -175.580, 8.293, 171.267]
-    p1Joint = [102.700, -85.333, 90.518, -102.365, -83.932, 22.134]
-    p2Desc = [-333.302, -435.580, 449.866, -174.997, 2.017, 109.815]
-    p2Joint = [41.862, -85.333, 90.526, -100.587, -90.014, 22.135]
+    p1Desc = [441.901, 416.508, -51.979, -179.234, 0.718, -115.305]
+    p1Joint = [-146.22, -60.551, 104.859, -135.317, -90.289, 59.088]
+    p2Desc = [441.901, 615.317, -51.979, -179.234, 0.718, -115.305]
+    p2Joint = [ -133.22, -44.193, 74.934, -121.661, -90.509, 72.087]
     exaxisPos = [0, 0, 0, 0]
     offdese = [0, 0, 0, 0, 0, 0]
     # Movement and welding sequence
-    robot.MoveJ(joint_pos=p1Joint, tool=13, user=0)
+    robot.MoveJ(joint_pos=p1Joint, tool=1, user=0)
     robot.ARCStart(1, 0, 10000)
     robot.WeaveStart(0)
-    robot.MoveL(desc_pos=p2Desc, tool=13, user=0)
+    robot.MoveL(desc_pos=p2Desc, tool=1, user=0)
     robot.ARCEnd(1, 0, 10000)
     robot.WeaveEnd(0)
     # Welding control functions
@@ -1669,7 +1674,7 @@ def TestWelding(self):
     robot.CloseRPC()
 
 def TestSSHMd5(self):
-    file_path = "/fruser/airlab.lua"
+    file_path = "/fruser/test.lua"
     md5 = ""
     emerg_state = 0
     si0_state = 0
@@ -1684,7 +1689,7 @@ def TestSSHMd5(self):
     ssh_name = "fr"
     ssh_ip = "192.168.58.45"
     ssh_route = "/home/fr"
-    ssh_robot_url = "/root/robot/dhpara.config"
+    ssh_robot_url = "/usr/local/etc/controller/dhpara.config"
     retval = robot.SetSSHScpCmd(1, ssh_name, ssh_ip, ssh_route, ssh_robot_url)
     print(f"SetSSHScpCmd retval is: {retval}")
     print(f"robot url is: {ssh_robot_url}")
@@ -1705,7 +1710,7 @@ def TestRealtimePeriod(self):
 
 
 def TestUpgrade(self):
-    error = robot.SoftwareUpgrade("D://zUP/QNX382/software.tar.gz", False)
+    error = robot.SoftwareUpgrade("C://Users/lenovo/Desktop/software.tar.gz", False)
     print(f"SoftwareUpgrade error is {error}")
     while True:
         curState = robot.GetSoftwareUpgradeState()
@@ -1744,23 +1749,58 @@ def TestDownLoadRobotData(self):
     robot.CloseRPC()
 
 def TestExtDIConfig(self):
+    # ========== 设置扩展IO配置 ==========
+    # 设置扩展DO功能
     rtn = robot.SetArcStartExtDoNum(10)
     print(f"SetArcStartExtDoNum rtn is {rtn}")
+
     rtn = robot.SetAirControlExtDoNum(20)
     print(f"SetAirControlExtDoNum rtn is {rtn}")
+
     rtn = robot.SetWireForwardFeedExtDoNum(30)
     print(f"SetWireForwardFeedExtDoNum rtn is {rtn}")
-    rtn = robot.SetWireReverseFeedExtDoNum(40)
 
+    rtn = robot.SetWireReverseFeedExtDoNum(40)
+    print(f"SetWireReverseFeedExtDoNum rtn is {rtn}")
+
+    # 设置扩展DI功能
     rtn = robot.SetWeldReadyExtDiNum(50)
     print(f"SetWeldReadyExtDiNum rtn is {rtn}")
+
     rtn = robot.SetArcDoneExtDiNum(60)
     print(f"SetArcDoneExtDiNum rtn is {rtn}")
+
     rtn = robot.SetExtDIWeldBreakOffRecover(70, 80)
     print(f"SetExtDIWeldBreakOffRecover rtn is {rtn}")
+
     rtn = robot.SetWireSearchExtDIONum(0, 1)
     print(f"SetWireSearchExtDIONum rtn is {rtn}")
 
+    # ========== 获取扩展DI配置 ==========
+    rtn, DIConfig = robot.GetExtDIConfig()
+    print(f"GetExtDIConfig rtn is {rtn}")
+    print(f"welder ready {DIConfig[0]}")
+    print(f"arc done {DIConfig[1]}")
+    print(f"reweld start {DIConfig[2]}")
+    print(f"abort reweld {DIConfig[3]}")
+    print(f"wiresearch done {DIConfig[4]}")
+    print(f"Laser welding State {DIConfig[5]}")
+    print(f"laser welding error state {DIConfig[6]}")
+
+    # ========== 获取扩展DO配置 ==========
+    rtn, DOConfig = robot.GetExtDOConfig()
+    print(f"GetExtDOConfig rtn is {rtn}")
+    print(f"Arc Start {DOConfig[0]}")
+    print(f"Air Test {DOConfig[1]}")
+    print(f"Wire forward {DOConfig[2]}")
+    print(f"Wire Inverse {DOConfig[3]}")
+    print(f"wiresearch {DOConfig[4]}")
+    print(f"Weld Mode {DOConfig[5]}")
+    print(f"laser Enable {DOConfig[6]}")
+    print(f"Laser On {DOConfig[7]}")
+    print(f"Laser Reset Error {DOConfig[8]}")
+
+    # 关闭连接
     robot.CloseRPC()
 
 
@@ -1859,36 +1899,36 @@ def Test485Auxservo(self):
 
 
 def TestArcWeldTrace(self):
-    mulitilineorigin1_joint = [-24.090, -63.501, 84.288, -111.940, -93.426, 57.669]
-    mulitilineorigin1_desc = [-677.559, 190.951, -1.205, 1.144, -41.482, -82.577]
+    mulitilineorigin1_joint = [-2.427,-73.309,113.912,-131.693,-91.373,102.241]
+    mulitilineorigin1_desc = [-529.591,-77.247,204.008,-178.889,1.356,-14.668]
 
-    mulitilineX1_desc = [-677.556, 211.949, -1.206]
-    mulitilineZ1_desc = [-677.564, 190.956, 19.817]
+    mulitilineX1_desc = [-529.591,-57.247,204.008]
+    mulitilineZ1_desc = [-529.591,-77.247,224.008]
 
-    mulitilinesafe_joint = [-25.734, -63.778, 81.502, -108.975, -93.392, 56.021]
-    mulitilinesafe_desc = [-677.561, 211.950, 19.812, 1.144, -41.482, -82.577]
-    mulitilineorigin2_joint = [-29.743, -75.623, 101.241, -116.354, -94.928, 55.735]
-    mulitilineorigin2_desc = [-563.961, 215.359, -0.681, 2.845, -40.476, -87.443]
+    mulitilinesafe_joint = [-12.938,-58.855,91.909,-129.146,-90.652,66.633]
+    mulitilinesafe_desc = [-668.674,50.127,211.698,-176.978,5.333,10.535]
+    mulitilineorigin2_joint = [-37.804,-66.024,103.325,-128.984,-90.488,66.870]
+    mulitilineorigin2_desc = [-529.593,282.831,204.007,-178.890,1.357,-14.667]
 
-    mulitilineX2_desc = [-563.965, 220.355, -0.680]
-    mulitilineZ2_desc = [-563.968, 215.362, 4.331]
+    mulitilineX2_desc = [-529.593,300.831,204.007]
+    mulitilineZ2_desc = [-529.593,282.831,224.007]
 
     epos = [0, 0, 0, 0]
     offset = [0, 0, 0, 0, 0, 0]
 
     time.sleep(0.01)
 
-    error = robot.MoveJ(joint_pos= mulitilinesafe_joint,tool= 13,user= 0,vel= 10)
+    error = robot.MoveJ(joint_pos= mulitilinesafe_joint,tool= 0,user= 0,vel= 10)
     print(f"MoveJ return: {error}")
-    error = robot.MoveL(desc_pos= mulitilineorigin1_desc,tool= 13,user= 0,vel= 10,speedPercent=100)
+    error = robot.MoveL(desc_pos= mulitilineorigin1_desc,tool= 0,user= 0,vel= 10,speedPercent=100)
     print(f"MoveL return: {error}")
-    error = robot.MoveJ(joint_pos= mulitilinesafe_joint,tool= 13,user= 0,vel= 10)
+    error = robot.MoveJ(joint_pos= mulitilinesafe_joint,tool= 0,user= 0,vel= 10)
     print(f"MoveJ return: {error}")
-    error = robot.MoveL(desc_pos= mulitilineorigin2_desc,tool= 13,user= 0,vel= 10,speedPercent=100)
+    error = robot.MoveL(desc_pos= mulitilineorigin2_desc,tool= 0,user= 0,vel= 10,speedPercent=100)
     print(f"MoveL return: {error}")
-    error = robot.MoveJ(joint_pos= mulitilinesafe_joint,tool= 13,user= 0,vel= 10)
+    error = robot.MoveJ(joint_pos= mulitilinesafe_joint,tool= 0,user= 0,vel= 10)
     print(f"MoveJ return: {error}")
-    error = robot.MoveL(desc_pos= mulitilineorigin1_desc,tool= 13,user= 0,vel= 10,speedPercent=100)
+    error = robot.MoveL(desc_pos= mulitilineorigin1_desc,tool= 0,user= 0,vel= 10,speedPercent=100)
     print(f"MoveL return: {error}")
 
     error = robot.ARCStart(1, 0, 3000)
@@ -1897,7 +1937,7 @@ def TestArcWeldTrace(self):
     print(f"WeaveStart return: {error}")
     error = robot.ArcWeldTraceControl(1, 0, 1, 0.06, 5, 5, 50, 1, 0.06, 5, 5, 55, 0, 0, 4, 1, 10,0,0)
     print(f"ArcWeldTraceControl return: {error}")
-    error = robot.MoveL(desc_pos= mulitilineorigin2_desc,tool= 13,user= 0,vel= 1,speedPercent=100)
+    error = robot.MoveL(desc_pos= mulitilineorigin2_desc,tool= 0,user= 0,vel= 1,speedPercent=100)
     print(f"MoveL return: {error}")
     error = robot.ArcWeldTraceControl(0, 0, 1, 0.06, 5, 5, 50, 1, 0.06, 5, 5, 55, 0, 0, 4, 1, 10,0,0)
     print(f"ArcWeldTraceControl return: {error}")
@@ -1905,12 +1945,12 @@ def TestArcWeldTrace(self):
     print(f"WeaveEnd return: {error}")
     error = robot.ARCEnd(1, 0, 10000)
     print(f"ARCEnd return: {error}")
-    error = robot.MoveJ(joint_pos= mulitilinesafe_joint,tool= 13,user= 0,vel= 10)
+    error = robot.MoveJ(joint_pos= mulitilinesafe_joint,tool= 0,user= 0,vel= 10)
     print(f"MoveJ return: {error}")
 
     error,offset = robot.MultilayerOffsetTrsfToBase(mulitilineorigin1_desc[:3], mulitilineX1_desc, mulitilineZ1_desc, 10.0, 0.0, 0.0)
     print(f"MultilayerOffsetTrsfToBase return: {error}")
-    error = robot.MoveL(desc_pos= mulitilineorigin1_desc,tool= 13,user= 0,vel= 10,speedPercent=100)
+    error = robot.MoveL(desc_pos= mulitilineorigin1_desc,tool= 0,user= 0,vel= 10,speedPercent=100)
     print(f"MoveL return: {error}")
     error = robot.ARCStart(1, 0, 3000)
     print(f"ARCStart return: {error}")
@@ -1919,19 +1959,19 @@ def TestArcWeldTrace(self):
     print(f"MultilayerOffsetTrsfToBase return: {error}")
     error = robot.ArcWeldTraceReplayStart()
     print(f"ArcWeldTraceReplayStart return: {error}")
-    error = robot.MoveL(desc_pos= mulitilineorigin2_desc,tool= 13,user= 0,vel= 2,speedPercent=100)
+    error = robot.MoveL(desc_pos= mulitilineorigin2_desc,tool= 0,user= 0,vel= 2,speedPercent=100)
     print(f"MoveL return: {error}")
     error = robot.ArcWeldTraceReplayEnd()
     print(f"ArcWeldTraceReplayEnd return: {error}")
     error = robot.ARCEnd(1, 0, 10000)
     print(f"ARCEnd return: {error}")
 
-    error = robot.MoveJ(joint_pos= mulitilinesafe_joint,tool= 13,user= 0,vel= 10)
+    error = robot.MoveJ(joint_pos= mulitilinesafe_joint,tool= 0,user= 0,vel= 10)
     print(f"MoveJ return: {error}")
 
     error, offset = robot.MultilayerOffsetTrsfToBase(mulitilineorigin1_desc[:3], mulitilineX1_desc, mulitilineZ1_desc, 0, 10, 0)
     print(f"MultilayerOffsetTrsfToBase return: {error}")
-    error = robot.MoveL(desc_pos= mulitilineorigin1_desc,tool= 13,user= 0,vel= 10,speedPercent=100)
+    error = robot.MoveL(desc_pos= mulitilineorigin1_desc,tool= 0,user= 0,vel= 10,speedPercent=100)
     print(f"MoveL return: {error}")
     error = robot.ARCStart(1, 0, 3000)
     print(f"ARCStart return: {error}")
@@ -1939,24 +1979,24 @@ def TestArcWeldTrace(self):
     error, offset = robot.MultilayerOffsetTrsfToBase(mulitilineorigin2_desc[:3], mulitilineX2_desc, mulitilineZ2_desc, 0, 10, 0)
     error = robot.ArcWeldTraceReplayStart()
     print(f"ArcWeldTraceReplayStart return: {error}")
-    error = robot.MoveL(desc_pos= mulitilineorigin2_desc,tool= 13,user= 0,vel= 2,speedPercent=100)
+    error = robot.MoveL(desc_pos= mulitilineorigin2_desc,tool= 0,user= 0,vel= 2,speedPercent=100)
     print(f"MoveL return: {error}")
     error = robot.ArcWeldTraceReplayEnd()
     print(f"ArcWeldTraceReplayEnd return: {error}")
     error = robot.ARCEnd(1, 0, 3000)
     print(f"ARCEnd return: {error}")
 
-    error = robot.MoveJ(joint_pos= mulitilinesafe_joint,tool= 13,user= 0,vel= 10)
+    error = robot.MoveJ(joint_pos= mulitilinesafe_joint,tool= 0,user= 0,vel= 10)
     print(f"MoveJ return: {error}")
 
     robot.CloseRPC()
 
 def TestWireSearch(self):
-    toolCoord = [0, 0, 200, 0, 0, 0]
-    robot.SetToolCoord(1, toolCoord, 0, 0, 1, 0)
+    toolCoord = [0, 0, 0, 0, 0, 0]
+    robot.SetToolCoord(0, toolCoord, 0, 0, 0, 0)
 
     wobjCoord = [0, 0, 0, 0, 0, 0]
-    robot.SetWObjCoord(1, wobjCoord, 0)
+    robot.SetWObjCoord(0, wobjCoord, 0)
 
     # robot.ExtDevSetUDPComParam("192.168.58.88", 2021, 2, 50, 5, 50, 1, 50, 10)
     # robot.ExtDevLoadUDPDriver()
@@ -1966,34 +2006,34 @@ def TestWireSearch(self):
     exaxisPos = [0, 0, 0, 0]
     offdese = [0, 0, 0, 0, 0, 0]
 
-    descStart = [216.543, 445.175, 93.465, 179.683, 1.757, -112.641]
-    jointStart = [-128.345, -86.660, 114.679, -119.625, -89.219, 74.303]
+    descStart = [-529.591,-77.247,204.008,-178.889,1.356,-14.668]
+    jointStart = [-2.427,-73.309,113.912,-131.693,-91.373,102.241]
 
-    descEnd = [111.143, 523.384, 87.659, 179.703, 1.835, -97.750]
-    jointEnd = [-113.454, -81.060, 109.328, -119.954, -89.218, 74.302]
+    descEnd = [-529.593,282.831,204.007,-178.890,1.357,-14.667]
+    jointEnd = [-37.804,-66.024,103.325,-128.984,-90.488,66.870]
 
-    error = robot.MoveL(desc_pos=descStart,tool= 1,user= 1,vel= 100)
+    error = robot.MoveL(desc_pos=descStart,tool= 0,user= 0,vel= 100)
     print(f"MoveL return: {error}")
-    error = robot.MoveL(desc_pos=descEnd,tool= 1,user= 1,vel= 100)
+    error = robot.MoveL(desc_pos=descEnd,tool= 0,user= 0,vel= 100)
     print(f"MoveL return: {error}")
 
-    descREF0A = [142.135, 367.604, 86.523, 179.728, 1.922, -111.089]
+    descREF0A = [-649.607,-78.776,204.009,-178.889,1.356,-14.668]
     jointREF0A = [-126.794, -100.834, 128.922, -119.864, -89.218, 74.302]
 
-    descREF0B = [254.633, 463.125, 72.604, 179.845, 2.341, -114.704]
+    descREF0B = [-649.607,-48.776,204.009,-178.889,1.356,-14.668]
     jointREF0B = [-130.413, -81.093, 112.044, -123.163, -89.217, 74.303]
 
-    descREF1A = [92.556, 485.259, 47.476, -179.932, 3.130, -97.512]
+    descREF1A = [-649.625,93.316,203.999,-178.890,1.355,-14.667]
     jointREF1A = [-113.231, -83.815, 119.877, -129.092, -89.217, 74.303]
 
-    descREF1B = [203.103, 583.836, 63.909, 179.991, 2.854, -103.372]
+    descREF1B = [-649.625,123.316,203.999,-178.890,1.355,-14.667]
     jointREF1B = [-119.088, -69.676, 98.692, -121.761, -89.219, 74.303]
 
     error = robot.WireSearchStart(0, 10, 100, 0, 10, 100, 0)
     print(f"WireSearchStart return: {error}")
-    error = robot.MoveL(desc_pos=descREF0A,tool= 1,user= 1,vel= 100)
+    error = robot.MoveL(desc_pos=descREF0A,tool= 0,user= 0,vel= 100)
     print(f"MoveL return: {error}")
-    error = robot.MoveL(desc_pos=descREF0B,tool= 1,user= 1,vel= 100,search=1)
+    error = robot.MoveL(desc_pos=descREF0B,tool= 0,user= 0,vel= 100,search=1)
     print(f"MoveL return: {error}")
     error = robot.WireSearchWait("REF0")
     print(f"WireSearchWait return: {error}")
@@ -2002,9 +2042,9 @@ def TestWireSearch(self):
 
     error = robot.WireSearchStart(0, 10, 100, 0, 10, 100, 0)
     print(f"WireSearchStart return: {error}")
-    error = robot.MoveL(desc_pos= descREF1A,tool= 1,user= 1,vel= 100)
+    error = robot.MoveL(desc_pos= descREF1A,tool= 0,user= 0,vel= 100)
     print(f"MoveL return: {error}")
-    error = robot.MoveL(desc_pos= descREF1B,tool= 1,user= 1,vel= 100,search=1)
+    error = robot.MoveL(desc_pos= descREF1B,tool= 0,user= 0,vel= 100,search=1)
     print(f"MoveL return: {error}")
     error = robot.WireSearchWait("REF1")
     print(f"WireSearchWait return: {error}")
@@ -2012,9 +2052,9 @@ def TestWireSearch(self):
 
     error = robot.WireSearchStart(0, 10, 100, 0, 10, 100, 0)
     print(f"WireSearchStart return: {error}")
-    error = robot.MoveL(desc_pos= descREF0A,tool= 1,user= 1,vel= 100)
+    error = robot.MoveL(desc_pos= descREF0A,tool= 0,user= 0,vel= 100)
     print(f"MoveL return: {error}")
-    error = robot.MoveL(desc_pos= descREF0B,tool= 1,user= 1,vel= 100,search=1)
+    error = robot.MoveL(desc_pos= descREF0B,tool= 0,user= 0,vel= 100,search=1)
     print(f"MoveL return: {error}")
     error = robot.WireSearchWait("RES0")
     print(f"WireSearchWait return: {error}")
@@ -2022,9 +2062,9 @@ def TestWireSearch(self):
     print(f"WireSearchEnd return: {error}")
     error = robot.WireSearchStart(0, 10, 100, 0, 10, 100, 0)
     print(f"WireSearchStart return: {error}")
-    error = robot.MoveL(desc_pos= descREF1A,tool= 1,user= 1,vel= 100)
+    error = robot.MoveL(desc_pos= descREF1A,tool= 0,user= 0,vel= 100)
     print(f"MoveL return: {error}")
-    error = robot.MoveL(desc_pos= descREF1B,tool= 1,user= 1,vel= 100,search=1)
+    error = robot.MoveL(desc_pos= descREF1B,tool= 0,user= 0,vel= 100,search=1)
     print(f"MoveL return: {error}")
     error = robot.WireSearchWait("RES1")
     print(f"WireSearchWait return: {error}")
@@ -2039,16 +2079,16 @@ def TestWireSearch(self):
     print(f"GetWireSearchOffset return: {error}")
     error = robot.PointsOffsetEnable(0, offectPos)
     print(f"PointsOffsetEnable return: {error}")
-    error = robot.MoveL(desc_pos= descStart,tool= 1,user= 1,vel= 100)
+    error = robot.MoveL(desc_pos= descStart,tool= 0,user= 0,vel= 100)
     print(f"MoveL return: {error}")
-    error = robot.MoveL(desc_pos= descEnd,tool= 1,user= 1,vel= 100,search=1)
+    error = robot.MoveL(desc_pos= descEnd,tool= 0,user= 0,vel= 100,search=1)
     print(f"MoveL return: {error}")
     error = robot.PointsOffsetDisable()
 
     robot.CloseRPC()
 
 def TestFTInit(self):
-    company = 24
+    company = 22
     device = 0
     softversion = 0
     bus = 1
@@ -2090,8 +2130,9 @@ def TestFTInit(self):
     robot.SetForceSensorPayloadCog(0, 0, 0)
 
     error,computeWeight, tran = robot.ForceSensorAutoComputeLoad()
-    # print(f"ForceSensorAutoComputeLoad return {error}")
-    print(f"the result is weight {computeWeight} pos is {tran[0]} {tran[1]} {tran[2]}")
+    print(f"ForceSensorAutoComputeLoad return {error}")
+    if error == 0:
+        print(f"the result is weight {computeWeight} pos is {tran[0]} {tran[1]} {tran[2]}")
 
     robot.CloseRPC()
 
@@ -2164,7 +2205,7 @@ def TestUDPAxis(self):
     robot.CloseRPC()
 
 def TestFTLoadCompute(self):
-    company = 24
+    company = 22
     device = 0
     softversion = 0
     bus = 1
@@ -2182,14 +2223,14 @@ def TestFTLoadCompute(self):
     robot.FT_Activate(1)
     time.sleep(1)
 
-    robot.FT_SetZero(0)
-    time.sleep(1)
+    # robot.FT_SetZero(0)
+    # time.sleep(1)
 
     error,ft = robot.FT_GetForceTorqueOrigin()
     print(f"ft origin:{ft[0]},{ft[1]},{ft[2]},{ft[3]},{ft[4]},{ft[5]}")
 
-    robot.FT_SetZero(1)
-    time.sleep(1)
+    # robot.FT_SetZero(1)
+    # time.sleep(1)
 
     tcoord = [0, 0, 35.0, 0, 0, 0]
     robot.SetToolCoord(10, tcoord, 1, 0, 0, 0)
@@ -2225,7 +2266,7 @@ def TestFTLoadCompute(self):
 
 
 def TestFTGuard(self):
-    company = 24
+    company = 22
     device = 0
     softversion = 0
     bus = 1
@@ -2268,7 +2309,7 @@ def TestFTGuard(self):
     robot.CloseRPC()
 
 def TestFTControl(self):
-    company = 24
+    company = 22
     device = 0
     softversion = 0
     bus = 1
@@ -2323,7 +2364,7 @@ def TestFTControl(self):
     robot.CloseRPC()
 
 def TestFTSearch(self):
-    company = 24
+    company = 22
     device = 0
     softversion = 0
     bus = 1
@@ -2374,46 +2415,66 @@ def TestFTSearch(self):
     forceInsertion = 1.0
     angleMax = 45
     orn = 1
+    M = [2.0, 2.0]
+    B = [15.0, 15.0]
+    adjustCoeff = [1.0, 0.8]
     angAccmax = 0.0
     rotorn = 1
+    threshold = [1.0, 1.0]
 
     # === Spiral Search ===
     select1 = [0, 0, 1, 1, 1, 0]
-    robot.FT_Control(status, sensor_num, select1, ft, gain, adj_sign, ILC_sign, max_dis, max_ang, 0, 0, 0)
+    rtn = robot.FT_Control(1, sensor_num, select1, ft, gain, adj_sign, ILC_sign, max_dis, max_ang, M, B, threshold,
+                           adjustCoeff, 0, 0, 1, 0)
+    print(f"FT_Control start rtn is {rtn}")
     rtn = robot.FT_SpiralSearch(rcs, dr, fFinish, t, vmax)
     print(f"FT_SpiralSearch rtn is {rtn}")
-    robot.FT_Control(0, sensor_num, select1, ft, gain, adj_sign, ILC_sign, max_dis, max_ang, 0, 0, 0)
+    rtn = robot.FT_Control(0, sensor_num, select1, ft, gain, adj_sign, ILC_sign, max_dis, max_ang, M, B, threshold,
+                           adjustCoeff, 0, 0, 1, 0)
+    print(f"FT_Control end rtn is {rtn}")
 
     # === Linear Insertion ===
     select2 = [1, 1, 1, 0, 0, 0]
     gain[0] = 0.00005
     ft[2] = -30.0
-    robot.FT_Control(1, sensor_num, select2, ft, gain, adj_sign, ILC_sign, max_dis, max_ang, 0, 0, 0)
+    rtn = robot.FT_Control(1, sensor_num, select2, ft, gain, adj_sign, ILC_sign, max_dis, max_ang, M, B, threshold,
+                           adjustCoeff, 0, 0, 1, 0)
+    print(f"FT_Control start rtn is {rtn}")
     rtn = robot.FT_LinInsertion(rcs, force_goal, lin_v, lin_a, disMax, linorn)
     print(f"FT_LinInsertion rtn is {rtn}")
-    robot.FT_Control(0, sensor_num, select2, ft, gain, adj_sign, ILC_sign, max_dis, max_ang, 0, 0, 0)
+    rtn = robot.FT_Control(0, sensor_num, select2, ft, gain, adj_sign, ILC_sign, max_dis, max_ang, M, B, threshold,
+                           adjustCoeff, 0, 0, 1, 0)
+    print(f"FT_Control end rtn is {rtn}")
 
     # === Rotational Insertion ===
     select3 = [0, 0, 1, 1, 1, 0]
     ft[2] = -10.0
     gain[0] = 0.0001
-    robot.FT_Control(1, sensor_num, select3, ft, gain, adj_sign, ILC_sign, max_dis, max_ang, 0, 0, 0)
+    rtn = robot.FT_Control(1, sensor_num, select3, ft, gain, adj_sign, ILC_sign, max_dis, max_ang, M, B, threshold,
+                           adjustCoeff, 0, 0, 1, 0)
+    print(f"FT_Control start rtn is {rtn}")
     rtn = robot.FT_RotInsertion(rcs, angVelRot, forceInsertion, angleMax, orn, angAccmax, rotorn)
     print(f"FT_RotInsertion rtn is {rtn}")
-    robot.FT_Control(0, sensor_num, select3, ft, gain, adj_sign, ILC_sign, max_dis, max_ang, 0, 0, 0)
+    rtn = robot.FT_Control(0, sensor_num, select3, ft, gain, adj_sign, ILC_sign, max_dis, max_ang, M, B, threshold,
+                           adjustCoeff, 0, 0, 1, 0)
+    print(f"FT_Control end rtn is {rtn}")
 
     # === Linear Insertion again ===
     select4 = [1, 1, 1, 0, 0, 0]
     ft[2] = -30.0
-    robot.FT_Control(1, sensor_num, select4, ft, gain, adj_sign, ILC_sign, max_dis, max_ang, 0, 0, 0)
+    rtn = robot.FT_Control(1, sensor_num, select4, ft, gain, adj_sign, ILC_sign, max_dis, max_ang, M, B, threshold,
+                           adjustCoeff, 0, 0, 1, 0)
+    print(f"FT_Control start rtn is {rtn}")
     rtn = robot.FT_LinInsertion(rcs, force_goal, lin_v, lin_a, disMax, linorn)
     print(f"FT_LinInsertion rtn is {rtn}")
-    robot.FT_Control(0, sensor_num, select4, ft, gain, adj_sign, ILC_sign, max_dis, max_ang, 0, 0, 0)
+    rtn = robot.FT_Control(0, sensor_num, select4, ft, gain, adj_sign, ILC_sign, max_dis, max_ang, M, B, threshold,
+                           adjustCoeff, 0, 0, 1, 0)
+    print(f"FT_Control end rtn is {rtn}")
 
     robot.CloseRPC()
 
 def TestSurface(self):
-    company = 24
+    company = 22
     device = 0
     softversion = 0
     bus = 1
@@ -2483,7 +2544,7 @@ def TestSurface(self):
     robot.CloseRPC()
 
 def TestCompliance(self):
-    company = 24
+    company = 22
     device = 0
     softversion = 0
     bus = 1
@@ -2513,6 +2574,10 @@ def TestCompliance(self):
     ILC_sign = 0
     max_dis = 100.0
     max_ang = 0.0
+    M = [2.0, 2.0]
+    B = [15.0, 15.0]
+    threshold = [1.0, 1.0]
+    adjustCoeff = [1.0, 0.8]
 
     # ForceTorque values
     ft = [-10.0, -10.0, -10.0, 0.0, 0.0, 0.0]
@@ -2527,8 +2592,10 @@ def TestCompliance(self):
     desc_p2 = [-321.222, 185.189, 335.520, -179.030, -1.284, -29.869]
 
     # Start FT control and compliance
-    robot.FT_Control(flag, sensor_id, select, ft, ft_pid, adj_sign, ILC_sign, max_dis, max_ang, 0, 0, 0)
-
+    # robot.FT_Control(flag, sensor_id, select, ft, ft_pid, adj_sign, ILC_sign, max_dis, max_ang, 0, 0, 0)
+    rtn = robot.FT_Control(1, sensor_id, select, ft, ft_pid, adj_sign, ILC_sign, max_dis, max_ang, M, B, threshold,
+                           adjustCoeff, 0, 0, 1, 0)
+    print(f"FT_Control start rtn is {rtn}")
     p = 0.00005
     force = 30.0
     rtn = robot.FT_ComplianceStart(p, force)
@@ -2544,7 +2611,9 @@ def TestCompliance(self):
     print(f"FT_ComplianceStop rtn is {rtn}")
 
     flag = 0
-    robot.FT_Control(flag, sensor_id, select, ft, ft_pid, adj_sign, ILC_sign, max_dis, max_ang, 0, 0, 0)
+    rtn = robot.FT_Control(0, sensor_id, select, ft, ft_pid, adj_sign, ILC_sign, max_dis, max_ang, M, B, threshold,
+                           adjustCoeff, 0, 0, 1, 0)
+    print(f"FT_Control end rtn is {rtn}")
 
     robot.CloseRPC()
 
@@ -2557,16 +2626,16 @@ def TestEndForceDragCtrl(self):
     K = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
     F = [10.0, 10.0, 10.0, 1.0, 1.0, 1.0]
 
-    robot.EndForceDragControl(1, 0, 0, 0, M, B, K, F, 50, 100)
+    robot.EndForceDragControl(1, 0, 0, 0, 0,M, B, K, F, 50, 100)
 
-    time.sleep(5)
+    time.sleep(10)
 
     drag_state = 0
     six_dimensional_drag_state = 0
     error,drag_state, six_dimensional_drag_state = robot.GetForceAndTorqueDragState()
     print(f"the drag state is {drag_state} {six_dimensional_drag_state}")
 
-    robot.EndForceDragControl(0, 0, 0, 0, M, B, K, F, 50, 100)
+    robot.EndForceDragControl(0, 0, 0, 0, 0,M, B, K, F, 50, 100)
     robot.CloseRPC()
 
 
@@ -2590,27 +2659,27 @@ def TestForceAndJointImpedance(self):
 
 
 def TestUDPAxis(self):
-    rtn = robot.ExtDevSetUDPComParam("192.168.58.88", 2021, 2, 100, 3, 200, 1, 100, 5,1)
-    print(f"ExtDevSetUDPComParam rtn is {rtn}")
-
-    ip = ""
-    port = 0
-    period = 0
-    loss_pkg_time = 0
-    loss_pkg_num = 0
-    disconnect_time = 0
-    reconnect_enable = 0
-    reconnect_period = 0
-    reconnect_num = 0
-
-    rtn,[ip, port, period, loss_pkg_time, loss_pkg_num, disconnect_time, reconnect_enable, reconnect_period, reconnect_num] = robot.ExtDevGetUDPComParam()
-    patam = (
-        f"\nip {ip}\nport {port}\nperiod {period}\nlossPkgTime {loss_pkg_time}"
-        f"\nlossPkgNum {loss_pkg_num}\ndisConntime {disconnect_time}"
-        f"\nreconnecable {reconnect_enable}\nreconnperiod {reconnect_period}"
-        f"\nreconnnun {reconnect_num}"
-    )
-    print(f"ExtDevGetUDPComParam rtn is {rtn}{patam}")
+    # rtn = robot.ExtDevSetUDPComParam("192.168.58.88", 2021, 2, 100, 3, 200, 1, 100, 5,1)
+    # print(f"ExtDevSetUDPComParam rtn is {rtn}")
+    #
+    # ip = ""
+    # port = 0
+    # period = 0
+    # loss_pkg_time = 0
+    # loss_pkg_num = 0
+    # disconnect_time = 0
+    # reconnect_enable = 0
+    # reconnect_period = 0
+    # reconnect_num = 0
+    #
+    # rtn,[ip, port, period, loss_pkg_time, loss_pkg_num, disconnect_time, reconnect_enable, reconnect_period, reconnect_num] = robot.ExtDevGetUDPComParam()
+    # patam = (
+    #     f"\nip {ip}\nport {port}\nperiod {period}\nlossPkgTime {loss_pkg_time}"
+    #     f"\nlossPkgNum {loss_pkg_num}\ndisConntime {disconnect_time}"
+    #     f"\nreconnecable {reconnect_enable}\nreconnperiod {reconnect_period}"
+    #     f"\nreconnnun {reconnect_num}"
+    # )
+    # print(f"ExtDevGetUDPComParam rtn is {rtn}{patam}")
 
     robot.ExtDevLoadUDPDriver()
 
@@ -2659,32 +2728,32 @@ def TestUDPAxis(self):
 
 
 def TestUDPAxisCalib(self):
-    rtn = robot.ExtDevSetUDPComParam("192.168.58.88", 2021, 2, 100, 3, 200, 1, 100, 5, 1)
-    print(f"ExtDevSetUDPComParam rtn is {rtn}")
-
-    # udp_params = ["", 0, 0, 0, 0, 0, 0, 0, 0]
-    rtn,udp_params = robot.ExtDevGetUDPComParam()
-    ip, port, period, lossPkgTime, lossPkgNum, disconnectTime, reconnectEnable, reconnectPeriod, reconnectNum = udp_params
-    patam = (
-        f"\nip {ip}\nport {port}\nperiod {period}\nlossPkgTime {lossPkgTime}\n"
-        f"lossPkgNum {lossPkgNum}\ndisConntime {disconnectTime}\nreconnecable {reconnectEnable}\n"
-        f"reconnperiod {reconnectPeriod}\nreconnnun {reconnectNum}"
-    )
-    print(f"ExtDevGetUDPComParam rtn is {rtn}{patam}")
-
-    robot.ExtDevLoadUDPDriver()
-
-    rtn = robot.ExtAxisServoOn(1, 1)
-    print(f"ExtAxisServoOn axis id 1 rtn is {rtn}")
-    rtn = robot.ExtAxisServoOn(2, 1)
-    print(f"ExtAxisServoOn axis id 2 rtn is {rtn}")
-    time.sleep(2)
-
-    robot.ExtAxisSetHoming(1, 0, 10, 2)
-    time.sleep(2)
-    rtn = robot.ExtAxisSetHoming(2, 0, 10, 2)
-    print(f"ExtAxisSetHoming rtn is {rtn}")
-    time.sleep(4)
+    # rtn = robot.ExtDevSetUDPComParam("192.168.58.88", 2021, 2, 100, 3, 200, 1, 100, 5, 1)
+    # print(f"ExtDevSetUDPComParam rtn is {rtn}")
+    #
+    # # udp_params = ["", 0, 0, 0, 0, 0, 0, 0, 0]
+    # rtn,udp_params = robot.ExtDevGetUDPComParam()
+    # ip, port, period, lossPkgTime, lossPkgNum, disconnectTime, reconnectEnable, reconnectPeriod, reconnectNum = udp_params
+    # patam = (
+    #     f"\nip {ip}\nport {port}\nperiod {period}\nlossPkgTime {lossPkgTime}\n"
+    #     f"lossPkgNum {lossPkgNum}\ndisConntime {disconnectTime}\nreconnecable {reconnectEnable}\n"
+    #     f"reconnperiod {reconnectPeriod}\nreconnnun {reconnectNum}"
+    # )
+    # print(f"ExtDevGetUDPComParam rtn is {rtn}{patam}")
+    #
+    # robot.ExtDevLoadUDPDriver()
+    #
+    # rtn = robot.ExtAxisServoOn(1, 1)
+    # print(f"ExtAxisServoOn axis id 1 rtn is {rtn}")
+    # rtn = robot.ExtAxisServoOn(2, 1)
+    # print(f"ExtAxisServoOn axis id 2 rtn is {rtn}")
+    # time.sleep(2)
+    #
+    # robot.ExtAxisSetHoming(1, 0, 10, 2)
+    # time.sleep(2)
+    # rtn = robot.ExtAxisSetHoming(2, 0, 10, 2)
+    # print(f"ExtAxisSetHoming rtn is {rtn}")
+    # time.sleep(4)
 
     rtn = robot.SetRobotPosToAxis(1)
     print(f"SetRobotPosToAxis rtn is {rtn}")
@@ -2698,11 +2767,11 @@ def TestUDPAxisCalib(self):
     toolCoord = [0, 0, 210, 0, 0, 0]
     robot.SetToolCoord(1, toolCoord, 0, 0, 1, 0)
 
-    jSafe = [115.193, -96.149, 92.489, -87.068, -89.15, -83.488]
-    j1 = [117.559, -92.624, 100.329, -96.909, -94.057, -83.488]
-    j2 = [112.239, -90.096, 99.282, -95.909, -89.824, -83.488]
-    j3 = [110.839, -83.473, 93.166, -89.22, -90.499, -83.487]
-    j4 = [107.935, -83.572, 95.424, -92.873, -87.933, -83.488]
+    jSafe = [47.434, -74.061, -46.445, -140.394, 52.175, 108.040]
+    j1 = [46.778, -75.370, -45.376, -140.058, 51.582, 108.038]
+    j2 = [26.821, -79.971, -41.801, -124.459, 65.051, 108.036]
+    j3 = [26.709, -82.025, -39.224, -124.958, 64.560, 108.035]
+    j4 = [27.177, -82.909, -38.352, -124.937, 63.591, 108.035]
 
     descSafe = [0.0,0.0,0.0,0.0,0.0,0.0]
     desc1 = [0.0,0.0,0.0,0.0,0.0,0.0]
@@ -2730,7 +2799,7 @@ def TestUDPAxisCalib(self):
     robot.MoveJ(joint_pos=jSafe,tool= 1,user= 0,vel= 100)
     robot.ExtAxisStartJog(1, 0, 50, 50, 10)
     time.sleep(1)
-    robot.ExtAxisStartJog(2, 0, 50, 50, 10)
+    robot.ExtAxisStartJog(2, 1, 50, 50, 5)
     time.sleep(1)
     error, desc2 = robot.GetForwardKin(j2)
     rtn = robot.MoveJ(joint_pos=j2,tool= 1,user= 0,vel= 100)
@@ -2741,7 +2810,7 @@ def TestUDPAxisCalib(self):
     robot.MoveJ(joint_pos=jSafe,tool= 1,user= 0,vel= 100)
     robot.ExtAxisStartJog(1, 0, 50, 50, 10)
     time.sleep(1)
-    robot.ExtAxisStartJog(2, 0, 50, 50, 10)
+    robot.ExtAxisStartJog(2, 1, 50, 50, 5)
     time.sleep(1)
     error, desc3 = robot.GetForwardKin(j3)
     robot.MoveJ(joint_pos=j3,tool= 1,user= 0,vel= 100)
@@ -2752,7 +2821,7 @@ def TestUDPAxisCalib(self):
     robot.MoveJ(joint_pos=jSafe,tool= 1,user= 0,vel= 100)
     robot.ExtAxisStartJog(1, 0, 50, 50, 10)
     time.sleep(1)
-    robot.ExtAxisStartJog(2, 0, 50, 50, 10)
+    robot.ExtAxisStartJog(2, 1, 50, 50, 5)
     time.sleep(1)
     error, desc4 = robot.GetForwardKin(j4)
     robot.MoveJ(joint_pos=j4,tool= 1,user= 0,vel= 100)
@@ -2764,7 +2833,7 @@ def TestUDPAxisCalib(self):
     error,axisCoord = robot.PositionorComputeECoordSys()
     robot.MoveJ(joint_pos=jSafe,tool= 1,user= 0,vel= 100)
     print(f"PositionorComputeECoordSys rtn is {axisCoord[0]} {axisCoord[1]} {axisCoord[2]} {axisCoord[3]} {axisCoord[4]} {axisCoord[5]}")
-    rtn = robot.ExtAxisActiveECoordSys(3, 1, axisCoord, 1)
+    rtn = robot.ExtAxisActiveECoordSys(3, 3, axisCoord, 1)
     print(f"ExtAxisActiveECoordSys rtn is {rtn}")
 
     robot.CloseRPC()
@@ -2857,42 +2926,31 @@ def TestFIR(self):
     startjointPos = [-11.904, -99.669, 117.473, -108.616, -91.726, 74.256]
     midjointPos = [-45.615, -106.172, 124.296, -107.151, -91.282, 74.255]
     endjointPos = [-29.777, -84.536, 109.275, -114.075, -86.655, 74.257]
-
     startdescPose = [-419.524, -13.000, 351.569, -178.118, 0.314, 3.833]
     middescPose = [-321.222, 185.189, 335.520, -179.030, -1.284, -29.869]
     enddescPose = [-487.434, 154.362, 308.576, 176.600, 0.268, -14.061]
-
-    # startjointPos = [-38.624,-78.619,90.307,-95.916,-94.168,73.744]
-    # midjointPos = [-63.314,-96.329,90.374,-81.129,-93.465,73.662]
-    # endjointPos = [-99.647,-90.279,106.709,-102.546,-91.529,73.687]
-    #
-    # startdescPose = [-498.294,276.877,379.142,-177.615,-6.707,-22.297]
-    # middescPose = [-284.598,352.539,510.538,-177.494,-3.768,-46.969]
-    # enddescPose = [-18.866,481.758,358.634,-179.624,-4.157,-83.296]
-
     exaxisPos = [0.0, 0.0, 0.0, 0.0]
     offdese = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-
-    # rtn = robot.PtpFIRPlanningStart(200.0, 1000.0)
     rtn = robot.PtpFIRPlanningStart(1000.0, 1000.0)
     print(f"PtpFIRPlanningStart rtn is {rtn}")
-    error = robot.MoveJ(joint_pos=startjointPos,tool= 0,user= 0,desc_pos=startdescPose,vel= 100,acc=100,ovl=100, blendT=-1.0, offset_flag=0)
+    error = robot.MoveJ(joint_pos=startjointPos, tool=0, user=0, desc_pos=startdescPose, vel=100, acc=100, ovl=100,
+                        blendT=-1.0, offset_flag=0)
     print(f"MoveJ rtn is {rtn}")
-    error = robot.MoveJ(joint_pos=endjointPos,tool= 0,user= 0,desc_pos=enddescPose,vel= 100,acc=100,ovl=100, blendT=-1.0, offset_flag=0)
+    error = robot.MoveJ(joint_pos=endjointPos, tool=0, user=0, desc_pos=enddescPose, vel=100, acc=100, ovl=100,
+                        blendT=-1.0, offset_flag=0)
     print(f"MoveJ rtn is {rtn}")
     robot.PtpFIRPlanningEnd()
     print(f"PtpFIRPlanningEnd rtn is {rtn}")
-
-    # rtn = robot.LinArcFIRPlanningStart(2000, 10000, 720, 1440)
     rtn = robot.LinArcFIRPlanningStart(1000, 1000, 1000, 1000)
     print(f"LinArcFIRPlanningStart rtn is {rtn}")
-    error = robot.MoveL(desc_pos=startdescPose,tool= 0,user= 0, joint_pos=startjointPos,vel= 100,overSpeedStrategy=1,speedPercent=1)
+    error = robot.MoveL(desc_pos=startdescPose, tool=0, user=0, joint_pos=startjointPos, vel=100, overSpeedStrategy=1,
+                        speedPercent=1)
     print(f"MoveL rtn is {rtn}")
-    error = robot.MoveC(desc_pos_p=middescPose,tool_p= 0,user_p= 0, joint_pos_p=midjointPos,vel_p= 100,desc_pos_t=enddescPose,tool_t= 0,user_t= 0,joint_pos_t=endjointPos,vel_t= 100)
+    error = robot.MoveC(desc_pos_p=middescPose, tool_p=0, user_p=0, joint_pos_p=midjointPos, vel_p=100,
+                        desc_pos_t=enddescPose, tool_t=0, user_t=0, joint_pos_t=endjointPos, vel_t=100)
     print(f"MoveC rtn is {rtn}")
     robot.LinArcFIRPlanningEnd()
     print(f"LinArcFIRPlanningEnd rtn is {rtn}")
-
     robot.CloseRPC()
 
 def TestAccSmooth(self):
@@ -2957,11 +3015,11 @@ def TestSingularAvoid(self):
 
 
 def TestLoadTrajLA(self):
-    rtn = robot.TrajectoryJUpLoad("D://zUP/traj.txt")
+    rtn = robot.TrajectoryJUpLoad("D://zUP/horse.txt")
     print(f"Upload TrajectoryJ A {rtn}")
 
-    traj_file_name = "/fruser/traj/traj.txt"
-    rtn = robot.LoadTrajectoryLA(traj_file_name, 1, 2, 0, 2, 50, 200, 1000)
+    traj_file_name = "horse.txt"
+    rtn = robot.LoadTrajectoryLA(traj_file_name, 1, 2, 0, 2, 50, 200, 1000,1)
     print(f"LoadTrajectoryLA {traj_file_name}, rtn is: {rtn}")
 
     rtn, traj_start_pose = robot.GetTrajectoryStartPose(traj_file_name)
@@ -3009,7 +3067,7 @@ def TestIdentify(self):
 
     robot.CloseRPC()
 
-def TestUDPAxisCalib():
+def TestUDPAxisMove():
     axisPos = [20,0,0,0]
     robot.ExtAxisMove(axisPos, 50)
     robot.CloseRPC()
@@ -3147,12 +3205,85 @@ def testSyncMoveC():
 
 
 
+def TestRotInsert(self):
+    # 参数定义
+    forceInsertion = 5.0  # 力或力矩阈值（0~100），单位N或Nm
+    angleMax = 300  # 最大旋转角度，单位°
+    orn = 1  # 力的方向，1-fz,2-mz
+    angAccmax = 0  # 最大旋转角加速度，单位°/s^2,暂不使用
+    status = 1  # 恒力控制开启标志，0-关，1-开
+    sensor_num = 11  # 力传感器编号
+    gain = [0.0001, 0.0, 0.0, 0.0, 0.0, 0.0]  # 最大阈值
+    adj_sign = 0  # 自适应启停状态，0-关闭，1-开启
+    ILC_sign = 0  # ILC控制启停状态，0-停止，1-训练，2-实操
+    max_dis = 1000.0  # 最大调整距离
+    max_ang = 20.0  # 最大调整角度
+    rcs = 0  # 参考坐标系，0-工具坐标系，1-基坐标系
+    angVelRot = 1.0  # 旋转角速度，单位°/s
+    rotorn = 1  # 旋转方向，1-顺时针，2-逆时针
 
+    # 点位定义
+    j1 = [100.968, -108.678, 126.166, -106.630, -93.253, 19.584]
+    desc_p1 = [159.473, -316.570, 334.560, -179.718, -3.352, 171.400]
+    epos = [0.0, 0.0, 0.0, 0.0]
+    offset_pos = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 
+    # 移动到起始位置
+    robot.MoveL(joint_pos=j1, desc_pos=desc_p1, tool=2, user=0, vel=100.0, acc=180.0, ovl=100.0,
+                blendR=-1.0, exaxis_pos=epos, offset_flag=0, search=1, offset_pos=offset_pos)
+
+    # 六个自由度选择[fx,fy,fz,mx,my,mz]，0-不生效，1-生效
+    select3 = [0, 0, 1, 0, 0, 0]
+    ft = [0.0, 0.0, -5.0, 0.0, 0.0, 0.0]  # fx, fy, fz, mx, my, mz
+    gain[0] = 0.0001
+    status = 1
+    adjustCoeff = [1.0, 1.0]
+    polishRadio = 0
+    filter_Sign = 0
+    posAdapt_sign = 0
+    isNoBlock = 0
+    M=[0.0,0.0]
+    B=[0.0,0.0]
+    threshold=[0.0,0.0]
+    # 开启力控
+    robot.FT_Control(1,  sensor_id=sensor_num, select=select3, ft=ft, ft_pid=gain, adj_sign=adj_sign, ILC_sign=ILC_sign, max_dis=max_dis, max_ang=max_ang, M=M, B=B, threshold=threshold,adjustCoeff=adjustCoeff,polishRadio=polishRadio,filter_Sign=filter_Sign,posAdapt_sign=posAdapt_sign,isNoBlock=isNoBlock)
+
+    # 直线插入
+    rtn = robot.FT_LinInsertion(rcs, 10, 100, 1, 1, 1)
+    print(f"FT_LinInsertion rtn is {rtn}")
+
+    # 关闭力控
+    robot.FT_Control(0, sensor_num, select3, ft, gain, adj_sign, ILC_sign, max_dis, max_ang, M, B, threshold,adjustCoeff,polishRadio,filter_Sign,posAdapt_sign,isNoBlock)
+
+    # 修改力控目标值
+    ft = [0.0, 0.0, -30.0, 0.0, 0.0, 0.0]
+
+    # 开启力控
+    robot.FT_Control(1, sensor_num, select3, ft, gain, adj_sign, ILC_sign, max_dis, max_ang, M, B, threshold,adjustCoeff,polishRadio,filter_Sign,posAdapt_sign,isNoBlock)
+
+    # 旋转插入
+    rtn = robot.FT_RotInsertion(rcs, angVelRot, forceInsertion, angleMax, orn, angAccmax, rotorn, 0)
+    print(f"FT_RotInsertion rtn is {rtn}")
+
+    # 关闭力控
+    robot.FT_Control(0, sensor_num, select3, ft, gain, adj_sign, ILC_sign, max_dis, max_ang, M, B, threshold,adjustCoeff,polishRadio,filter_Sign,posAdapt_sign,isNoBlock)
+
+    # 再次直线插入
+    rtn = robot.FT_LinInsertion(0, 40, 100, 0, 3, 1)
+    print(f"FT_LinInsertion rtn is {rtn}")
+
+    time.sleep(1)
+
+    # 获取机器人实时状态
+    rtn, pkg = robot.GetRobotRealTimeState()
+    print(f"robot errcode {pkg.main_code} {pkg.sub_code}")
+
+    # 关闭连接
+    robot.CloseRPC()
 
 
 ###6.9
-# TestRobotCtrl(robot)
+TestRobotCtrl(robot)
 # TestGetVersions(robot)
 # TestJOG(robot)
 # TestMove(robot)
@@ -3194,7 +3325,7 @@ def testSyncMoveC():
 # TestLUAUpDownLoad(robot)
 # TestGripper(robot)
 # TestRotGripperState(robot)
-TestConveyor(robot)################################################未完成
+# TestConveyor(robot)
 # TestAxleSensor(robot)
 # TestExDevProtocol(robot)
 # TestAxleLua(robot)
@@ -3202,32 +3333,31 @@ TestConveyor(robot)################################################未完成
 # TestWelding(robot)
 # TestSegWeld(robot)
 # TestWeave(robot)
+# TestExtDIConfig(robot)
+# TestArcWeldTrace(robot)
+# TestWireSearch(robot)
 # TestSSHMd5(robot)
 # TestRealtimePeriod(robot)
 # TestUpgrade(robot)
 # TestPointTable(robot)
-###############2314
-
-
-
 # TestDownLoadRobotData(robot)
-# TestExtDIConfig(robot)
-# TestArcWeldTrace(robot)
+
 #############2515
 
 
-
-# TestWireSearch(robot)
 # TestFTInit(robot)
 # TestFTLoadCompute(robot)
 # TestFTGuard(robot)
 # TestFTControl(robot)
 # TestFTSearch(robot)
 # TestSurface(robot)
-# TestCompliance(robot)
+# TestCompliance(robot)   #柔顺控制
+# TestIdentify(robot)  #机器人负载辨识
 # TestEndForceDragCtrl(robot)
 # TestForceAndJointImpedance(robot)
+# TestRotInsert(robot)
 # TestUDPAxis(robot)
+# TestUDPAxisMove()
 # TestUDPAxisCalib(robot)
 # TestAuxDOAO(robot)
 # TestTractor(robot)
@@ -3236,7 +3366,6 @@ TestConveyor(robot)################################################未完成
 # TestAngularSpeed(robot)
 # TestSingularAvoid(robot)
 # TestLoadTrajLA(robot)
-# TestIdentify(robot)
 # (robot)
 # (robot)
 # (robot)

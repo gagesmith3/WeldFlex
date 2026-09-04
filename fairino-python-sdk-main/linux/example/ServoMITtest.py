@@ -35,7 +35,7 @@ def ServoMITtest(self):
         print("111111")
 
         # 启动Servo MIT模式
-        rtn = robot.ServoMITStart(0)
+        rtn = robot.ServoMITStart(1)
         print(f"ServoMITStart rtn: {rtn}")
 
         # 开启拖动示教
@@ -48,7 +48,7 @@ def ServoMITtest(self):
         while True:
             torques[5] = 0.03
             rtn = robot.ServoMIT(posGain, desPos, velGain,
-                                 desVel, torques, intev, comType=0)
+                                 desVel, torques, intev, comType=1)
             print(f"ServoMIT call rtn is {rtn}")
             time.sleep(0.001)  # 1ms
 
@@ -62,7 +62,7 @@ def ServoMITtest(self):
         while True:
             torques[5] = -0.03
             rtn = robot.ServoMIT(posGain, desPos, velGain,
-                                 desVel, torques, intev, comType=0)
+                                 desVel, torques, intev, comType=1)
             print(f"ServoMIT call rtn is {rtn}")
             time.sleep(0.001)  # 1ms
 
@@ -77,7 +77,7 @@ def ServoMITtest(self):
         print(f"DragTeachSwitch off rtn: {rtn}")
 
         # 结束Servo MIT模式
-        rtn = robot.ServoMITEnd(0)
+        rtn = robot.ServoMITEnd(1)
         print(f"ServoMITEnd rtn: {rtn}")
 
 

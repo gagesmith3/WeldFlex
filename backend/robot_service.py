@@ -53,6 +53,10 @@ JOG_MOTION_SETTLE_S = 0.05
 DO_PULSE_MAX_S = 2.0
 WELD_TELEMETRY_FRESH_S = 1.0
 WELD_TELEMETRY_CALL_TIMEOUT_S = 3.0
+JOB_TELEMETRY_STUD_DI = 1
+JOB_TELEMETRY_READY_DI = 0
+JOB_TELEMETRY_SLOTS = (1, 2, 3, 4, 5, 6, 7, 8)
+JOB_TELEMETRY_INTERVAL_S = 0.25
 
 _WELD_PHASES = {
     10: "entered",
@@ -282,8 +286,9 @@ class WeldFlexRobotService:
         Observation only, but no longer unused: `get_universal_state()` prefers
         this over the XML-RPC cache for program state, line and fault codes,
         because the controller stops answering XML-RPC for the duration of a
-        force operation while these frames keep arriving. Force and DI have not
-        moved off their old paths yet.
+        force operation while these frames keep arriving. `ft_read()` also uses
+        its F/T fields as the primary force source; DI remains observation-only
+        and stays on the controller-Lua relay for interlocks.
         """
         return self._link.feed_snapshot()
 
@@ -438,6 +443,19 @@ class WeldFlexRobotService:
 
     # --- detailed weld telemetry ---
 
+    def start_job_telemetry(self) -> None:
+        """Start the read-only sampler required to observe a JobManager weld run."""
+        self.start_weld_telemetry(
+            JOB_TELEMETRY_STUD_DI,
+            JOB_TELEMETRY_READY_DI,
+            JOB_TELEMETRY_SLOTS,
+            interval_s=JOB_TELEMETRY_INTERVAL_S,
+        )
+
+    def stop_job_telemetry(self) -> None:
+        """Stop the JobManager telemetry sampler while retaining its last sample."""
+        self.stop_weld_telemetry()
+
     def start_weld_telemetry(
         self,
         stud_di: int,
@@ -445,7 +463,7 @@ class WeldFlexRobotService:
         sysvar_slots: tuple[int, ...],
         interval_s: float,
     ) -> None:
-        """Start one detailed sampler for the active weld-test run.
+        """Start one detailed sampler for an active weld program.
 
         Browser polls read ``weld_telemetry_snapshot`` only. The sampler is the
         single producer, and its calls still pass through RobotLink's SDK worker.
@@ -776,25 +794,24 @@ class WeldFlexRobotService:
             logger.warning(f"SetAnticollision failed (code {err_code})")
 
     def ft_setup(self) -> None:
-        """Full init sequence per SDK example: configure → reset → activate → zero.
-        Takes ~10 s due to required waits between commands."""
+        """Configure and activate the F/T sensor without changing its tare or payload.
+        Takes ~6 s due to required waits between commands."""
+        def require_success(command: str, response: Any) -> None:
+            err_code, _ = self._unpack(response)
+            if err_code != 0:
+                raise RuntimeError(f"{command} failed (code {err_code})")
+
         def _sequence(r):
-            r.FT_SetConfig(24, 0)   # company 24 = XJC (鑫精诚), device 0
+            require_success("FT_SetConfig(24, 0)", r.FT_SetConfig(24, 0))
             time.sleep(1)
             # Report in the tool frame (0=tool, 1=base). Asserted rather than
             # inherited: weld contact force acts along the torch approach axis,
             # which stays on one tool-frame axis as the robot reorients.
-            r.FT_SetRCS(0)
+            require_success("FT_SetRCS(0)", r.FT_SetRCS(0))
             time.sleep(1)
-            r.FT_Activate(0)        # reset first
+            require_success("FT_Activate(0)", r.FT_Activate(0))
             time.sleep(2)
-            err = r.FT_Activate(1)  # activate
-            if isinstance(err, int) and err != 0:
-                raise RuntimeError(f"FT_Activate(1) failed (code {err})")
-            time.sleep(2)
-            r.FT_SetZero(0)         # clear old zero
-            time.sleep(2)
-            r.FT_SetZero(1)         # apply new zero
+            require_success("FT_Activate(1)", r.FT_Activate(1))
 
         self._call(_sequence, timeout=30.0)
 
@@ -834,6 +851,61 @@ class WeldFlexRobotService:
             "bus": int(values[4]) if len(values) > 4 else None,
         }
 
+    def ft_compensation(self) -> dict:
+        """Read the controller's configured payload below the F/T sensor."""
+        def read_compensation(r):
+            return r.GetForceSensorPayload(), r.GetForceSensorPayloadCog()
+
+        payload_response, cog_response = self._call(read_compensation)
+        payload_code, payload_kg = self._unpack(payload_response)
+        if payload_code != 0:
+            raise RuntimeError(f"GetForceSensorPayload failed (code {payload_code})")
+        if not isinstance(cog_response, (list, tuple)) or len(cog_response) < 4:
+            raise RuntimeError(
+                f"GetForceSensorPayloadCog returned an unexpected shape: {cog_response!r}"
+            )
+        cog_code = int(cog_response[0])
+        if cog_code != 0:
+            raise RuntimeError(f"GetForceSensorPayloadCog failed (code {cog_code})")
+        try:
+            cog_mm = tuple(float(value) for value in cog_response[1:4])
+            return {"payload_kg": float(payload_kg), "cog_mm": cog_mm}
+        except (TypeError, ValueError):
+            raise RuntimeError(
+                f"GetForceSensorPayload returned invalid data: {payload_kg!r}, {cog_response[1:4]!r}"
+            ) from None
+
+    def ft_frame_readings(self) -> dict:
+        """Read controller RCS and raw-origin F/T data while the sensor is idle.
+
+        The SDK wrappers for these getters return a local cached state struct,
+        which is not known to be populated on this controller. Use the raw RPC
+        methods in one serialized dispatch instead. This is inspection only;
+        controller force operations own the interface and must be stopped first.
+        """
+        def read_frames(r):
+            return (
+                r.robot.FT_GetForceTorqueRCS(0),
+                r.robot.FT_GetForceTorqueOrigin(0),
+            )
+
+        rcs_response, origin_response = self._call(read_frames, retries=1)
+
+        def fz(command: str, response: Any) -> float:
+            if not isinstance(response, (list, tuple)) or len(response) < 4:
+                raise RuntimeError(f"{command} returned an unexpected shape: {response!r}")
+            if int(response[0]) != 0:
+                raise RuntimeError(f"{command} failed (code {response[0]})")
+            try:
+                return float(response[3])
+            except (TypeError, ValueError):
+                raise RuntimeError(f"{command} returned an invalid Fz: {response[3]!r}") from None
+
+        return {
+            "rcs_fz_n": fz("FT_GetForceTorqueRCS", rcs_response),
+            "origin_fz_n": fz("FT_GetForceTorqueOrigin", origin_response),
+        }
+
     def ft_deactivate(self) -> None:
         err = self._call(lambda r: r.FT_Activate(0))
         err_code, _ = self._unpack(err)
@@ -847,13 +919,25 @@ class WeldFlexRobotService:
             raise RuntimeError(f"FT_SetZero failed (code {err_code})")
 
     def ft_read(self) -> dict:
-        """Latest CNDE force frame, with raw XML-RPC only as an idle fallback.
+        """Latest port-8083 F/T frame, with CNDE and XML-RPC as fallbacks.
 
-        The CNDE cache is updated by its receiver thread, so it remains available
-        while a controller-side force task owns the sensor. Raw XML-RPC force
-        reads return code 14 in that window and are deliberately not attempted
-        while a program is running.
+        The status feed is independent of XML-RPC and remains available while a
+        controller-side force task owns the sensor. CNDE stays as a compatibility
+        fallback; raw XML-RPC is idle-only because it returns code 14 mid-force
+        operation.
         """
+        feed = self.feed_snapshot()
+        feed_values = feed.ft_values if feed.is_fresh() else None
+        if feed_values is not None and len(feed_values) >= 6:
+            fx, fy, fz, mx, my, mz = feed_values[:6]
+            return {
+                "fx": float(fx), "fy": float(fy), "fz": float(fz),
+                "mx": float(mx), "my": float(my), "mz": float(mz),
+                "active": feed.ft_active is True,
+                "source": "8083",
+                "age_s": feed.age_s(),
+            }
+
         cached = self.force_snapshot()
         if cached.is_fresh():
             fx, fy, fz, mx, my, mz = cached.values

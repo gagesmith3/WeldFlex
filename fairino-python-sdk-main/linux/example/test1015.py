@@ -89,7 +89,7 @@ def TestSlavePortErr(self):
 
 
 def TestVelFeedForwardRatio(self):
-    setRadio = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+    setRadio = [1.0, 0.8, 1.0, 1.0, 1.0, 1.0]
     robot.SetVelFeedForwardRatio(setRadio)
 
     getRadio = [0.0] * 6
@@ -165,9 +165,9 @@ def TestFTControlWithDamping(self):
     robot.CloseRPC()
     return 0
 
-TestServoJ(robot)
+# TestServoJ(robot)
 # TestSlavePortErr(robot)
-# TestVelFeedForwardRatio(robot)
+TestVelFeedForwardRatio(robot)
 # TestSpiral(robot)
 # TestFTControlWithDamping(robot)
 

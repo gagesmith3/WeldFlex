@@ -1105,32 +1105,23 @@ N_TO_LBF = 0.2248089
 FT_FZ_DISPLAY_SIGN = -1.0
 
 
-@app.route("/ui/ft/setup", methods=["POST"])
-def ui_ft_setup():
+@app.route("/ui/ft/inspect", methods=["POST"])
+def ui_ft_inspect():
+    if job.snapshot().active:
+        return render_template(
+            "partials/ft_setup_status.html", ok=False,
+            error="Stop the active job before inspecting F/T setup.",
+        )
     try:
-        robot.ft_setup()
-        ok, payload = True, {}
+        config = robot.ft_config()
+        compensation = robot.ft_compensation()
+        frames = robot.ft_frame_readings()
+        return render_template(
+            "partials/ft_setup_status.html", ok=True,
+            config=config, compensation=compensation, frames=frames,
+        )
     except Exception as e:
-        ok, payload = False, {"error": str(e)}
-    return render_template("partials/command_result.html", ok=ok, title="Initialize", payload=payload)
-
-@app.route("/ui/ft/deactivate", methods=["POST"])
-def ui_ft_deactivate():
-    try:
-        robot.ft_deactivate()
-        ok, payload = True, {}
-    except Exception as e:
-        ok, payload = False, {"error": str(e)}
-    return render_template("partials/command_result.html", ok=ok, title="Deactivate", payload=payload)
-
-@app.route("/ui/ft/zero", methods=["POST"])
-def ui_ft_zero():
-    try:
-        robot.ft_zero()
-        ok, payload = True, {}
-    except Exception as e:
-        ok, payload = False, {"error": str(e)}
-    return render_template("partials/command_result.html", ok=ok, title="Zero Sensor", payload=payload)
+        return render_template("partials/ft_setup_status.html", ok=False, error=str(e))
 
 @app.route("/ui/ft/reading")
 def ui_ft_reading():
@@ -1478,6 +1469,8 @@ def _connection_snapshot() -> dict:
         "program_state": ustate.program_state,
         "ip": snap.ip,
         "error": snap.last_error,
+        "force_lbf": ustate.fz_lbf,
+        "target_press_lbf": ustate.target_press_lbf,
     }
 
 

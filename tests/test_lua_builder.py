@@ -52,6 +52,7 @@ def test_weldflex_lua_substitutes_recipe_parameters():
         retract_z=15.5,
         part_z=2.0,
         pressure_setting="low",
+        ft_sensor_num=7,
         stud_type="M6",
         substrate="Stainless Steel",
         speed=42,
@@ -60,6 +61,8 @@ def test_weldflex_lua_substitutes_recipe_parameters():
     assert "RETRACT_Z = 15.5" in built.text
     assert "PART_Z = 2" in built.text
     assert "PRESS_LBF = 17" in built.text
+    assert "FT_SENSOR_NUM = 7" in built.text
+    assert "WELD_FT_SENSOR_NUM = FT_SENSOR_NUM" in built.text
     assert 'STUD_TYPE = "M6"' in built.text
     assert 'SUBSTRATE = "Stainless Steel"' in built.text
     assert "speed = 42" in built.text
@@ -424,6 +427,8 @@ def test_the_press_force_ceiling_agrees_across_the_language_boundary():
     m = re.search(r"^local PRESS_TARGET_MAX_LBF\s*=\s*([\d.]+)", weld, re.M)
     assert m, "weld.lua no longer declares PRESS_TARGET_MAX_LBF"
     assert float(m.group(1)) == PRESS_LBF_MAX
+    assert PRESS_LBF_MAX * 4.448222 < 100.0, \
+        "FT_LinInsertion accepts at most a 100 N force threshold"
 
 
 def test_the_press_guard_declines_below_its_own_threshold():
@@ -436,11 +441,20 @@ def test_the_press_guard_declines_below_its_own_threshold():
 
 
 def test_force_control_uses_negative_fz_for_compression():
-    """The regulator needs a signed target; insertion only needs a magnitude."""
+    """The regulator needs a signed target and must finish enabling before insertion."""
     weld = WELD_PATH.read_text(encoding="utf-8")
     control = re.search(r"local function ftControlPress\(flag\)(.*?)\nend", weld, re.S)
     assert control, "weld.lua no longer defines the FT_Control helper"
     assert "0.0, 0.0, -PRESS_TARGET_N, 0.0, 0.0, 0.0" in control.group(1)
+    assert control.group(1).strip().endswith("0)"), \
+        "FT_Control must use blocking mode before FT_LinInsertion starts"
+
+
+def test_surface_search_uses_the_documented_gentle_default_speed():
+    weld = WELD_PATH.read_text(encoding="utf-8")
+    match = re.search(r"^local SEARCH_SPEED_MMS\s*=\s*([\d.]+)", weld, re.M)
+    assert match, "weld.lua no longer declares SEARCH_SPEED_MMS"
+    assert float(match.group(1)) == 3.0
 
 
 def test_a_fault_does_not_erase_which_collision_lever_took():
@@ -731,6 +745,29 @@ def test_the_press_travel_budgets_are_separate_constants():
         "FT_LinInsertion is no longer given PRESS_MAX_MM"
 
 
+def test_linear_insertion_uses_the_standard_force_error_bounds():
+    """Insertion must reject the same vendor error range as surface search."""
+    weld = strip_lua_comments(WELD_PATH.read_text(encoding="utf-8"))
+    press = weld.split("local function pressToForce()", 1)[1].split(
+        "local function fireWeld()", 1
+    )[0]
+    insertion = press.split("ret = ftCall(FT_LinInsertion", 1)[1].split(
+        "local zNow", 1
+    )[0]
+    assert "if ftRefused(ret) then" in insertion
+
+
+def test_a_weld_fault_stops_the_current_phase():
+    """Fault cleanup must not fall through to later motion or outputs."""
+    code = strip_lua_comments(WELD_PATH.read_text(encoding="utf-8"))
+
+    assert "return true" in code.split("local function fault(msg, site)", 1)[1].split(
+        "local function waitForWeldReady()", 1
+    )[0]
+    assert not re.search(r"^\s*(?!return )fault\(", code, re.M), \
+        "every fault path must return after cleanup"
+
+
 def test_the_controller_never_receives_a_protected_call():
     """The controller refuses the whole file if `pcall` reaches it — live 2026-07-29:
     "lua_name:weld.lua---line_num:297---error_info:pcall is not allowed in lua file".
@@ -842,11 +879,14 @@ def test_faceplate_lua_substitutes_recipe_parameters():
     built = build_weld_faceplate_lua(
         0, 0, cycles=1,
         safe_z=15.5, part_z=2.0, pressure_setting="low",
+        ft_sensor_num=7,
         stud_type="M6", substrate="Stainless Steel",
     )
     assert "SAFE_Z = 15.5" in built.text
     assert "PART_Z = 2" in built.text
     assert "PRESS_LBF = 17" in built.text
+    assert "FT_SENSOR_NUM = 7" in built.text
+    assert "WELD_FT_SENSOR_NUM = FT_SENSOR_NUM" in built.text
     assert 'STUD_TYPE = "M6"' in built.text
     assert 'SUBSTRATE = "Stainless Steel"' in built.text
 

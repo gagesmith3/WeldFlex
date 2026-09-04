@@ -41,13 +41,14 @@ IO_MONITOR_RUN_PROGRAM_NAME = "io_monitor_run.lua"
 IO_MONITOR_MAX_MS = 300000
 IO_MONITOR_DEFAULT_MS = 45000
 
-# Ceiling on the force-ladder rung a caller may ask for, in lbf. Mirrors
+# Ceiling on the force-ladder rung a caller may ask for, in lbf. This leaves
+# margin below FT_LinInsertion's documented 100 N maximum. It mirrors
 # PRESS_TARGET_MAX_LBF in programs/weld.lua, which clamps the same value on the
 # controller side — this copy exists so a bad number is refused before it is
 # uploaded, with a message, instead of silently pressing at the 20 lbf default.
 # Nothing enforces the two copies agree across the language boundary, so
 # tests/test_lua_builder.py asserts it.
-PRESS_LBF_MAX = 25.0
+PRESS_LBF_MAX = 22.0
 
 GATE_MODES = ("none", "pause", "di")
 ARM_MODES = ("live", "dry")
@@ -375,6 +376,7 @@ def build_weldflex_lua(
     retract_z: float | int | None = None,
     part_z: float | int | None = None,
     pressure_setting: str | float | int | None = None,
+    ft_sensor_num: int = 1,
     stud_type: str | None = None,
     substrate: str | None = None,
     speed: float | int | None = None,
@@ -400,6 +402,9 @@ def build_weldflex_lua(
     retract_z_val = 10.0 if retract_z is None else float(retract_z)
     part_z_val = 0.0 if part_z is None else float(part_z)
     press_lbf_val = _parse_pressure(pressure_setting)
+    ft_sensor_num_val = int(ft_sensor_num)
+    if not 1 <= ft_sensor_num_val <= 255:
+        raise ValueError(f"ft_sensor_num must be in [1, 255], got {ft_sensor_num!r}")
     stud_type_val = stud_type or "M4"
     substrate_val = substrate or "Mild Steel"
     # Dry runs are for watching travel safely, not production cadence — default
@@ -441,6 +446,8 @@ def build_weldflex_lua(
             out.append(f"{indent}PART_Z = {format_number(part_z_val)}")
         elif "--{{PRESS_LBF}}" in line:
             out.append(f"{indent}PRESS_LBF = {format_number(press_lbf_val)}")
+        elif "--{{FT_SENSOR_NUM}}" in line:
+            out.append(f"{indent}FT_SENSOR_NUM = {ft_sensor_num_val}")
         elif "--{{STUD_TYPE}}" in line:
             out.append(f"{indent}STUD_TYPE = {format_lua_string(stud_type_val)}")
         elif "--{{SUBSTRATE}}" in line:
@@ -511,6 +518,7 @@ def build_weld_faceplate_lua(
     safe_z: float | int | None = None,
     part_z: float | int | None = None,
     pressure_setting: str | float | int | None = None,
+    ft_sensor_num: int = 1,
     stud_type: str | None = None,
     substrate: str | None = None,
     speed: float | int | None = None,
@@ -540,6 +548,9 @@ def build_weld_faceplate_lua(
     safe_z_val = 10.0 if safe_z is None else float(safe_z)
     part_z_val = 0.0 if part_z is None else float(part_z)
     press_lbf_val = _parse_pressure(pressure_setting)
+    ft_sensor_num_val = int(ft_sensor_num)
+    if not 1 <= ft_sensor_num_val <= 255:
+        raise ValueError(f"ft_sensor_num must be in [1, 255], got {ft_sensor_num!r}")
     stud_type_val = stud_type or "M4"
     substrate_val = substrate or "Mild Steel"
     speed_val = max(1, min(100, int(speed))) if speed is not None else (10 if arm_mode == "dry" else 25)
@@ -571,6 +582,8 @@ def build_weld_faceplate_lua(
             out.append(f"{indent}PART_Z = {format_number(part_z_val)}")
         elif "--{{PRESS_LBF}}" in line:
             out.append(f"{indent}PRESS_LBF = {format_number(press_lbf_val)}")
+        elif "--{{FT_SENSOR_NUM}}" in line:
+            out.append(f"{indent}FT_SENSOR_NUM = {ft_sensor_num_val}")
         elif "--{{STUD_TYPE}}" in line:
             out.append(f"{indent}STUD_TYPE = {format_lua_string(stud_type_val)}")
         elif "--{{SUBSTRATE}}" in line:

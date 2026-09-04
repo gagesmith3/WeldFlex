@@ -126,14 +126,14 @@ def test1_cnde_config_and_data():
     # ===== 步骤1: 设置CNDE配置 (JointCurPos, ToolCurPos, 20ms) =====
     print("\n【步骤1】设置CNDE配置...")
     print("  配置字段: JointCurPos, ToolCurPos")
-    print("  反馈周期: 20ms")
+    print("  反馈周期: 4ms")
 
     custom_states = [
         RobotState.JointCurPos,   # 关节当前位置
         RobotState.ToolCurPos,    # 工具(TCP)当前位置
     ]
 
-    rtn = SetRobotRealtimeStateConfig(custom_states, 20)
+    rtn = SetRobotRealtimeStateConfig(custom_states, 4)
     if rtn != 0:
         print(f"✗ 配置设置失败，错误码: {rtn}")
         return None
@@ -143,8 +143,6 @@ def test1_cnde_config_and_data():
     print(f"\n【步骤2】建立RPC连接 ({ROBOT_IP})...")
     robot = Robot.RPC(ROBOT_IP)
     time.sleep(0.5)  # 等待连接和数据接收
-
-    # 验证配置
     config = robot.CNDEGetConfig()
     if config:
         states, period = config
@@ -152,6 +150,8 @@ def test1_cnde_config_and_data():
     else:
         print("✗ 无法获取CNDE配置")
         return robot
+    while True:
+        time.sleep(1)
 
     # ===== 步骤3: 打印机器人关节和TCP位姿 =====
     print("\n【步骤3】打印机器人关节和TCP位姿...")
@@ -554,7 +554,7 @@ def test4_robot_runtime_state():
 
     sample_count = 0
     try:
-        while sample_count < 500:  # 采集500个样本
+        while sample_count < 100:  # 采集500个样本
             pkg = robot.robot_state_pkg
 
             # 每50帧打印一次
@@ -588,8 +588,8 @@ def test4_robot_runtime_state():
 
 
 # 独立运行入口 (取消下面两行注释即可单独运行此测试)
-# if __name__ == "__main__":
-#     test4_robot_runtime_state()
+if __name__ == "__main__":
+    test4_robot_runtime_state()
 
 
 # ==================== Test5: 机器人外设状态反馈测试 ====================
@@ -911,8 +911,8 @@ def test7_robot_fault_state():
 
 
 # 独立运行入口 (取消下面两行注释即可单独运行此测试)
-if __name__ == "__main__":
-    test7_robot_fault_state()
+# if __name__ == "__main__":
+#     test7_robot_fault_state()
 
 
 # ==================== Test8: 错误码测试 ====================

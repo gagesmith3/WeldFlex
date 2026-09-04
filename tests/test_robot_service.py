@@ -2,6 +2,8 @@ import threading
 import time
 from types import SimpleNamespace
 
+import pytest
+
 from robot_feed import FeedSnapshot
 from robot_link import ConnSnapshot, ConnState, ForceSnapshot
 from robot_service import DO_PULSE_MAX_S, WeldFlexRobotService
@@ -178,6 +180,125 @@ def test_ft_read_prefers_fresh_cnde_force_snapshot(monkeypatch):
     assert reading["fz"] == -3
     assert reading["source"] == "cnde"
     assert reading["age_s"] is not None
+
+
+def test_ft_read_prefers_fresh_8083_force_data_over_cnde(monkeypatch):
+    service = WeldFlexRobotService("127.0.0.1")
+    monkeypatch.setattr(
+        service,
+        "feed_snapshot",
+        lambda: FeedSnapshot(
+            fields={"ft_data": [1, 2, -3, 4, 5, 6], "ft_act_status": 1},
+            received_monotonic=time.monotonic(),
+            generation=4,
+        ),
+    )
+    monkeypatch.setattr(
+        service,
+        "force_snapshot",
+        lambda: (_ for _ in ()).throw(AssertionError("CNDE must not run")),
+    )
+
+    reading = service.ft_read()
+
+    assert reading == {
+        "fx": 1.0,
+        "fy": 2.0,
+        "fz": -3.0,
+        "mx": 4.0,
+        "my": 5.0,
+        "mz": 6.0,
+        "active": True,
+        "source": "8083",
+        "age_s": pytest.approx(0.0, abs=0.1),
+    }
+
+
+def test_ft_setup_configures_and_activates_without_changing_tare(monkeypatch):
+    service = WeldFlexRobotService("127.0.0.1")
+    calls = []
+
+    class FakeRobot:
+        def FT_SetConfig(self, company, device):
+            calls.append(("config", company, device))
+            return 0
+
+        def FT_SetRCS(self, reference):
+            calls.append(("rcs", reference))
+            return 0
+
+        def FT_Activate(self, state):
+            calls.append(("activate", state))
+            return 59 if state == 1 else 0
+
+        def FT_SetZero(self, state):
+            calls.append(("zero", state))
+            return 62 if state == 1 else 0
+
+    monkeypatch.setattr(service, "_call", lambda fn, **kwargs: fn(FakeRobot()))
+    monkeypatch.setattr("robot_service.time.sleep", lambda _: None)
+
+    with pytest.raises(RuntimeError, match=r"FT_Activate\(1\) failed \(code 59\)"):
+        service.ft_setup()
+
+    assert calls == [
+        ("config", 24, 0),
+        ("rcs", 0),
+        ("activate", 0),
+        ("activate", 1),
+    ]
+
+
+def test_ft_compensation_reads_payload_and_center_of_gravity_in_one_dispatch(monkeypatch):
+    service = WeldFlexRobotService("127.0.0.1")
+    call_count = 0
+
+    class RawRobot:
+        def GetForceSensorPayload(self):
+            return 0, 1.25
+
+        def GetForceSensorPayloadCog(self):
+            return 0, 12.0, -3.5, 48.0
+
+    def fake_call(fn, **_kwargs):
+        nonlocal call_count
+        call_count += 1
+        return fn(RawRobot())
+
+    monkeypatch.setattr(service, "_call", fake_call)
+
+    assert service.ft_compensation() == {
+        "payload_kg": 1.25,
+        "cog_mm": (12.0, -3.5, 48.0),
+    }
+    assert call_count == 1
+
+
+def test_ft_frame_readings_compare_raw_and_reference_fz_in_one_dispatch(monkeypatch):
+    service = WeldFlexRobotService("127.0.0.1")
+    call_count = 0
+
+    class RawRobot:
+        def FT_GetForceTorqueRCS(self, frame):
+            assert frame == 0
+            return [0, 1.0, 2.0, -3.5, 4.0, 5.0, 6.0]
+
+        def FT_GetForceTorqueOrigin(self, frame):
+            assert frame == 0
+            return [0, 1.0, 2.0, -12.7, 4.0, 5.0, 6.0]
+
+    def fake_call(fn, **_kwargs):
+        nonlocal call_count
+        call_count += 1
+        return fn(SimpleNamespace(robot=RawRobot()))
+
+    monkeypatch.setattr(service, "_call", fake_call)
+
+    assert service.ft_frame_readings() == {
+        "rcs_fz_n": -3.5,
+        "origin_fz_n": -12.7,
+    }
+    assert call_count == 1
 
 
 def test_get_universal_state_consolidates_robot_sources(monkeypatch):

@@ -74,8 +74,8 @@ live feed never overrides it.
 | Current line | 8083 `prog_cur_line` (offset 172) | Display only. **The cycle tracker does not read this** — see below. |
 | Controller fault | 8083 `main_errcode` / `sub_errcode` (412/416) | The frame reports `0` for "no fault"; `ConnSnapshot` uses `None`. Do not conflate — `get_universal_state()` normalises `0` to `None`. |
 | Connection liveness | `GetControllerIP()` raw XML-RPC | A failed transport is an XML-RPC failure, not necessarily a robot failure. Check `feed_streaming` before calling it offline. |
-| Force/torque | CNDE `FtSensorData` → `ForceSnapshot` | **Still on CNDE.** Raw `FT_GetForceTorqueRCS(0)` is an idle-only fallback; it returns code `14` for the whole time a force move owns the sensor. 8083 carries `FT_data[0..5]` at offset 179 and is decoded already, but nothing reads it yet. |
-| Lua phase/return values | `GetSysVarValue()` XML-RPC | 8083 carries no system variables, so slots 1–5/8 stay on XML-RPC permanently. They are the only window into a running Lua program. |
+| Force/torque | 8083 `FT_data[0..5]` (offset 179) | Primary source for `ft_read()` and the F/T page. The push survives controller-side force operations. CNDE `FtSensorData` is the compatibility fallback; raw `FT_GetForceTorqueRCS(0)` is idle-only and returns code `14` while a force move owns the sensor. |
+| Lua phase/return values | `GetSysVarValue()` XML-RPC | 8083 carries no system variables, so slots 1–5/8 stay on XML-RPC permanently. Weld Test and Job Manager both start the detailed sampler while a weld program runs; these values are the only window into the controller-applied press target and other Lua state. |
 | DI0/DI1 during weld test | Controller-side `GetDI()` → sysvars 6/7 → `GetSysVarValue()` | **Still on the Lua relay.** 8083 carries the DI bitmap at 176/177 and `FeedSnapshot.di(n)` decodes it, but no consumer has been switched over. |
 
 **Telemetry is observe-only.** It does not establish a safety interlock and does
@@ -94,8 +94,8 @@ is a display value and must not be used as an interlock.
 - Force is held in `ForceSnapshot`, fresh for `WELDFLEX_CNDE_FORCE_FRESH_S`
   (default `0.5` s). Stale force is unavailable, never retained as a plausible
   value.
-- Weld-test details are held in `WeldTelemetrySnapshot`, sampled at 400 ms
-  during a weld test and 1200 ms while its page is idle. A failed replacement
+- Detailed weld values are held in `WeldTelemetrySnapshot`, sampled at 250 ms
+  during a Job Manager run and 400 ms during a Weld Test. A failed replacement
   sample keeps the prior complete reading visible until it ages out; unreadable
   values stay unavailable, never zeroes.
 - Reconnects and retargets advance the XML-RPC client generation. A result from
@@ -117,19 +117,15 @@ frame that decodes implausibly rather than showing garbage. Confirmed
 
 Do not write code or docs that assume these have moved.
 
-1. **Force still comes from CNDE**, not the feed. The CNDE port is also
-   suspect: `robot_link.py` defaults to `20005`, the live `.env` sets no CNDE
-   key at all, and `20005` is the port that has never worked here. Assume force
-   may be dead in production until proven otherwise on hardware.
-2. **DI still comes from the controller-Lua → sysvar relay**, not the feed's DI
+1. **DI still comes from the controller-Lua → sysvar relay**, not the feed's DI
    bitmap.
-3. **Cycle tracking still rides XML-RPC.** `job_manager.py` reads
+2. **Cycle tracking still rides XML-RPC.** `job_manager.py` reads
    `self._robot.snapshot()` — the link's `ConnSnapshot`, filled by the XML-RPC
    heartbeat — not `get_universal_state()`. It therefore still stalls during the
    find-surface window, and it still inherits `GetCurrentLine`'s sub-file line
    semantics. The planned replacement is a DO4–DO7 rolling counter read from the
    frame's DO bitmap, which is blocked on confirming those outputs are unwired.
-4. **The XML-RPC heartbeat has not been shrunk.** It still costs three round
+3. **The XML-RPC heartbeat has not been shrunk.** It still costs three round
    trips and still doubles its rate during a run.
 
 ## Recovery Procedure

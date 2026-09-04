@@ -9,14 +9,14 @@ robot = Robot.RPC('192.168.58.2')
 
 
 def WeldparamChange(robot):
-    startdescPose = [-484.707, 276.996, -14.013, -37.657, -40.508, -1.548]
-    startjointPos = [-45.421, -75.673, 93.627, -104.302, -87.938, 6.005]
+    startdescPose = [-529.591,-77.247,204.008,-178.889,1.356,-14.668]
+    startjointPos = [-2.427,-73.309,113.912,-131.693,-91.373,102.241]
 
-    enddescPose = [-508.767, 137.109, -13.966, -37.639, -40.508, -1.559]
-    endjointPos = [-32.768, -80.947, 100.254, -106.201, -87.201, 18.648]
+    enddescPose = [-529.593,282.831,204.007,-178.890,1.357,-14.667]
+    endjointPos = [-37.804,-66.024,103.325,-128.984,-90.488,66.870]
 
-    safedescPose = [-484.709, 294.436, 13.621, -37.660, -40.508, -1.545]
-    safejointPos = [-46.604, -75.410, 89.109, -100.003, -88.012, 4.823]
+    safedescPose = [-668.674,50.127,211.698,-176.978,5.333,10.535]
+    safejointPos = [-12.938,-58.855,91.909,-129.146,-90.652,66.633]
 
     exaxisPos = [0, 0, 0, 0]
     offdese = [0, 0, 0, 0, 0, 0]
@@ -27,19 +27,19 @@ def WeldparamChange(robot):
     robot.WeldingSetVoltage(0, 25, 1, 0)  # ----设置电压
     robot.WeldingSetCurrent(0, 260, 0, 0)  # ----设置电流
 
-    robot.MoveJ(joint_pos=safejointPos, tool=1, user=0, vel=5, acc=100)
+    robot.MoveJ(joint_pos=safejointPos, tool=0, user=0, vel=5, acc=100)
     rtn = robot.WeldingSetCurrentGradualChangeStart(0, 260, 220, 0, 0)
     print("WeldingSetCurrentGradualChangeStart rtn is", rtn)
     rtn = robot.WeldingSetVoltageGradualChangeStart(0, 25, 22, 1, 0)
     print("WeldingSetVoltageGradualChangeStart rtn is", rtn)
     rtn = robot.ArcWeldTraceControl(1, 0, 1, 0.08, 5, 5, 300, 1, 0.06, 4, 4, 300, 1, 0, 4, 1, 10, 0, 0)
     print("ArcWeldTraceControl rtn is", rtn)
-    robot.MoveJ(joint_pos=startjointPos, tool=1, user=0, vel=5, acc=100)
+    robot.MoveJ(joint_pos=startjointPos, tool=0, user=0, vel=5, acc=100)
 
     robot.ARCStart(0, 0, 10000)
     robot.WeaveStart(0)
     robot.WeaveChangeStart(2, 1, 24, 36)
-    robot.MoveL(desc_pos=enddescPose, tool=1, user=0, vel=100, ovl=2, acc=100)
+    robot.MoveL(desc_pos=enddescPose, tool=0, user=0, vel=100, ovl=2, acc=100)
     robot.ARCEnd(0, 0, 10000)
     robot.WeaveChangeEnd()
     robot.WeaveEnd(0)
@@ -48,11 +48,11 @@ def WeldparamChange(robot):
     robot.WeldingSetVoltageGradualChangeEnd()
 
 
-# WeldparamChange(robot)
+WeldparamChange(robot)
 
-while True:
-    print("sub_code:",robot.robot_state_pkg.sub_code)
-    time.sleep(1)
-    #
-    # error,a=robot.GetActualJointPosDegree()
-    # print(a)
+# while True:
+#     print("sub_code:",robot.robot_state_pkg.sub_code)
+#     time.sleep(1)
+#     #
+#     # error,a=robot.GetActualJointPosDegree()
+#     # print(a)

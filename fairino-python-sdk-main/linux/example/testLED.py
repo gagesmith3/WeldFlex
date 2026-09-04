@@ -32,4 +32,5 @@ def testled(self):
     # 关闭连接
     robot.CloseRPC()
 
-testled(robot)
+
+# testled(robot)

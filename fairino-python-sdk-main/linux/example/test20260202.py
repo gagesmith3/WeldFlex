@@ -29,7 +29,7 @@ def TestInverseKinExaxis(self):
 
 
 def TestServoCart(self):
-    desc_pos_dt = [83.00800, 50.525000, 29.246, 179.629, -7.138, -166.975]
+    desc_pos_dt = [-595.734,-75.079,398.718,-124.980,0.086,90.593]
     exaxis = [100.0, 0.0, 0.0, 0.0]
     pos_gain = [0.0] * 6
     mode = 0
@@ -42,12 +42,12 @@ def TestServoCart(self):
     count = 5000
 
     robot.SetSpeed(20)
-
+    robot.MoveL(desc_pos=desc_pos_dt, tool=0, user=0, vel=100, ovl=50, acc=100)
     while count:
         rtn = robot.ServoCart(mode, desc_pos_dt, exaxis, pos_gain, acc, vel, cmdT, filterT, gain)
         print(f"ServoCart rtn is {rtn}")
         count -= 1
-        desc_pos_dt[0] += 0.01
+        desc_pos_dt[0] += 0.05
         exaxis[0] += 0.01
 
     robot.CloseRPC()

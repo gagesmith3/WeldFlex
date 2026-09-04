@@ -3,7 +3,7 @@
   <div class="ft-status-dot"></div>
   <span>
     {% if active %}
-      Sensor active · {{ 'live CNDE stream' if source == 'cnde' else 'idle XML-RPC fallback' }}{% if age_s is not none %} · {{ '%.0f'|format(age_s * 1000) }} ms old{% endif %}
+      Sensor active · {{ 'live 8083 status feed' if source == '8083' else ('live CNDE stream' if source == 'cnde' else 'idle XML-RPC fallback') }}{% if age_s is not none %} · {{ '%.0f'|format(age_s * 1000) }} ms old{% endif %}
     {% else %}
       Inactive — not configured, or robot unreachable
     {% endif %}

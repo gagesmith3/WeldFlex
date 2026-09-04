@@ -20,9 +20,10 @@ def main():
     # 循环调用ServoJV，共200次
     while cnt < 200:
         rtn = robot.ServoJV(joint_vel=joint_vel, exis_vel=exis_vel, acc=acc, vel=vel,
-                            cmdT=cmdT, filterT=filterT, gain=gain)
+                            cmdT=cmdT, filterT=filterT, gain=gain, id = 0, comType = 1)
         print(f"ServoJV rtn is {rtn}")
         cnt += 1
+        time.sleep(0.01)
 
     # 关闭连接
     robot.CloseRPC()

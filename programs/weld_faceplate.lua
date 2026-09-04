@@ -14,6 +14,7 @@ speed = 25 --{{SPEED}}
 SAFE_Z = 10.0 --{{SAFE_Z}}
 PART_Z = 0.0 --{{PART_Z}}
 PRESS_LBF = 20.0 --{{PRESS_LBF}}
+FT_SENSOR_NUM = 1 --{{FT_SENSOR_NUM}}
 STUD_TYPE = "M4" --{{STUD_TYPE}}
 SUBSTRATE = "Mild Steel" --{{SUBSTRATE}}
 ARM_MODE = "live" --{{ARM_MODE}}
@@ -41,6 +42,7 @@ for cycleIndex = 1, cycleCount do --{{LOOP_START}}
     Z_CLEARANCE = PART_Z + SAFE_Z
     WELD_PART_Z = PART_Z
     WELD_PRESS_LBF = PRESS_LBF
+    WELD_FT_SENSOR_NUM = FT_SENSOR_NUM
     WELD_STUD_TYPE = STUD_TYPE
     WELD_SUBSTRATE = SUBSTRATE
 

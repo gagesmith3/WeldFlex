@@ -1,0 +1,11 @@
+{% if ok %}
+<div class="ft-setup-status__grid">
+  <div><span>Sensor</span><strong>#{{ config.number }} · XJC {{ config.company }}/{{ config.device }}</strong></div>
+  <div><span>Payload</span><strong>{{ '%.3f'|format(compensation.payload_kg) }} kg</strong></div>
+  <div><span>Payload CoG</span><strong>X {{ '%.1f'|format(compensation.cog_mm[0]) }} · Y {{ '%.1f'|format(compensation.cog_mm[1]) }} · Z {{ '%.1f'|format(compensation.cog_mm[2]) }} mm</strong></div>
+  <div><span>Fz, reference frame</span><strong>{{ '%+.2f'|format(frames.rcs_fz_n) }} N</strong></div>
+  <div><span>Fz, raw origin</span><strong>{{ '%+.2f'|format(frames.origin_fz_n) }} N</strong></div>
+</div>
+{% else %}
+<div class="ft-setup-status__error">{{ error }}</div>
+{% endif %}

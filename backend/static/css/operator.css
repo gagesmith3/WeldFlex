@@ -4223,6 +4223,42 @@ body.kiosk .pd-part-delete-btn { opacity: 1; }
   margin-top: 14px;
 }
 
+.ft-setup-status {
+  min-height: 0;
+  margin-top: 10px;
+}
+
+.ft-setup-status__grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  font-size: 0.74rem;
+}
+
+.ft-setup-status__grid > div {
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  background: var(--bg-bottom);
+}
+
+.ft-setup-status__grid span,
+.ft-setup-status__grid strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ft-setup-status__grid span { color: var(--muted); }
+.ft-setup-status__grid strong { color: var(--text); margin-top: 2px; }
+
+.ft-setup-status__error {
+  padding: 6px 8px;
+  color: var(--danger, #dc2626);
+  font-size: 0.78rem;
+}
+
 .btn.ft-action-btn {
   background: #4f6478;
   min-height: 44px;
@@ -4261,6 +4297,7 @@ body.kiosk .pd-part-delete-btn { opacity: 1; }
   .ft-big-unit { font-size: 1.05rem; margin-left: 6px; }
   .ft-big-meter { margin-top: 8px; }
   .ft-sub { margin-top: 6px; font-size: 0.72rem; }
+  .ft-setup-status__grid { font-size: 0.66rem; }
   .ft-actions { margin-top: 10px; }
 }
 

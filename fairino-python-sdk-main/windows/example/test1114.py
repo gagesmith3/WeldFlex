@@ -6,7 +6,11 @@ from ctypes import sizeof
 robot = Robot.RPC('192.168.58.2')
 
 def TestIntersectLineMove(self):
-    robot.GetSmarttoolBtnState()
+
+    while True:
+
+        robot.GetSmarttoolBtnState()
+        sleep(200)
 
     robot.CloseRPC()
     return

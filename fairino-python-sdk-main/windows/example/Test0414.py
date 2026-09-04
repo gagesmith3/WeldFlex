@@ -9,18 +9,18 @@ robot = Robot.RPC('192.168.58.2')
 
 
 def WeldTraceControlWithCtrlBoxAI(self):
-    safetydescPose = [-504.043,275.181,40.908,-28.002,-42.025,-14.044]
-    safetyjointPos = [-39.078,-76.732,87.227,-99.47,-94.301,18.714]
+    safetydescPose = [-668.674,50.127,211.698,-176.978,5.333,10.535]
+    safetyjointPos = [-12.938,-58.855,91.909,-129.146,-90.652,66.633]
 
-    startdescPose = [-473.86,257.879,-20.849,-37.317,-42.021,2.543]
-    startjointPos = [-43.487,-76.526,95.568,-104.445,-89.356,3.72]
+    startdescPose = [-529.591,-77.247,204.008,-178.889,1.356,-14.668]
+    startjointPos = [-2.427,-73.309,113.912,-131.693,-91.373,102.241]
 
-    enddescPose = [-499.844,141.225,7.72,-34.856,-40.17,13.13]
-    endjointPos = [-31.305,-82.998,99.401,-104.426,-89.35,3.696]
+    enddescPose = [-529.593,282.831,204.007,-178.890,1.357,-14.667]
+    endjointPos = [-37.804,-66.024,103.325,-128.984,-90.488,66.870]
 
     exaxisPos = [0, 0, 0, 0]
     offdese = [0, 0, 0, 0, 0, 0]
-    robot.MoveJ(joint_pos=safetyjointPos, tool=1, user=0, vel=20, acc=100)
+    robot.MoveJ(joint_pos=safetyjointPos, tool=0, user=0, vel=20, acc=100)
 
     robot.WeldingSetCurrentRelation(0, 495, 1, 10, 0)
     robot.WeldingSetVoltageRelation(10, 45, 1, 10, 1)
@@ -36,16 +36,16 @@ def WeldTraceControlWithCtrlBoxAI(self):
     rtn = robot.ArcWeldTraceVoltagePara(1.018, 10, 0, 50)
     print("ArcWeldTraceVoltagePara rtn is", rtn)
 
-    robot.MoveJ(joint_pos=startjointPos, tool=1, user=0, vel=20, acc=100)
+    robot.MoveJ(joint_pos=startjointPos, tool=0, user=0, vel=20, acc=100)
     robot.ArcWeldTraceControl(1, 0, 1, 0.08, 5, 5, 300, 1, 0.06, 4, 4, 300, 1, 0, 4, 1, 10, 0, 0)
     robot.ARCStart(0, 0, 10000)
     robot.WeaveStart(0)
-    robot.MoveL(desc_pos=enddescPose, tool=1, user=0, vel=100, ovl= 2, acc=100)
+    robot.MoveL(desc_pos=enddescPose, tool=0, user=0, vel=100, ovl= 2, acc=100)
     robot.ARCEnd(0, 0, 10000)
     robot.WeaveEnd(0)
     robot.ArcWeldTraceControl(0, 0, 1, 0.08, 5, 5, 300, 1, 0.06, 4, 4, 300, 1, 0, 4, 1, 10, 0, 0)
 
-    robot.MoveJ(joint_pos=safetyjointPos, tool=1, user=0, vel=20, acc=100)
+    robot.MoveJ(joint_pos=safetyjointPos, tool=0, user=0, vel=20, acc=100)
 
 
 WeldTraceControlWithCtrlBoxAI(robot)

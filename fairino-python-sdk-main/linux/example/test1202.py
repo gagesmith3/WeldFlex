@@ -10,7 +10,7 @@ import time
 
 
 def TestFTControlWithAdjustCoeff(self):
-    sensor_id = 10
+    sensor_id = 1
     select = [0, 0, 1, 0, 0, 0]
     ft_pid = [0.0008, 0.0, 0.0, 0.0, 0.0, 0.0]
     adj_sign = 0
@@ -23,8 +23,8 @@ def TestFTControlWithAdjustCoeff(self):
 
     j1 = [80.765, -98.795, 106.548, -97.734, -89.999, 94.842]
     j2 = [43.067, -84.429, 92.620, -98.175, -90.011, 57.144]
-    desc_p1 = [5.009, -547.463, 262.053, -179.999, -0.019, 75.923]
-    desc_p2 = [-347.966, -547.463, 262.048, -180.000, -0.019, 75.923]
+    desc_p1 = [-347.968,-547.463,262.046,180.000,-0.019,75.923]
+    desc_p2 = [16.807,-519.946,273.415,179.196,-2.552,105.301]
     offset_pos = [0.0] * 6
 
     M = [2.0, 2.0]
@@ -43,8 +43,8 @@ def TestFTControlWithAdjustCoeff(self):
                                adjustCoeff, 0, 0, 1, 0)
         print(f"FT_Control start rtn is {rtn}")
 
-        rtn = robot.MoveL(desc_pos=desc_p1, tool=1, user=0, vel=100, acc=100, ovl=100, blendR=-1, blendMode = 0, exaxis_pos=epos, search=0, offset_flag=0, offset_pos=offset_pos)
-        rtn = robot.MoveL(desc_pos=desc_p2, tool=1, user=0, vel=100, acc=100, ovl=100, blendR=-1, blendMode = 0, exaxis_pos=epos, search=0, offset_flag=0, offset_pos=offset_pos)
+        rtn = robot.MoveL(desc_pos=desc_p1, tool=0, user=0, vel=100, acc=100, ovl=100, blendR=-1, blendMode = 0, exaxis_pos=epos, search=0, offset_flag=0, offset_pos=offset_pos)
+        rtn = robot.MoveL(desc_pos=desc_p2, tool=0, user=0, vel=100, acc=100, ovl=100, blendR=-1, blendMode = 0, exaxis_pos=epos, search=0, offset_flag=0, offset_pos=offset_pos)
 
         rtn = robot.FT_Control(0, sensor_id, select, ft, ft_pid, adj_sign, ILC_sign, max_dis, max_ang, M, B, threshold,
                                adjustCoeff, 0, 0, 1, 0)
@@ -54,7 +54,7 @@ def TestFTControlWithAdjustCoeff(self):
     return 0
 
 def move(self):
-    sensor_id = 10
+    sensor_id = 1
     select = [0, 0, 1, 0, 0, 0]
     ft_pid = [0.0008, 0.0, 0.0, 0.0, 0.0, 0.0]
     adj_sign = 0

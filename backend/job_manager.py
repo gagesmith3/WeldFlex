@@ -6,8 +6,8 @@ and this is the third concern — *what job are we running*. It calls into
 routes are thin adapters over `JobManager`.
 
 Cycle progress is driven by a monitor thread, not by browser polling, so a job
-keeps advancing with the kiosk tab closed. The thread reads only the link's
-cached snapshot — it issues no robot I/O of its own.
+keeps advancing with the kiosk tab closed. The thread reads the robot service's
+cached, 8083-first observation snapshot — it issues no robot I/O of its own.
 
 Two rules the concurrency here depends on:
 
@@ -214,6 +214,7 @@ class JobSnapshot:
     stud_count: int = 0
     cycles_target: int = 0
     cycles_done: int = 0
+    pressure_setting: str | None = None
     started_at: str | None = None
     ended_at: str | None = None
     error: str | None = None
@@ -590,6 +591,7 @@ class JobManager:
             stud_count=len(sess.studs),
             cycles_target=sess.cycles_target,
             cycles_done=sess.cycles_done,
+            pressure_setting=sess.pressure_setting,
             started_at=sess.started_at,
             ended_at=sess.ended_at,
             error=sess.error,
@@ -627,6 +629,17 @@ class JobManager:
                 dsc_enabled = sess.dsc_enabled
                 stud_reload_ms = sess.stud_reload_ms
 
+            ft_config = self._robot.ft_config()
+            if ft_config.get("company") != 24 or ft_config.get("device") != 0:
+                raise JobError(
+                    "Force sensor configuration is not XJC device 24/0; initialize the force sensor before running"
+                )
+            ft_sensor_num = ft_config.get("number")
+            if not isinstance(ft_sensor_num, int) or not 1 <= ft_sensor_num <= 255:
+                raise JobError(
+                    f"Force sensor reported an invalid controller number: {ft_sensor_num!r}"
+                )
+
             if kind == "faceplate":
                 if not studs:
                     raise JobError("Faceplate job has no target point set")
@@ -639,6 +652,7 @@ class JobManager:
                     safe_z=safe_z,
                     part_z=part_z,
                     pressure_setting=pressure_setting,
+                    ft_sensor_num=ft_sensor_num,
                     stud_type=stud_type,
                     substrate=substrate,
                     speed=speed,
@@ -653,6 +667,7 @@ class JobManager:
                     retract_z=retract_z,
                     part_z=part_z,
                     pressure_setting=pressure_setting,
+                    ft_sensor_num=ft_sensor_num,
                     stud_type=stud_type,
                     substrate=substrate,
                     speed=speed,
@@ -677,6 +692,7 @@ class JobManager:
                 except OSError:
                     pass
 
+            self._robot.start_job_telemetry()
             self._robot.run_program(uploaded)
 
             with self._lock:
@@ -735,7 +751,11 @@ class JobManager:
 
     def _monitor_body(self, run_id: str) -> None:
         while not self._stop.is_set():
-            snap = self._robot.snapshot()
+            # Force operations make the controller temporarily stop answering
+            # XML-RPC, but the 8083 status feed continues reporting program
+            # state, current line, and faults. Commands still use XML-RPC; this
+            # monitor only observes through the service's consolidated cache.
+            snap = self._robot.get_universal_state()
             program_state = self._program_state(snap)
             events: list[tuple[str, dict]] = []
             with self._lock:
@@ -957,6 +977,7 @@ class JobManager:
             }
             snap = self._snapshot_locked()
 
+        self._robot.stop_job_telemetry()
         log.info("job %s run_id=%s cycles=%d/%d error=%s",
                  status, run_id, record["cycles_done"], record["cycles_target"], error)
         self._event(run_id, status, {"error": error, "cycles_done": record["cycles_done"]})

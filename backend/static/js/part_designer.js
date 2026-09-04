@@ -554,6 +554,15 @@ function syncUnitsControl() {
 }
 
 function pdSetUnits(units) {
+  const prevFactor = lengthFactor();
+  const mSafeZ = document.getElementById('pd-modal-safe-z');
+  const mRetractZ = document.getElementById('pd-modal-retract-z');
+  const mPartZ = document.getElementById('pd-modal-part-z');
+  // Read the modal's current (unsaved) values in the old units before switching, so edits aren't lost.
+  const safeZMm = mSafeZ && mSafeZ.value !== '' ? parseFloat(mSafeZ.value) * prevFactor : undefined;
+  const retractZMm = mRetractZ && mRetractZ.value !== '' ? parseFloat(mRetractZ.value) * prevFactor : undefined;
+  const partZMm = mPartZ && mPartZ.value !== '' ? parseFloat(mPartZ.value) * prevFactor : undefined;
+
   _state.units = units === 'in' ? 'in' : 'mm';
   buildGrid();
   renderPoints();
@@ -561,7 +570,24 @@ function pdSetUnits(units) {
   const selected = _state.points.find(point => point.id === _state.selectedPoint);
   setCoords(selected || null);
   syncUnitsControl();
+  pdRefreshModalLengthFields(safeZMm, retractZMm, partZMm);
   pdSetDirty(true);
+}
+
+// Re-displays the Job Settings modal's Z-height fields in the newly selected units.
+// Accepts optional mm overrides (the modal's own unsaved values) so an in-progress edit isn't lost.
+function pdRefreshModalLengthFields(safeZMmOverride, retractZMmOverride, partZMmOverride) {
+  const safeZ = safeZMmOverride !== undefined ? safeZMmOverride : (_state.safe_z !== undefined ? _state.safe_z : 60.0);
+  const retractZ = retractZMmOverride !== undefined ? retractZMmOverride : (_state.retract_z !== undefined ? _state.retract_z : 10.0);
+  const partZ = partZMmOverride !== undefined ? partZMmOverride : (_state.part_z !== undefined ? _state.part_z : 0.0);
+
+  const mSafeZ = document.getElementById('pd-modal-safe-z');
+  const mRetractZ = document.getElementById('pd-modal-retract-z');
+  const mPartZ = document.getElementById('pd-modal-part-z');
+
+  if (mSafeZ) { mSafeZ.value = formatLength(safeZ); mSafeZ.step = lengthStep(); }
+  if (mRetractZ) { mRetractZ.value = formatLength(retractZ); mRetractZ.step = lengthStep(); }
+  if (mPartZ) { mPartZ.value = formatLength(partZ); mPartZ.step = lengthStep(); }
 }
 
 // ── Stud list ─────────────────────────────────────────────────────────────────

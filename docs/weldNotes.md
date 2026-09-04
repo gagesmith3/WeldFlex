@@ -19,7 +19,7 @@ The sequence moves through 6 distinct phases:
   mechanical reload continues during the following stud-to-stud move.
 
 > [!IMPORTANT]
-> Any phase unable to reach its required condition retracts to safe Z, ensures `DO0` is off, drops force overlays, and raises a Lua error (`error()`).
+> Any phase unable to reach its required condition retracts to safe Z, ensures `DO0` is off, drops force overlays, sets `WELD_FAULT`, and returns control to the parent program.
 
 ---
 
@@ -71,7 +71,7 @@ After a fault, the program parks ~3s on a unique `WaitMs` line site (`1`, `4`, `
 ### Optional Globals:
 - `WELD_ARMED`: `1` fires `DO0` for real. Any other value (or unset) suppresses the weld pulse while search, press, hold, retract, and feeder advance still run.
 - `WELD_FORCE_TEST`: `1` = force verification mode. Ignores `DI1` check failure (reports only), stretches hold to 5000 ms, ends after retract, forces `DO0` off.
-- `WELD_PRESS_LBF`: Press target in lbf, overriding 20.0 lbf default (clamped up to `PRESS_TARGET_MAX_LBF = 25.0 lbf`).
+- `WELD_PRESS_LBF`: Press target in lbf, overriding 20.0 lbf default (clamped up to `PRESS_TARGET_MAX_LBF = 22.0 lbf` / 97.9 N), keeping `FT_LinInsertion` below its documented 100 N threshold limit.
 - `WELD_FEED_PULSE_MS`: Feeder trigger duration in ms, provided by the
   generated parent program. Values outside 1-10000 ms use the 250 ms default.
 

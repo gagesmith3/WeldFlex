@@ -8,9 +8,9 @@ import time
 
 
 def testLaserConfig(self):
-    robot.LaserTrackingSensorConfig("192.168.58.20", 5020)
+    robot.LaserTrackingSensorConfig("192.168.58.120", 502)
     robot.LaserTrackingSensorSamplePeriod(20)
-    robot.LoadPosSensorDriver(101)
+    robot.LoadPosSensorDriver(103)
     robot.LaserTrackingLaserOnOff(0, 0)
     time.sleep(3)
     robot.LaserTrackingLaserOnOff(1, 0)
@@ -118,25 +118,25 @@ def testLasertrack_point(self):
 
 
 def testLaserRecordAndReplay(self):
-    robot.OpenLuaUpload("D://zUP/CtrlDev_laser_ruiniu-0117.lua")
-    time.sleep(2)
-    robot.SetCtrlOpenLUAName(0, "CtrlDev_laser_ruiniu-0117.lua")
-    robot.UnloadCtrlOpenLUA(0)
-    robot.LoadCtrlOpenLUA(0)
-    time.sleep(8)
+    # robot.OpenLuaUpload("D://zUP/CtrlDev_laser_ruiniu-0117.lua")
+    # time.sleep(2)
+    # robot.SetCtrlOpenLUAName(0, "CtrlDev_laser_ruiniu-0117.lua")
+    # robot.UnloadCtrlOpenLUA(0)
+    # robot.LoadCtrlOpenLUA(0)
+    # time.sleep(8)
     i = 0
 
     while i<1:
-        startjointPos = [72.99,-88.919,118.547,-121.577,-86.819,-22.073]
-        startdescPose = [-21.007,-479.198,59.807,-176.997,2.215,-174.825]
+        startjointPos = [58.830, -92.757, 86.939, -81.135, -90.548, 26.358]
+        startdescPose = [-74.319, -312.541, 39.168, 177.512, -1.843, 122.527]
         exaxisPos = [0.0] * 4
         offdese = [0.0] * 6
         robot.MoveL(desc_pos=startdescPose,tool= 1,user= 0,vel= 100,acc= 100,ovl= 100,blendR= -1,exaxis_pos= exaxisPos,search= 0,offset_flag= 0, offset_pos= offdese,overSpeedStrategy= 1,speedPercent= 1)
 
         robot.LaserSensorRecord1(2, 10)
 
-        endjointPos = [56.544, -81.138, 108.869, -116.822, -87.375, -30.364]
-        enddescPose = [-184.659, -491.569, 60.888, -179.457, 2.724, 176.899]
+        endjointPos = [76.229, -78.219, 71.540, -82.615, -88.277, 42.332]
+        enddescPose = [17.298, -408.461, 40.967, 178.317, 0.798, 123.875]
         robot.MoveL(desc_pos=enddescPose,tool= 1,user= 0,vel= 50,acc= 100,ovl= 100,blendR= -1,exaxis_pos= exaxisPos,search= 0,offset_flag= 0, offset_pos= offdese,overSpeedStrategy= 1,speedPercent= 1)
 
         robot.LaserSensorRecord1(0, 10)
@@ -150,34 +150,34 @@ def testLaserRecordAndReplay(self):
 
 
 def testLasertrack(self):
-    robot.OpenLuaUpload("D://zUP/CtrlDev_laser_ruiniu-0117.lua")
-    time.sleep(2)
-    robot.SetCtrlOpenLUAName(0, "CtrlDev_laser_ruiniu-0117.lua")
-    robot.UnloadCtrlOpenLUA(0)
-    robot.LoadCtrlOpenLUA(0)
-    time.sleep(8)
+    # robot.OpenLuaUpload("D://zUP/CtrlDev_laser_ruiniu-0117.lua")
+    # time.sleep(2)
+    # robot.SetCtrlOpenLUAName(0, "CtrlDev_laser_ruiniu-0117.lua")
+    # robot.UnloadCtrlOpenLUA(0)
+    # robot.LoadCtrlOpenLUA(0)
+    # time.sleep(8)
 
     time.sleep(8)
     i = 0
 
     while i < 1:
-        startjointPos = [72.99,-88.919,118.547,-121.577,-86.819,-22.073]
-        startdescPose = [-21.007,-479.198,59.807,-176.997,2.215,-174.825]
+        startjointPos = [58.830, -92.757, 86.939, -81.135, -90.548, 26.358]
+        startdescPose = [-74.319, -312.541, 39.168, 177.512, -1.843, 122.527]
         exaxisPos = [0.0] * 4
         offdese = [0.0] * 6
         directionPoint = [0.0] * 3
         robot.MoveL(desc_pos=startdescPose,tool= 1,user= 0,vel= 100,acc= 100,ovl= 100,blendR= -1,exaxis_pos= exaxisPos,search= 0,offset_flag= 0, offset_pos= offdese,overSpeedStrategy= 1,speedPercent= 1)
 
-        robot.LaserTrackingSearchStart_xyz(1, 100, 300, 1000, 2)
+        robot.LaserTrackingSearchStart_xyz(0, 100, 300, 1000, 2)
         robot.LaserTrackingSearchStop()
         robot.MoveToLaserSeamPos(1, 30, 0, 0, 0, offdese)
 
-        robot.LaserTrackingTrackOnOff(1, 3)
-        endjointPos = [56.544,-81.138,108.869,-116.822,-87.375,-30.364]
-        enddescPose = [-184.659,-491.569,60.888,-179.457,2.724,176.899]
+        robot.LaserTrackingTrackOnOff(1, 2)
+        endjointPos = [76.229, -78.219, 71.540, -82.615, -88.277, 42.332]
+        enddescPose = [17.298, -408.461, 40.967, 178.317, 0.798, 123.875]
         robot.MoveL(desc_pos=enddescPose,tool= 1,user= 0,vel= 20,acc= 100,ovl= 100,blendR= -1,exaxis_pos= exaxisPos,search= 0,offset_flag= 0, offset_pos= offdese,overSpeedStrategy= 1,speedPercent= 1)
 
-        robot.LaserTrackingTrackOnOff(0, 3)
+        robot.LaserTrackingTrackOnOff(0, 2)
         i = i + 1
         print(i)
     # robot.CloseRPC()
@@ -201,5 +201,5 @@ def testLasertrack(self):
 # robot.CloseRPC()
 
 
-rtn = robot.ResetAllError()
-print(rtn)
+# rtn = robot.ResetAllError()
+# print(rtn)

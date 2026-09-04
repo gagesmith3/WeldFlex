@@ -36,45 +36,89 @@
         "y": 247.015
       }
     ],
-    "safe_z": 75.3999,
+    "safe_z": 76.19999999999999,
     "part_z": 63.5,
     "stud_type": "1/4\"",
     "substrate": "Mild Steel",
     "pressure_setting": 20.0,
     "created_at": "2026-06-24T14:32:50.743941+00:00",
-    "updated_at": "2026-09-01T19:07:10.792752+00:00",
+    "updated_at": "2026-09-03T13:40:50.334729+00:00",
     "times_ran": 34,
     "avg_cycle_time": 20.05,
     "last_run": "2026-09-01T11:51:12",
     "pause_points": [],
     "arm_mode": "dry",
     "units": "in",
-    "speed": null,
-    "retract_z": 25.4
+    "speed": 25,
+    "retract_z": 25.4,
+    "dsc_enabled": false,
+    "stud_reload_ms": 600
   },
   {
     "id": "8732e869-91a7-4478-a9ca-f9dcd643dfe6",
-    "name": "single",
+    "name": "line",
     "studs": [
       {
-        "x": 381,
+        "x": 228.6,
+        "y": 279.4
+      },
+      {
+        "x": 254,
+        "y": 279.4
+      },
+      {
+        "x": 279.4,
+        "y": 279.4
+      },
+      {
+        "x": 304.79999999999995,
+        "y": 279.4
+      },
+      {
+        "x": 330.2,
+        "y": 279.4
+      },
+      {
+        "x": 355.59999999999997,
+        "y": 279.4
+      },
+      {
+        "x": 228.6,
+        "y": 304.79999999999995
+      },
+      {
+        "x": 228.6,
+        "y": 330.2
+      },
+      {
+        "x": 228.6,
+        "y": 355.59999999999997
+      },
+      {
+        "x": 228.6,
         "y": 381
+      },
+      {
+        "x": 228.6,
+        "y": 406.4
       }
     ],
-    "safe_z": 100.7999,
-    "part_z": 50.8,
+    "safe_z": 101.6,
+    "part_z": 5.08,
     "stud_type": "1/4\"",
     "substrate": "Mild Steel",
     "pressure_setting": 20.0,
     "created_at": "2026-07-28T17:04:11.455564+00:00",
-    "updated_at": "2026-09-01T19:51:34.748106+00:00",
-    "times_ran": 15,
-    "avg_cycle_time": 7.11,
-    "last_run": "2026-09-01T15:51:48",
+    "updated_at": "2026-09-04T13:42:47.751704+00:00",
+    "times_ran": 25,
+    "avg_cycle_time": 11.36,
+    "last_run": "2026-09-04T09:43:47",
     "pause_points": [],
     "units": "in",
-    "speed": null,
-    "retract_z": 50.8
+    "speed": 25,
+    "retract_z": 25.4,
+    "dsc_enabled": false,
+    "stud_reload_ms": 600
   },
   {
     "id": "bfa39447-7215-4321-80ee-4ca10ac375c6",
@@ -103,78 +147,66 @@
     "studs": [
       {
         "x": 203.2,
-        "y": 90.16999999999999
+        "y": 88.89999999999999
       },
       {
         "x": 558.8,
-        "y": 90.16999999999999
+        "y": 88.89999999999999
       },
       {
         "x": 558.8,
-        "y": 62.230000000000004
+        "y": 63.5
       },
       {
         "x": 533.4,
-        "y": 62.230000000000004
+        "y": 63.5
       },
       {
         "x": 203.2,
-        "y": 62.230000000000004
+        "y": 63.5
       }
     ],
     "safe_z": 75.3999,
     "part_z": 63.5,
     "units": "in",
-    "stud_type": "1/4\"",
+    "stud_type": "#8",
     "substrate": "Mild Steel",
     "pressure_setting": 20.0,
     "speed": 100,
     "created_at": "2026-09-01T15:47:55.905145+00:00",
-    "updated_at": "2026-09-02T17:08:49.351690+00:00",
-    "times_ran": 8,
-    "avg_cycle_time": 24.09,
-    "last_run": "2026-09-02T13:09:15",
+    "updated_at": "2026-09-03T17:33:14.420975+00:00",
+    "times_ran": 9,
+    "avg_cycle_time": 23.7,
+    "last_run": "2026-09-03T13:33:57",
     "pause_points": [],
     "retract_z": 6.35,
     "dsc_enabled": true,
     "stud_reload_ms": 600
   },
   {
-    "id": "1ddfe75e-9fa0-47d9-abee-136b3d163bcc",
-    "name": "mini2",
+    "id": "1826eac7-0ea7-44a2-85d6-ebd4dd2dc95c",
+    "name": "single",
     "studs": [
       {
-        "x": 76.19999999999999,
-        "y": 90.16999999999999
-      },
-      {
-        "x": 558.8,
-        "y": 90.16999999999999
-      },
-      {
-        "x": 533.4,
-        "y": 90.16999999999999
-      },
-      {
         "x": 228.6,
-        "y": 90.16999999999999
+        "y": 406.4
       }
     ],
-    "safe_z": 75.3999,
-    "retract_z": 6.35,
-    "part_z": 63.5,
+    "safe_z": 101.6,
+    "retract_z": 25.4,
+    "part_z": 5.08,
     "units": "in",
     "stud_type": "1/4\"",
     "substrate": "Mild Steel",
     "pressure_setting": 20.0,
-    "speed": 100,
-    "dsc_enabled": true,
+    "speed": 25,
+    "dsc_enabled": false,
     "stud_reload_ms": 600,
-    "created_at": "2026-09-02T16:49:26.769011+00:00",
-    "updated_at": "2026-09-02T16:52:37.371763+00:00",
+    "created_at": "2026-09-04T13:51:58.893739+00:00",
+    "updated_at": "2026-09-04T16:36:15.460237+00:00",
     "times_ran": 0,
     "avg_cycle_time": null,
-    "last_run": null,
+    "last_run": "2026-09-04T12:36:39",
     "pause_points": []
   }
 ]

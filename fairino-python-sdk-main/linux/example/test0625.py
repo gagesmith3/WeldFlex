@@ -60,4 +60,4 @@ def TestServoJ(self):
         print(f"GetActualJointPosDegree errcode:{ret}")
 
 
-# TestWideVoltageCtrlBoxtemp(robot)
+TestWideVoltageCtrlBoxtemp(robot)

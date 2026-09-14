@@ -37,6 +37,7 @@ from typing import Any, Callable, Sequence
 
 from lua_builder import (
     ARM_MODES,
+    WELDER_PROFILES,
     GATE_MODES,
     PROGRAM_NAME,
     WELD_PATH,
@@ -211,6 +212,7 @@ class JobSnapshot:
     program: str = PROGRAM_NAME
     gate_mode: str = "pause"
     arm_mode: str = "live"
+    welder_profile: str = "atlas"
     stud_count: int = 0
     cycles_target: int = 0
     cycles_done: int = 0
@@ -265,6 +267,10 @@ class _Session:
     program: str = PROGRAM_NAME
     gate_mode: str = "pause"
     arm_mode: str = "live"
+    welder_profile: str = "atlas"
+    liberty_commissioning: bool = False
+    weld_trigger_do: int = 0
+    weld_trigger_pulse_ms: int = 250
     cycles_target: int = 0
     safe_z: float = 60.0
     retract_z: float = 10.0
@@ -337,6 +343,10 @@ class JobManager:
         cycles: int,
         gate_mode: str = "pause",
         arm_mode: str = "live",
+        welder_profile: str = "atlas",
+        liberty_commissioning: bool = False,
+        weld_trigger_do: int = 0,
+        weld_trigger_pulse_ms: int = 250,
         safe_z: float = 60.0,
         retract_z: float = 10.0,
         part_z: float = 0.0,
@@ -360,6 +370,23 @@ class JobManager:
             raise JobError(f"Unknown gate mode {gate_mode!r}")
         if arm_mode not in ARM_MODES:
             raise JobError(f"Unknown arm mode {arm_mode!r}")
+        if welder_profile not in WELDER_PROFILES:
+            raise JobError(f"Unknown welder profile {welder_profile!r}")
+        if liberty_commissioning and (welder_profile != "liberty" or arm_mode != "live"):
+            raise JobError("Liberty commissioning requires the live Liberty profile")
+        if welder_profile == "liberty" and arm_mode != "dry" and not liberty_commissioning:
+            raise JobError(
+                "The LYNX Liberty profile is dry-run only until its live weld interlocks are commissioned"
+            )
+        try:
+            weld_trigger_do = int(weld_trigger_do)
+            weld_trigger_pulse_ms = int(weld_trigger_pulse_ms)
+        except (TypeError, ValueError):
+            raise JobError("Liberty trigger output and pulse duration must be integers") from None
+        if not 0 <= weld_trigger_do <= 15:
+            raise JobError("Liberty trigger output must be DO0 through DO15")
+        if not 1 <= weld_trigger_pulse_ms <= 1_000:
+            raise JobError("Liberty trigger pulse duration must be 1 through 1000 ms")
         cycles = max(1, int(cycles))
         with self._lock:
             state = self._state_locked()
@@ -375,6 +402,10 @@ class JobManager:
                 studs=list(studs),
                 gate_mode=gate_mode,
                 arm_mode=arm_mode,
+                welder_profile=welder_profile,
+                liberty_commissioning=bool(liberty_commissioning),
+                weld_trigger_do=weld_trigger_do,
+                weld_trigger_pulse_ms=weld_trigger_pulse_ms,
                 cycles_target=cycles,
                 safe_z=float(safe_z),
                 retract_z=float(retract_z),
@@ -387,11 +418,16 @@ class JobManager:
                 stud_reload_ms=stud_reload_ms,
             )
             snap = self._snapshot_locked()
-        log.info("job loaded run_id=%s part=%r cycles=%d gate=%s arm=%s studs=%d",
-                 run_id, part_name, cycles, gate_mode, arm_mode, len(studs))
+        log.info("job loaded run_id=%s part=%r cycles=%d gate=%s arm=%s welder=%s commissioning=%s studs=%d",
+                 run_id, part_name, cycles, gate_mode, arm_mode, welder_profile,
+                 liberty_commissioning, len(studs))
         self._event(run_id, "load", {"part_id": part_id, "part_name": part_name,
                                      "cycles": cycles, "gate_mode": gate_mode,
-                                     "arm_mode": arm_mode, "studs": len(studs)})
+                         "arm_mode": arm_mode, "welder_profile": welder_profile,
+                                     "liberty_commissioning": bool(liberty_commissioning),
+                                     "weld_trigger_do": weld_trigger_do,
+                                     "weld_trigger_pulse_ms": weld_trigger_pulse_ms,
+                         "studs": len(studs)})
         return snap
 
     def start(self) -> JobSnapshot:
@@ -588,6 +624,7 @@ class JobManager:
             program=sess.program,
             gate_mode=sess.gate_mode,
             arm_mode=sess.arm_mode,
+            welder_profile=sess.welder_profile,
             stud_count=len(sess.studs),
             cycles_target=sess.cycles_target,
             cycles_done=sess.cycles_done,
@@ -619,6 +656,10 @@ class JobManager:
                 cycles = sess.cycles_target
                 gate_mode = sess.gate_mode
                 arm_mode = sess.arm_mode
+                welder_profile = sess.welder_profile
+                liberty_commissioning = sess.liberty_commissioning
+                weld_trigger_do = sess.weld_trigger_do
+                weld_trigger_pulse_ms = sess.weld_trigger_pulse_ms
                 safe_z = sess.safe_z
                 retract_z = sess.retract_z
                 part_z = sess.part_z
@@ -663,6 +704,10 @@ class JobManager:
                     cycles,
                     gate_mode=gate_mode,
                     arm_mode=arm_mode,
+                    welder_profile=welder_profile,
+                    liberty_commissioning=liberty_commissioning,
+                    weld_trigger_do=weld_trigger_do,
+                    weld_trigger_pulse_ms=weld_trigger_pulse_ms,
                     safe_z=safe_z,
                     retract_z=retract_z,
                     part_z=part_z,
@@ -959,7 +1004,13 @@ class JobManager:
                 "part_id": sess.part_id,
                 "part_name": sess.part_name,
                 "program": sess.program,
+                "kind": sess.kind,
                 "gate_mode": sess.gate_mode,
+                "arm_mode": sess.arm_mode,
+                "welder_profile": sess.welder_profile,
+                "liberty_commissioning": sess.liberty_commissioning,
+                "weld_trigger_do": sess.weld_trigger_do,
+                "weld_trigger_pulse_ms": sess.weld_trigger_pulse_ms,
                 "stud_count": len(sess.studs),
                 "cycles_target": sess.cycles_target,
                 "cycles_done": sess.cycles_done,

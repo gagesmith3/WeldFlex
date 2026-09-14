@@ -43,7 +43,7 @@ both moved out of `robot_service.py` when the connection layer was split into
 `robot_link.py` — older notes pointing at `robot_service.py` are stale.)
 
 ```python
-# robot_link.py:47-49
+# robot_link.py, module scope — before the SDK import
 for _stream in (sys.stdout, sys.stderr):
     if isinstance(_stream, io.TextIOWrapper):
         _stream.reconfigure(encoding="utf-8", errors="replace")
@@ -71,10 +71,14 @@ now-redundant `ExecStartPre` `sed` has since been deleted from
 the SDK is ever re-vendored from a fresh upstream drop, re-check this line** —
 there is no longer a deploy-time safety net that would silently fix it.
 
-**CNDE is being retired.** The port-8083 status push replaced it for program
-state, line and fault codes on 2026-08-03; force is the last signal still on it,
-and once that moves, none of the above matters at run time — though the
-re-vendoring warning stands as long as the patched `Robot.py` is in the tree.
+**CNDE has been retired as a source.** The port-8083 status push replaced it for
+program state, line and fault codes on 2026-08-03, and **force moved too** —
+`robot_service.ft_read()` reads the 8083 frame first and keeps CNDE only as a
+fallback beneath it. So none of the connect-gate history above matters at run
+time any more, but the re-vendoring warning stands as long as the patched
+`Robot.py` is in the tree: a fresh upstream drop that restores
+`if cnde_ok and xmlrpc_ok:` makes **every** connection report `-4`, which is a
+command-channel failure, not a force one.
 The new feed is not part of the SDK at all (`backend/robot_feed.py` owns its own
 socket), so it needs no vendored patch and has no port ambiguity. Deploy
 consequence: `WELDFLEX_STATUS_PORT` and `WELDFLEX_FEED_STALE_S` belong in every

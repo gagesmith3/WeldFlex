@@ -1,9 +1,22 @@
 import threading
 import time
+import xmlrpc.client
 from types import SimpleNamespace
+from xmlrpc.server import SimpleXMLRPCServer
+
+import pytest
 
 from robot_feed import FeedSnapshot, FeedStats
-from robot_link import CNDE_PERIOD_MS, CNDE_PORT, ConnState, RobotLink, _ClientHandle, _SdkWorker
+from robot_link import (
+    CNDE_PERIOD_MS,
+    CNDE_PORT,
+    ConnState,
+    RobotLink,
+    RobotUnreachable,
+    _ClientHandle,
+    _SdkWorker,
+    _TimeoutTransport,
+)
 from robot_service import WeldFlexRobotService
 
 
@@ -11,15 +24,18 @@ def test_weld_probe_uses_short_timeout_for_live_telemetry(monkeypatch):
     service = WeldFlexRobotService("127.0.0.1")
     calls = []
 
-    def fake_call(fn, timeout=5.0, retries=3, priority=0, coalesce_key=None):
-        calls.append((timeout, retries, priority, coalesce_key))
-        return [], None
+    def fake_call(fn, timeout=5.0, retries=3, priority=0, coalesce_key=None, rpc_timeout=None):
+        calls.append((timeout, retries, priority, coalesce_key, rpc_timeout))
+        return 0, 1
 
     monkeypatch.setattr(service, "_call", fake_call)
 
     service.weld_probe(stud_di=1, ready_di=0, sysvar_slots=(1, 2))
 
-    assert calls == [(3.0, 1, 2, "weld-detail")]
+    assert calls == [
+        (0.75, 1, 2, "weld-sysvar:1", 0.5),
+        (0.75, 1, 2, "weld-sysvar:2", 0.5),
+    ]
 
 
 def test_sdk_worker_prioritizes_core_probe_over_queued_detail_telemetry():
@@ -279,15 +295,18 @@ def test_malformed_raw_fault_reply_does_not_disable_future_samples():
 
 def test_read_program_state_and_fault_codes_prefer_cnde_stream():
     link = RobotLink("127.0.0.1")
-    cnde = SimpleNamespace(_robot_state_run_flag=True)
-    pkg = SimpleNamespace(program_state=2, main_code=102, sub_code=4)
-    client = SimpleNamespace(_cnde_client=cnde, robot_state_pkg=pkg)
+    cnde = _LiveCnde()
+    try:
+        pkg = SimpleNamespace(program_state=2, main_code=102, sub_code=4)
+        client = SimpleNamespace(_cnde_client=cnde, robot_state_pkg=pkg)
 
-    state, st_src = link._read_program_state(client)
-    main, sub, flt_src = link._read_fault_codes(client)
+        state, st_src = link._read_program_state(client)
+        main, sub, flt_src = link._read_fault_codes(client)
 
-    assert (state, st_src) == (2, "cnde")
-    assert (main, sub, flt_src) == (102, 4, "cnde")
+        assert (state, st_src) == (2, "cnde")
+        assert (main, sub, flt_src) == (102, 4, "cnde")
+    finally:
+        cnde.stop()
 
 
 class _FakeFeed:
@@ -393,3 +412,198 @@ def test_call_retries_transient_error_without_invalidating_generation():
     assert attempt_counter[0] == 2
     assert link._handle is handle  # Handle was NOT invalidated on attempt 1
 
+
+
+class _LiveCnde:
+    """A CNDE client whose receiver thread is running."""
+
+    def __init__(self):
+        self._robot_state_run_flag = True
+        self._stop = threading.Event()
+        self._recv_thread = threading.Thread(target=self._stop.wait, daemon=True)
+        self._recv_thread.start()
+
+    def stop(self):
+        """Break out of the recv loop the way Robot.py:1826-1833 does.
+
+        Note what it does *not* do: clear `_robot_state_run_flag`, or null
+        `_tcp_socket`. Both stay truthy over the dead stream.
+        """
+        self._stop.set()
+        self._recv_thread.join(timeout=1.0)
+
+
+class _DeadProxy:
+    """Every call fails at the transport — the link itself is gone."""
+
+    def __call__(self, attribute):
+        assert attribute == "transport"
+        return _TimeoutTransport(12.0)
+
+    def __getattr__(self, name):
+        def call(*args, **kwargs):
+            raise RobotUnreachable("XML-RPC to 127.0.0.1 failed: timed out")
+
+        return call
+
+
+class _GarbageProxy:
+    """Calls reach the controller and come back unusable. Not a link failure."""
+
+    def __getattr__(self, name):
+        def call(*args, **kwargs):
+            raise ValueError("unexpected response shape")
+
+        return call
+
+
+def _cached_pkg():
+    """A CNDE struct holding the last values it received before the stream died."""
+    return SimpleNamespace(program_state=1, robot_state=1, main_code=0, sub_code=0)
+
+
+def test_probe_fails_when_xmlrpc_is_dead_even_though_cnde_answers():
+    """The heartbeat must prove the command channel, not just that state is readable.
+
+    `commands_available` is gated on this probe alone. Both cache readers in
+    `_probe_body` can be satisfied without touching XML-RPC, so if the one real
+    round trip is allowed to fail silently the link reports CONNECTED over a dead
+    command channel — the exact case `telemetry` state exists to surface.
+    """
+    link = RobotLink("127.0.0.1")
+    cnde = _LiveCnde()
+    try:
+        client = SimpleNamespace(
+            robot=_DeadProxy(), _cnde_client=cnde, robot_state_pkg=_cached_pkg()
+        )
+        assert link._cnde_streaming(cnde) is True
+
+        try:
+            link._probe_body(client)
+        except RobotUnreachable:
+            pass
+        else:
+            raise AssertionError("probe reported success over a dead XML-RPC channel")
+    finally:
+        cnde.stop()
+
+
+def test_cnde_cache_is_distrusted_once_its_receiver_thread_exits():
+    """`_robot_state_run_flag` latches True forever; the recv thread does not."""
+    link = RobotLink("127.0.0.1")
+    cnde = _LiveCnde()
+    cnde.stop()
+
+    assert cnde._robot_state_run_flag is True  # the SDK never clears it
+    assert link._cnde_streaming(cnde) is False
+
+    client = SimpleNamespace(
+        robot=_GarbageProxy(), _cnde_client=cnde, robot_state_pkg=_cached_pkg()
+    )
+    # With the cache refused, the frozen program_state must not be served as "cnde".
+    assert link._read_program_state(client) == (1, "cache")
+    assert link._read_fault_codes(client) == (None, None, "none")
+
+
+def test_fresh_feed_heartbeat_only_issues_one_rpc(monkeypatch):
+    link = RobotLink("127.0.0.1")
+    calls = []
+
+    class Proxy(_DeadProxy):
+        def GetCurrentLine(self):
+            calls.append("line")
+            return 0, 42
+
+    monkeypatch.setattr(link, "feed_snapshot", lambda: FeedSnapshot(
+        fields={"program_state": 2, "main_errcode": 0, "sub_errcode": 0},
+        received_monotonic=time.monotonic(),
+    ))
+    reading = link._probe_body(SimpleNamespace(robot=Proxy()))
+    assert calls == ["line"]
+    assert reading["state_raw"] == 2
+    assert reading["state_src"] == "8083"
+
+
+def test_transport_read_timeout_is_restored_after_failure():
+    transport = _TimeoutTransport(12.0)
+    with pytest.raises(RuntimeError):
+        with transport.limit_timeout(0.5):
+            assert transport.make_connection("127.0.0.1").timeout == 0.5
+            raise RuntimeError("read failed")
+    assert transport.make_connection("127.0.0.1").timeout == 12.0
+    transport.close()
+
+
+def test_expired_queued_call_is_not_executed():
+    link = RobotLink("127.0.0.1")
+    link._handle = _ClientHandle(gen=1, rpc=object(), ip="127.0.0.1")
+    started = threading.Event()
+    release = threading.Event()
+    calls = []
+
+    def blocking():
+        started.set()
+        release.wait(2.0)
+
+    active = link._worker.submit(blocking)
+    try:
+        assert started.wait(1.0)
+        with pytest.raises(RuntimeError, match="did not respond"):
+            link.call(lambda robot: calls.append("expired"), timeout=0.02, retries=1)
+        release.set()
+        active.result(1.0)
+        link._worker.submit(lambda: None, priority=3).result(1.0)
+        assert calls == []
+    finally:
+        release.set()
+        link._worker.retire()
+
+
+def test_slow_telemetry_socket_releases_worker_for_command():
+    entered = threading.Event()
+    release = threading.Event()
+    server = SimpleXMLRPCServer(("127.0.0.1", 0), logRequests=False)
+
+    def slow_read():
+        entered.set()
+        release.wait(2.0)
+        return [0, 1]
+
+    server.register_function(slow_read, "GetSysVarValue")
+    server_thread = threading.Thread(target=server.handle_request, daemon=True)
+    server_thread.start()
+    transport = _TimeoutTransport(12.0)
+    proxy = xmlrpc.client.ServerProxy(
+        f"http://127.0.0.1:{server.server_address[1]}", transport=transport,
+    )
+    link = RobotLink("127.0.0.1")
+    handle = _ClientHandle(gen=1, rpc=SimpleNamespace(robot=proxy), ip="127.0.0.1")
+    link._handle = handle
+    failures = []
+
+    def sample():
+        try:
+            link.call(
+                lambda robot: robot.robot.GetSysVarValue(),
+                timeout=1.0, rpc_timeout=0.1, retries=1, priority=2,
+            )
+        except RobotUnreachable as exc:
+            failures.append(exc)
+
+    sample_thread = threading.Thread(target=sample, daemon=True)
+    try:
+        sample_thread.start()
+        assert entered.wait(1.0)
+        command = link._worker.submit(lambda: "command", priority=0)
+        assert command.result(1.0) == "command"
+        assert not release.is_set()
+        sample_thread.join(1.0)
+        assert len(failures) == 1
+        assert transport._timeout == 12.0
+    finally:
+        release.set()
+        sample_thread.join(1.0)
+        server_thread.join(1.0)
+        server.server_close()
+        transport.close()
+        link._worker.retire()

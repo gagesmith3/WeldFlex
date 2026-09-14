@@ -164,8 +164,11 @@ WELDFLEX_KIOSK=1
 ```
 
 **Set `WELDFLEX_CNDE_PORT` explicitly.** Leaving it unset is not neutral — it
-falls back to `20005`, the port that times out on this firmware, which silently
-kills force telemetry. This has already bitten the live dev `.env`.
+falls back to `20005`, the port that times out on this firmware. This has
+already bitten the live dev `.env`. It no longer kills force telemetry outright
+(the port-8083 push is the primary force source and CNDE is only the fallback
+beneath it), but it does remove the fallback and leave a receiver retrying a
+port that will never answer — set it.
 
 Deliberately omits `WELDFLEX_FAIRINO_PATH` so `_bootstrap_sdk()`'s
 `sys.platform` auto-detect resolves to `fairino-python-sdk-main/linux/fairino`.

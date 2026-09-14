@@ -14,6 +14,10 @@ FT_SENSOR_NUM = 1 --{{FT_SENSOR_NUM}}
 STUD_TYPE = "M4" --{{STUD_TYPE}}
 SUBSTRATE = "Mild Steel" --{{SUBSTRATE}}
 ARM_MODE = "live" --{{ARM_MODE}}
+WELDER_PROFILE = "atlas" --{{WELDER_PROFILE}}
+LIBERTY_COMMISSIONING = 0 --{{LIBERTY_COMMISSIONING}}
+WELD_TRIGGER_DO = 0 --{{WELD_TRIGGER_DO}}
+WELD_TRIGGER_PULSE_MS = 250 --{{WELD_TRIGGER_PULSE_MS}}
 BOUNDARY_MS = 1500 --{{BOUNDARY_MS}}
 
 -- Home Position (homewf registered point on controller)
@@ -44,23 +48,32 @@ for cycleIndex = 1, cycleCount do --{{LOOP_START}}
         if ARM_MODE == "live" then
             WELD_ARMED = 1
         end
-        WELD_RETRACT_Z = RETRACT_Z
+        WELD_SKIP_INTERLOCKS = 0
+        WELD_SKIP_FEED = 0
+        WELD_LIBERTY_COMMISSIONING = LIBERTY_COMMISSIONING
+        if WELDER_PROFILE == "liberty" then
+            if ARM_MODE == "dry" or LIBERTY_COMMISSIONING == 1 then
+                WELD_SKIP_INTERLOCKS = 1
+            end
+        end
+        WELD_SAFE_Z = SAFE_Z
         WELD_PART_Z = PART_Z
-        Z_CLEARANCE = PART_Z + RETRACT_Z
+        Z_CLEARANCE = PART_Z + SAFE_Z
         WELD_PRESS_LBF = stud.pressLbf or PRESS_LBF
         WELD_FT_SENSOR_NUM = FT_SENSOR_NUM
         WELD_STUD_TYPE = STUD_TYPE
         WELD_SUBSTRATE = SUBSTRATE
         WELD_FEED_PULSE_MS = FEED_PULSE_MS
 
-        APPROACH_Z = PART_Z + RETRACT_Z
         HIGH_Z = PART_Z + SAFE_Z
 
-        -- The first move leaves home at high clearance. After each weld,
-        -- weld.lua has already retracted to APPROACH_Z for the local traverse.
-        local travelZ = APPROACH_Z
+        -- Each traverse stays at the fixture-clearing safe plane. weld.lua
+        -- captures this pose, descends entirely on tool Z with FT_FindSurface,
+        -- and returns to this same pose after every stud.
         if lastWeldX == nil or lastWeldY == nil then
-            travelZ = HIGH_Z
+            PointsOffsetEnable(0, 0, 0, HIGH_Z, 0, 0, 0)
+            Lin(homewf, speed, -1, 0, 0)
+            PointsOffsetDisable()
         end
         local travelSpeed = speed
         if lastWeldX ~= nil and lastWeldY ~= nil and stud.s2sSpeed ~= nil then
@@ -69,16 +82,9 @@ for cycleIndex = 1, cycleCount do --{{LOOP_START}}
         -- flag=0: offset in the wobj-4 workpiece frame (FR Lua manual §3.2.12),
         -- not flag=1's tool frame — flag=1 rode the torch's current orientation
         -- instead of the taught bed axes, which is why Z looked ignored.
-        PointsOffsetEnable(0, weldX, weldY, travelZ, 0, 0, 0)
+        PointsOffsetEnable(0, weldX, weldY, HIGH_Z, 0, 0, 0)
         Lin(zerozero, travelSpeed, -1, 0, 0)
         PointsOffsetDisable()
-
-        if travelZ ~= APPROACH_Z then
-            -- Descend from high travel clearance into the first stud's approach level.
-            PointsOffsetEnable(0, weldX, weldY, APPROACH_Z, 0, 0, 0)
-            Lin(zerozero, speed, -1, 0, 0)
-            PointsOffsetDisable()
-        end
 
         if stud.s2sWaitMs ~= nil and stud.s2sWaitMs > 0 then
             WaitMs(stud.s2sWaitMs)
@@ -100,14 +106,17 @@ for cycleIndex = 1, cycleCount do --{{LOOP_START}}
     end
 
     -- Clear the part before the next cycle (and on a fault): elevate off the
-    -- last stud, then return to the taught home so the operator can swap parts
-    -- with the head out of the way. Runs every cycle, including the last.
+    -- last stud, traverse at the safe height to home XY, then descend into
+    -- home. Runs every cycle, including the last.
     if USE_HOME_MOVE == 1 then
         if lastWeldX ~= nil and lastWeldY ~= nil then
             PointsOffsetEnable(0, lastWeldX, lastWeldY, HIGH_Z, 0, 0, 0)
             Lin(zerozero, speed, -1, 0, 0)
             PointsOffsetDisable()
         end
+        PointsOffsetEnable(0, 0, 0, HIGH_Z, 0, 0, 0)
+        Lin(homewf, speed, -1, 0, 0)
+        PointsOffsetDisable()
         Lin(homewf, speed, -1, 0, 0)
         lastWeldX = nil
         lastWeldY = nil

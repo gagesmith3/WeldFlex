@@ -1,5 +1,4 @@
 {% extends "base.html" %}
-{% from "components/ui.html" import htmx_mount with context %}
 
 {# Basic lbs readout: tool-axis force (Fz) only, converted server-side in
    /ui/ft/reading. /ui/ft/deactivate still exists in app.py but has no button —
@@ -11,10 +10,15 @@
 
     <h2>Force Sensor</h2>
     <p class="panel-note">
-      Tool-axis force (Fz) in lbs · tool frame · 200 N ≈ 45 lbf full scale · 300 ms refresh
+      Fz in lbf · live controller status feed · 200 N ≈ 45 lbf full scale
     </p>
 
-    {{ htmx_mount('ft-readout', '/ui/ft/reading', 'load, every 300ms', 'innerHTML') }}
+    <div id="ft-readout">
+      {% with ok=false, error='No fresh reading', active=false, lbf=none, fz_n=none,
+              pct=0, level='ok', sign='pos', source=none, age_s=none %}
+        {% include 'partials/ft_reading.html' %}
+      {% endwith %}
+    </div>
 
     <div id="ft-setup-status" class="ft-setup-status" aria-live="polite"></div>
 
@@ -34,4 +38,8 @@
 
   </section>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script defer src="{{ url_for('static', filename='js/ft_live.js') }}"></script>
 {% endblock %}

@@ -31,6 +31,9 @@ Layers, strictly one-way:
   ready; they were implemented backwards until 2026-07-28 precisely because no
   such map existed.
 - `.claude/skills/deployment-targets/` — Windows dev box vs. Raspberry Pi kiosk.
+- `.claude/skills/doc-sync/` — `/doc-sync` audits every doc listed above against
+  the code and corrects the claims that went stale. Run it after landing
+  anything that changes what one of them asserts.
 
 ## What's actually built, and what still isn't
 
@@ -41,11 +44,17 @@ DI checks pass. A home approach/return also now exists at both ends of a run.
 Do not describe either of these as unbuilt — that claim is stale and no longer
 true against the committed code.
 
+A recipe also carries a **welder profile** — `atlas` (default) or `liberty`.
+**Liberty is dry-run only** until its live weld interlocks are commissioned;
+`lua_builder` and `job_manager` both refuse to build a live Liberty job, and
+`weld.lua` refuses to fire an arc with interlocks bypassed outside a
+commissioning run. Don't relax any of those three checks.
+
 What is still missing:
 
 1. **No explicit live-run arming confirmation.** Live jobs automatically set
   `WELD_ARMED = 1`; dry jobs set it to `0`, completing search, press, hold,
-  retract, and feeder advance without pulsing the DO0 weld trigger.
+  retract, and feeder advance without pulsing the weld trigger output.
 2. **`pause_points` is a dead field.** Every recipe carries it; nothing reads it.
    Per-stud operator waits do not exist. The per-cycle `gate_mode` is a different
    feature and does not cover this.

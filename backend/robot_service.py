@@ -13,6 +13,7 @@ from robot_link import (
     ConnState,
     ForceSnapshot,
     RobotLink,
+    TELEMETRY_RPC_TIMEOUT_S,
     has_conn_error,
     is_conn_code,
 )
@@ -52,6 +53,7 @@ JOG_MOTION_SETTLE_S = 0.05
 # robot's only command channel — and a wired output — indefinitely.
 DO_PULSE_MAX_S = 2.0
 WELD_TELEMETRY_FRESH_S = 1.0
+FORCE_FRESH_S = 0.5
 WELD_TELEMETRY_CALL_TIMEOUT_S = 3.0
 JOB_TELEMETRY_STUD_DI = 1
 JOB_TELEMETRY_READY_DI = 0
@@ -191,6 +193,8 @@ class WeldTelemetrySnapshot:
         return age is not None and age <= max_age_s
 
     def sysvar(self, slot: int) -> float | None:
+        if not self.is_fresh():
+            return None
         for saved_slot, value in self.sysvars:
             if saved_slot == slot:
                 return value
@@ -299,7 +303,6 @@ class WeldFlexRobotService:
     def get_universal_state(self) -> UniversalRobotState:
         """Consolidated, authoritative single source of truth for all robot state and telemetry."""
         snap = self.snapshot()
-        force = self.force_snapshot()
         feed = self.feed_snapshot()
         with self._weld_telemetry_lock:
             telemetry = self._weld_telemetry
@@ -348,14 +351,15 @@ class WeldFlexRobotService:
             fz_lbf = None
             force_fresh = False
 
-        sv_phase = telemetry.sysvar(1)
-        sv_ret = telemetry.sysvar(2)
-        sv_z0 = telemetry.sysvar(3)
-        sv_travel = telemetry.sysvar(4)
-        sv_guard = telemetry.sysvar(5)
-        sv_stud = telemetry.sysvar(6)
-        sv_ready = telemetry.sysvar(7)
-        sv_press_lbf = telemetry.sysvar(8)
+        telemetry_current = telemetry.is_fresh() and telemetry.generation == snap.generation
+        sv_phase = telemetry.sysvar(1) if telemetry_current else None
+        sv_ret = telemetry.sysvar(2) if telemetry_current else None
+        sv_z0 = telemetry.sysvar(3) if telemetry_current else None
+        sv_travel = telemetry.sysvar(4) if telemetry_current else None
+        sv_guard = telemetry.sysvar(5) if telemetry_current else None
+        sv_stud = telemetry.sysvar(6) if telemetry_current else None
+        sv_ready = telemetry.sysvar(7) if telemetry_current else None
+        sv_press_lbf = telemetry.sysvar(8) if telemetry_current else None
 
         phase_code = None
         packed_di1 = None
@@ -388,6 +392,13 @@ class WeldFlexRobotService:
         stud_on_work = _di_level(sv_stud) if sv_stud is not None else packed_di1
         weld_ready = _di_level(sv_ready) if sv_ready is not None else packed_di0
         di_live = program_state == "running"
+        fast_feed_fresh = feed.is_fresh(FORCE_FRESH_S)
+        if fast_feed_fresh:
+            if feed.di(JOB_TELEMETRY_STUD_DI) is not None:
+                stud_on_work = feed.di(JOB_TELEMETRY_STUD_DI)
+            if feed.di(JOB_TELEMETRY_READY_DI) is not None:
+                weld_ready = feed.di(JOB_TELEMETRY_READY_DI)
+            di_live = di_live or stud_on_work is not None or weld_ready is not None
 
         probe_err = None
         if not connected and not feed_streaming:
@@ -395,7 +406,7 @@ class WeldFlexRobotService:
         elif not connected:
             probe_err = "Telemetry only — the robot is reachable but commands cannot be delivered"
         elif not force_fresh and di_live:
-            probe_err = "No force — CNDE stream is stale or has not produced a frame"
+            probe_err = "No fresh force data from the status feed or CNDE"
 
         sampled_ts = telemetry.sampled_ts or snap.last_success_ts or time.time()
 
@@ -415,7 +426,8 @@ class WeldFlexRobotService:
             fault_source=fault_source,
             has_fault=has_fault,
             probe_error=probe_err,
-            tcp_z=telemetry.tcp_z,
+                 tcp_z=(feed.tcp_z if fast_feed_fresh and feed.tcp_z is not None
+                         else telemetry.tcp_z if telemetry_current else None),
             fz_lbf=fz_lbf,
             force_fresh=force_fresh,
             stud_on_work=stud_on_work,
@@ -521,6 +533,7 @@ class WeldFlexRobotService:
         stud_di, ready_di, sysvar_slots, interval_s = config
         while not stop.is_set():
             before = self.snapshot()
+            sampled_ts = time.time()
             try:
                 probe = self.weld_probe(stud_di, ready_di, sysvar_slots)
                 after = self.snapshot()
@@ -528,7 +541,7 @@ class WeldFlexRobotService:
                     raise RuntimeError("Robot connection changed during weld telemetry sample")
                 reading = WeldTelemetrySnapshot(
                     active=True,
-                    sampled_ts=time.time(),
+                    sampled_ts=sampled_ts,
                     generation=after.generation,
                     ft_err=probe["ft_err"],
                     fz=probe["fz"],
@@ -569,6 +582,7 @@ class WeldFlexRobotService:
         retries: int = 3,
         priority: int = 0,
         coalesce_key: str | None = None,
+        rpc_timeout: float | None = None,
     ) -> Any:
         """Run an SDK call on the link's worker thread with a hard timeout."""
         return self._link.call(
@@ -578,6 +592,7 @@ class WeldFlexRobotService:
             label=getattr(fn, "__name__", "call"),
             priority=priority,
             coalesce_key=coalesce_key,
+            rpc_timeout=rpc_timeout,
         )
 
     # Kept as staticmethods for the documented wrapper pattern; the implementations
@@ -875,37 +890,6 @@ class WeldFlexRobotService:
                 f"GetForceSensorPayload returned invalid data: {payload_kg!r}, {cog_response[1:4]!r}"
             ) from None
 
-    def ft_frame_readings(self) -> dict:
-        """Read controller RCS and raw-origin F/T data while the sensor is idle.
-
-        The SDK wrappers for these getters return a local cached state struct,
-        which is not known to be populated on this controller. Use the raw RPC
-        methods in one serialized dispatch instead. This is inspection only;
-        controller force operations own the interface and must be stopped first.
-        """
-        def read_frames(r):
-            return (
-                r.robot.FT_GetForceTorqueRCS(0),
-                r.robot.FT_GetForceTorqueOrigin(0),
-            )
-
-        rcs_response, origin_response = self._call(read_frames, retries=1)
-
-        def fz(command: str, response: Any) -> float:
-            if not isinstance(response, (list, tuple)) or len(response) < 4:
-                raise RuntimeError(f"{command} returned an unexpected shape: {response!r}")
-            if int(response[0]) != 0:
-                raise RuntimeError(f"{command} failed (code {response[0]})")
-            try:
-                return float(response[3])
-            except (TypeError, ValueError):
-                raise RuntimeError(f"{command} returned an invalid Fz: {response[3]!r}") from None
-
-        return {
-            "rcs_fz_n": fz("FT_GetForceTorqueRCS", rcs_response),
-            "origin_fz_n": fz("FT_GetForceTorqueOrigin", origin_response),
-        }
-
     def ft_deactivate(self) -> None:
         err = self._call(lambda r: r.FT_Activate(0))
         err_code, _ = self._unpack(err)
@@ -919,15 +903,9 @@ class WeldFlexRobotService:
             raise RuntimeError(f"FT_SetZero failed (code {err_code})")
 
     def ft_read(self) -> dict:
-        """Latest port-8083 F/T frame, with CNDE and XML-RPC as fallbacks.
-
-        The status feed is independent of XML-RPC and remains available while a
-        controller-side force task owns the sensor. CNDE stays as a compatibility
-        fallback; raw XML-RPC is idle-only because it returns code 14 mid-force
-        operation.
-        """
+        """Read fresh force from the push caches without issuing robot commands."""
         feed = self.feed_snapshot()
-        feed_values = feed.ft_values if feed.is_fresh() else None
+        feed_values = feed.ft_values if feed.is_fresh(FORCE_FRESH_S) else None
         if feed_values is not None and len(feed_values) >= 6:
             fx, fy, fz, mx, my, mz = feed_values[:6]
             return {
@@ -939,7 +917,7 @@ class WeldFlexRobotService:
             }
 
         cached = self.force_snapshot()
-        if cached.is_fresh():
+        if cached.is_fresh(FORCE_FRESH_S):
             fx, fy, fz, mx, my, mz = cached.values
             return {
                 "fx": fx, "fy": fy, "fz": fz,
@@ -948,29 +926,6 @@ class WeldFlexRobotService:
                 "source": cached.source,
                 "age_s": cached.age_s(),
             }
-
-        # Fallback XML-RPC read if CNDE stream is not fresh
-        try:
-            resp = self._call(
-                lambda r: r.robot.FT_GetForceTorqueRCS(0),
-                retries=1,
-                priority=2,
-                coalesce_key="ft-reading",
-            )
-            if isinstance(resp, (list, tuple)) and len(resp) >= 7:
-                err_code, values = int(resp[0]), resp[1:7]
-            else:
-                err_code, values = self._unpack(resp)
-            if err_code == 0 and values is not None and len(values) >= 6:
-                return {
-                    "fx": float(values[0]), "fy": float(values[1]), "fz": float(values[2]),
-                    "mx": float(values[3]), "my": float(values[4]), "mz": float(values[5]),
-                    "active": True,
-                    "source": "xmlrpc",
-                    "age_s": 0.0,
-                }
-        except Exception:
-            pass
 
         return {
             "fx": None, "fy": None, "fz": None,
@@ -1017,68 +972,38 @@ class WeldFlexRobotService:
         ready_di: int = 0,
         sysvar_slots: tuple[int, ...] = (1, 2),
     ) -> dict:
-        """Everything the Weld Test page shows, in a single worker dispatch.
+        """Sample Lua variables with bounded, individually scheduled RPC reads.
 
-        `stud_di` and `ready_di` name the two inputs the caller displays. The
-        controller program reads them itself and publishes their levels through
-        system variables. Host-side raw ``GetDI`` was removed from this polling
-        path: it is unverified on this firmware and can hold the single XML-RPC
-        worker until its socket timeout, starving every other detailed signal.
-
-        `sysvar_slots` are the controller system variables weld.lua's pub() writes
-        its progress to — slot 1 is the phase code, slot 2 the raw return value of
-        the last FT_* instruction. This is the only channel that reports anything
-        from inside a running Lua program: print()/error() never leave the pendant,
-        and force reads are refused for the whole time force control owns the
-        sensor. GetSysVarValue is a genuine RPC call (Robot.py:5460), not another
-        robot_state_pkg read, which is what makes it work mid-run.
-
-        Polled a few times a second while a weld test runs, so every read shares
-        one submission rather than queueing behind the others on the link's single
-        worker. The force read and pose read bypass their SDK wrappers for the
-        reason ft_read documents: the wrapped force getter reads robot_state_pkg,
-        which CNDE never fills on this firmware. GetActualTCPPose is unwrapped for
-        consistency and to keep the whole probe on one code path — its SDK wrapper
-        does do real RPC.
-
-        `fz` is the sensor's native value — negative under compression. Callers
-        that display it flip the sign; see FT_FZ_DISPLAY_SIGN in app.py.
-
-        Every read here is best-effort — nothing raises. Force comes from the
-        shared CNDE snapshot, which is updated independently of this XML-RPC
-        batch and continues through controller-side force control. A missing or
-        stale frame is unknown, not a zero.
+        Force, pose and input display values come from fresh push data. A failed
+        RPC aborts the sample; callers retain their previous sample until stale.
         """
-        force = self.force_snapshot()
-
-        def weld_detail_probe(r):
-            svars = []
-            for slot in sysvar_slots:
-                try:
-                    svars.append(r.robot.GetSysVarValue(int(slot)))
-                except Exception:
-                    svars.append(None)
-            try:
-                pose = r.robot.GetActualTCPPose(0)
-            except Exception:
-                pose = None
-            return svars, pose
-
-        svar_resps, pose_resp = self._call(
-            weld_detail_probe,
-            retries=1,
-            timeout=WELD_TELEMETRY_CALL_TIMEOUT_S,
-            priority=2,
-            coalesce_key="weld-detail",
-        )
-
-        ft_err = 0 if force.is_fresh() else None
-        fz = force.values[2] if force.is_fresh() else None
-
-        def _level(resp):
-            if isinstance(resp, (list, tuple)) and len(resp) >= 2 and int(resp[0]) == 0:
-                return 1 if int(resp[1]) else 0
-            return None
+        feed = self.feed_snapshot()
+        feed_fresh = feed.is_fresh(FORCE_FRESH_S)
+        stud_level = feed.di(stud_di) if feed_fresh else None
+        ready_level = feed.di(ready_di) if feed_fresh else None
+        deadline = time.monotonic() + WELD_TELEMETRY_CALL_TIMEOUT_S
+        svar_resps = []
+        for slot in sysvar_slots:
+            level = {6: stud_level, 7: ready_level}.get(slot)
+            if level is not None:
+                svar_resps.append((0, level))
+                continue
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError("Weld telemetry sample budget exhausted")
+            response = self._call(
+                lambda robot, slot=slot: robot.robot.GetSysVarValue(int(slot)),
+                retries=1,
+                timeout=min(remaining, TELEMETRY_RPC_TIMEOUT_S + 0.25),
+                rpc_timeout=min(remaining, TELEMETRY_RPC_TIMEOUT_S),
+                priority=2,
+                coalesce_key=f"weld-sysvar:{slot}",
+            )
+            err_code, _ = self._unpack(response)
+            if err_code != 0:
+                raise RuntimeError(f"GetSysVarValue({slot}) failed (code {err_code})")
+            svar_resps.append(response)
+        force = self.ft_read()
 
         def _number(resp):
             """Value out of an (err, value) response, or None on any failure."""
@@ -1096,22 +1021,15 @@ class WeldFlexRobotService:
             for slot, resp in zip(sysvar_slots, svar_resps)
         }
 
-        tcp_z = None
-        if isinstance(pose_resp, (list, tuple)) and len(pose_resp) >= 4 and int(pose_resp[0]) == 0:
-            try:
-                tcp_z = float(pose_resp[3])
-            except (TypeError, ValueError):
-                tcp_z = None
-
         return {
-            "ft_err": ft_err,
-            "fz": fz,
+            "ft_err": 0 if force["fz"] is not None else None,
+            "fz": force["fz"],
             "stud_di": int(stud_di),
-            "stud_on_work": None,
+            "stud_on_work": stud_level,
             "ready_di": int(ready_di),
-            "weld_ready": None,
+            "weld_ready": ready_level,
             "sysvars": sysvars,
-            "tcp_z": tcp_z,
+            "tcp_z": feed.tcp_z if feed_fresh else None,
             # Program state, line, and faults are the core heartbeat's job.
             # Duplicating them here made one detail read much longer without
             # improving what the page can render.

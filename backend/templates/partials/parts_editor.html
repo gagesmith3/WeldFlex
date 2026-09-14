@@ -66,6 +66,14 @@
                    class="parts-setting-input">
           </div>
           <div class="parts-field-group">
+            <label for="welder_profile" class="parts-field-label">Power Source</label>
+            <select id="welder_profile" name="welder_profile" class="parts-setting-select">
+              {% set welder_profile = recipe.welder_profile if recipe else 'atlas' %}
+              <option value="atlas" {% if welder_profile == 'atlas' %}selected{% endif %}>LYNX Atlas</option>
+              <option value="liberty" {% if welder_profile == 'liberty' %}selected{% endif %}>LYNX Liberty (dry only)</option>
+            </select>
+          </div>
+          <div class="parts-field-group">
             <label for="speed" class="parts-field-label">Motion Speed (%)</label>
             <input type="number" id="speed" name="speed" step="1" min="1" max="100"
                    value="{{ recipe.speed if recipe and recipe.speed is not none else 25 }}"
@@ -84,7 +92,7 @@
         <div class="parts-run-right">
           {{ action_button('Save', variant='recipe-save', icon='save',
                hx_post='/ui/recipes/save',
-            hx_include='#recipe_name, #studs_text, #coord-table-body input, #part_z, #retract_z, #safe_z, #stud_type, #substrate, #pressure_setting, #speed',
+            hx_include='#recipe_name, #studs_text, #coord-table-body input, #part_z, #retract_z, #safe_z, #stud_type, #substrate, #pressure_setting, #welder_profile, #speed',
                hx_target='#toast-rack',
                hx_on_after_request="if(event.detail.successful){syncPartsEditorUrl()}") }}
           {{ action_button('Run', variant='run', icon='play',

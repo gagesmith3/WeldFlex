@@ -6,7 +6,7 @@ import pytest
 
 from robot_feed import FeedSnapshot
 from robot_link import ConnSnapshot, ConnState, ForceSnapshot
-from robot_service import DO_PULSE_MAX_S, WeldFlexRobotService
+from robot_service import DO_PULSE_MAX_S, WeldFlexRobotService, WeldTelemetrySnapshot
 
 
 def _connected_snapshot(generation: int) -> ConnSnapshot:
@@ -149,12 +149,49 @@ def test_weld_probe_uses_lua_di_slots_not_blocking_host_di(monkeypatch):
 
     reading = service.weld_probe(1, 0, (1, 6, 7))
 
-    assert calls == ["sysvar:1", "sysvar:6", "sysvar:7", "pose"]
+    assert calls == ["sysvar:1", "sysvar:6", "sysvar:7"]
     assert reading["ft_err"] == 0
     assert reading["fz"] == -88
     assert reading["stud_on_work"] is None
     assert reading["weld_ready"] is None
     assert reading["sysvars"] == {1: 0.0, 6: 1.0, 7: 0.0}
+
+
+def test_weld_probe_uses_feed_pose_and_di_without_rpc_duplicates(monkeypatch):
+    service = WeldFlexRobotService("127.0.0.1")
+    calls = []
+    monkeypatch.setattr(service, "feed_snapshot", lambda: _feed_frame(
+        cl_dgt_input_l=2, tl_cur_pos=[0, 0, 123.0, 0, 0, 0],
+    ))
+
+    def fake_call(fn, **kwargs):
+        calls.append(kwargs["coalesce_key"])
+        return 0, 31
+
+    monkeypatch.setattr(service, "_call", fake_call)
+    reading = service.weld_probe(1, 0, (1, 6, 7))
+    assert calls == ["weld-sysvar:1"]
+    assert reading["tcp_z"] == 123.0
+    assert reading["stud_on_work"] == 1
+    assert reading["weld_ready"] == 0
+    state = service.get_universal_state()
+    assert state.tcp_z == 123.0
+    assert state.stud_on_work == 1
+    assert state.weld_ready == 0
+
+
+def test_weld_probe_aborts_after_first_transport_failure(monkeypatch):
+    service = WeldFlexRobotService("127.0.0.1")
+    calls = []
+
+    def fake_call(fn, **kwargs):
+        calls.append(kwargs["coalesce_key"])
+        raise RuntimeError("transport timed out")
+
+    monkeypatch.setattr(service, "_call", fake_call)
+    with pytest.raises(RuntimeError, match="transport timed out"):
+        service.weld_probe(1, 0, tuple(range(1, 9)))
+    assert calls == ["weld-sysvar:1"]
 
 
 def test_ft_read_prefers_fresh_cnde_force_snapshot(monkeypatch):
@@ -212,6 +249,28 @@ def test_ft_read_prefers_fresh_8083_force_data_over_cnde(monkeypatch):
         "source": "8083",
         "age_s": pytest.approx(0.0, abs=0.1),
     }
+
+
+@pytest.mark.parametrize("age_s", [0.6, 4.0])
+def test_stale_force_and_universal_state_never_issue_rpc(monkeypatch, age_s):
+    service = WeldFlexRobotService("127.0.0.1")
+    monkeypatch.setattr(
+        service, "feed_snapshot",
+        lambda: FeedSnapshot(
+            fields={"ft_data": [1, 2, -3, 4, 5, 6], "ft_act_status": 1},
+            received_monotonic=time.monotonic() - age_s,
+        ),
+    )
+    monkeypatch.setattr(
+        service, "_call",
+        lambda *args, **kwargs: pytest.fail("cached state must never issue RPC"),
+    )
+
+    assert service.ft_read()["source"] == "none"
+    assert service.ft_read()["fz"] is None
+    state = service.get_universal_state()
+    assert state.fz_lbf is None
+    assert not state.force_fresh
 
 
 def test_ft_setup_configures_and_activates_without_changing_tare(monkeypatch):
@@ -274,33 +333,6 @@ def test_ft_compensation_reads_payload_and_center_of_gravity_in_one_dispatch(mon
     assert call_count == 1
 
 
-def test_ft_frame_readings_compare_raw_and_reference_fz_in_one_dispatch(monkeypatch):
-    service = WeldFlexRobotService("127.0.0.1")
-    call_count = 0
-
-    class RawRobot:
-        def FT_GetForceTorqueRCS(self, frame):
-            assert frame == 0
-            return [0, 1.0, 2.0, -3.5, 4.0, 5.0, 6.0]
-
-        def FT_GetForceTorqueOrigin(self, frame):
-            assert frame == 0
-            return [0, 1.0, 2.0, -12.7, 4.0, 5.0, 6.0]
-
-    def fake_call(fn, **_kwargs):
-        nonlocal call_count
-        call_count += 1
-        return fn(SimpleNamespace(robot=RawRobot()))
-
-    monkeypatch.setattr(service, "_call", fake_call)
-
-    assert service.ft_frame_readings() == {
-        "rcs_fz_n": -3.5,
-        "origin_fz_n": -12.7,
-    }
-    assert call_count == 1
-
-
 def test_get_universal_state_consolidates_robot_sources(monkeypatch):
     service = WeldFlexRobotService("127.0.0.1")
     monkeypatch.setattr(service, "snapshot", lambda: _connected_snapshot(12))
@@ -317,6 +349,8 @@ def test_get_universal_state_consolidates_robot_sources(monkeypatch):
 
     fake_telemetry = SimpleNamespace(
         sampled_ts=time.time(),
+        is_fresh=lambda: True,
+        generation=12,
         tcp_z=145.2,
         sysvar=lambda slot: {1: 31.0, 2: 0.0, 3: 150.0, 4: 4.8, 5: 1.0, 6: 1.0, 7: 1.0, 8: 20.0}.get(slot),
     )
@@ -358,6 +392,24 @@ def _feed_frame(**overrides) -> FeedSnapshot:
     }
     fields.update(overrides)
     return FeedSnapshot(fields=fields, received_monotonic=time.monotonic(), generation=1)
+
+
+@pytest.mark.parametrize("age_s,generation", [(2.0, 12), (0.0, 11)])
+def test_universal_state_rejects_old_lua_telemetry(monkeypatch, age_s, generation):
+    service = WeldFlexRobotService("127.0.0.1")
+    monkeypatch.setattr(service, "snapshot", lambda: _connected_snapshot(12))
+    monkeypatch.setattr(service, "_weld_telemetry", WeldTelemetrySnapshot(
+        sampled_ts=time.time() - age_s,
+        generation=generation,
+        sysvars=((1, 31.0), (6, 1.0), (7, 1.0), (8, 20.0)),
+        tcp_z=100.0,
+    ))
+    state = service.get_universal_state()
+    assert state.weld_phase_code is None
+    assert state.stud_on_work is None
+    assert state.weld_ready is None
+    assert state.target_press_lbf is None
+    assert state.tcp_z is None
 
 
 def test_universal_state_prefers_the_feed_for_observation(monkeypatch):

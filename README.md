@@ -36,6 +36,21 @@ cd
 python backend\app.py
 ```
 
+## Liberty Endurance Test
+
+Admin's Liberty Endurance page runs a saved Liberty plate recipe live, bypassing
+the Atlas DI1 stud-on-work and DI0 welder-ready checks. It is disabled unless
+all three machine-specific settings are present in `.env`:
+
+```
+WELDFLEX_LIBERTY_LIVE_ENABLED=1
+WELDFLEX_LIBERTY_TRIGGER_DO=<controller output number>
+WELDFLEX_LIBERTY_TRIGGER_PULSE_MS=<pulse duration in ms>
+```
+
+Restart the backend after changing these settings. The page requires `FIRE LIBERTY`
+before it starts and advances the feeder after every stud.
+
 ## Install RPI Kiosk
 
 ```

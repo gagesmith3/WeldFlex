@@ -98,69 +98,68 @@ redundant guard against the same failure mode.
 port-8083 push carries the control-box input bitmap (`cl_dgt_input_l`/`_h`,
 offsets 176/177) in every frame, and `FeedSnapshot.di(n)` decodes it —
 confirmed tracking DI0/DI1 correctly on hardware 2026-08-03. It costs no RPC
-call and survives the force-operation window that kills XML-RPC. But the Lua
-sysvar relay is still the production DI path for the weld test, and the feed's
-DI is **observe-only**: it is a display value and must not be used as a safety
-interlock. If you switch a consumer over, the IO map at the top of this file
-still governs — DI1 is stud-on-work, DI0 is welder-ready, and they are not
-interchangeable.
+call and survives the force-operation window that kills XML-RPC.
+
+**Host-side consumers have now switched over**, and the relay is the fallback:
+`get_universal_state()` prefers `FeedSnapshot.di()` when the frame is fresher
+than `FORCE_FRESH_S`, and `weld_probe` answers sysvar slots 6/7 from the frame
+rather than spending an RPC read on each. The relay still runs and still
+answers when no fresh frame exists. None of this changes what the values may be
+used for: feed DI is **observe-only**, a display value, and must not be used as
+a safety interlock — the interlock itself is `weld.lua`'s own controller-side
+`GetDI`, which is a different read on a different side of the wire. The IO map
+at the top of this file governs all of them — DI1 is stud-on-work, DI0 is
+welder-ready, and they are not interchangeable.
 
 ## Force-torque sensor — how it actually couples to the robot
 
 **The controller owns the sensor. Python is a spectator.** Nothing in this app
 ever reads the sensor directly, and nothing in it is ever inside a force loop.
 
-As of the 2026-07-29/2026-08-03 telemetry rewrite, the primary path is a live
-CNDE push, not a poll:
+As of the 2026-08-03 cutover the primary path is the port-8083 status push.
+CNDE is the compatibility fallback beneath it, not the source:
 
 ```
 XJC sensor  ──RS485──▶  FR-16 end plate (M12, 8-core)
                             │  controller polls sensor, decouples + compensates
                             ▼
-                     CNDE stream (FtSensorData), configured signal-list + period
-                            │  FRCNDEClient.set_state_callback() (vendored SDK hook)
+            port-8083 status push — FT_data[0..5] @179, FT_ActStatus @227
+                            │  robot_feed.StatusFeed → frame_8083 decoder
                             ▼
-                  robot_link._on_cnde_state()  ──▶  ForceSnapshot (immutable)
-                            │
               robot_service.ft_read()  ──▶  /ui/ft/reading  ──▶  UI
-                            │  (idle-only fallback if the snapshot has gone stale)
-                            ▼
-                  raw XML-RPC FT_GetForceTorqueRCS(0), TCP :20003
+                            │                    /ui/ft/stream (SSE, 10 Hz)
+                            ▼  fallback: CNDE FtSensorData via
+                               FRCNDEClient.set_state_callback() → ForceSnapshot
 ```
 
-`robot_service.ft_read()` reads `force_snapshot()` first and only falls back
-to the raw RPC call when `ForceSnapshot.is_fresh()` is false (default
-staleness budget `CNDE_FORCE_FRESH_S = 0.5s`) — the reverse of the priority
-that held through 2026-07-29, when the CNDE cache was the thing considered
-dead and the raw RPC was the only source. `robot_state_pkg`'s own `GetXX`
-getters (`GetActualTCPNum` etc.) are unaffected by any of this and remain the
-dead local-cache reads described elsewhere in this file — only the *force*
-signal has a live push path now.
+`robot_service.ft_read()` tries the 8083 frame first, then `force_snapshot()`,
+and **stops there** — both checked against `robot_service.FORCE_FRESH_S`
+(`0.5 s`), which it passes explicitly rather than letting each cache use its own
+default. Two stale caches mean no reading.
 
-**Whether the CNDE stream is actually filling `ForceSnapshot` on this
-firmware has not been re-verified since the rewrite**, and there's an open
-port discrepancy worth resolving before trusting it:
+**There is no longer an RPC fallback under it.** The old idle-only
+`FT_GetForceTorqueRCS(0)` call was removed from `ft_read()`, along with
+`ft_frame_readings()` and the two RCS/origin rows the F/T setup panel showed.
+Do not restore either: the call returns code `14` for the whole of a force move,
+which is exactly when someone is watching the number, and reaching for it put an
+RPC read behind a display that is polled several times a second. Force display
+is now a pure cache read — which is what makes the 10 Hz SSE stream at
+`/ui/ft/stream` affordable at all. `robot_state_pkg`'s own `GetXX` getters
+(`GetActualTCPNum` etc.) are unaffected by any of this and remain the dead
+local-cache reads described elsewhere in this file — only the *force* signal has
+a live push path.
 
-- `backend/robot_link.py`'s code-level default (`CNDE_PORT = _env_port(...,
-  20005)`) matches the **SDK's own class default** — the port every prior
-  live probe found unreachable on this firmware (`CNDE连接失败: timed out`,
-  error `-5`, 2026-07-28).
-- `.env.example` overrides this to `20004`, matching the port prior findings
-  established as the one this firmware actually speaks.
-- The live `.env` as of 2026-08-03 does **not** set `WELDFLEX_CNDE_PORT` at
-  all — meaning, unless something else has changed, the running app falls
-  back to the 20005 default that earlier testing showed times out here. If
-  force telemetry looks dead (zeros, or every read falling through to the
-  idle-only RPC fallback), check this env var before anything else.
-- **The replacement now exists but force has not moved onto it yet.** The
-  port-8083 status push (`backend/robot_feed.py`, decoded by
-  `backend/frame_8083.py`) carries `FT_data[0..5]` at offset 179 and
-  `FT_ActStatus` at 227 in the same frame as everything else — no CNDE class,
-  no port to guess, and it is confirmed streaming on this firmware as of
-  2026-08-03. `FeedSnapshot.fz` / `.ft_values` / `.ft_active` decode it today.
-  `ft_read()` still does **not** read them: force is the last signal left on
-  CNDE, and cutting it over is the open task. Until then the port ambiguity
-  above still governs the live force path.
+**The CNDE port ambiguity is now settled in configuration, not in code.** The
+code-level default (`CNDE_PORT = _env_port(..., 20005)`) still matches the SDK's
+own class default — the port every prior live probe found unreachable on this
+firmware (`CNDE连接失败: timed out`, error `-5`, 2026-07-28). But
+`.env.example`, `deploy/rpi/.env.rpi.example` **and the live `.env`** all now set
+`WELDFLEX_CNDE_PORT=20004`, the port prior findings established this firmware
+actually speaks. Assume CNDE may genuinely connect; do not carry forward the
+older assumption that it is dead — that assumption is what let a latent probe
+bug sit unnoticed (see `error-handling-and-connection.md`, "The heartbeat must
+prove XML-RPC"). Whether the stream actually fills `ForceSnapshot` on this
+firmware is still unverified, but force no longer depends on the answer.
 
 Per [[no-adhoc-robot-probes]] this needs an app-based, read-only check (watch
 `/operator/robot-diagnostics` or the weld-test page for changing force values
@@ -282,14 +281,15 @@ exposes three analog inputs total (`cl_analog_input[2]`, `tl_anglog_input`,
   never the one running). **The raw fallback read returns error 14 for the
   whole time a force-control move (`FT_FindSurface`) is executing** (live
   2026-07-28) — the controller's force-control task owns the sensor. That is
-  routine, not a fault: `weld_probe()` reports it as `ft_err` in its dict
-  instead of raising, and the weld-test page renders running+14 as "sensor
-  busy" (`FT_RPC_BUSY_CODE` in `app.py`). The same code also appears when a
-  latched controller fault blocks all raw reads — see
-  `error-handling-and-connection.md` for telling the two apart. Since the
-  fallback is idle-only, this code will not appear at all while a force-control
-  move is running and the CNDE stream is genuinely live — seeing it during a
-  press is itself a signal that the snapshot has gone stale.
+  routine, not a fault. The same code also appears when a latched controller
+  fault blocks all raw reads — see `error-handling-and-connection.md` for
+  telling the two apart. **Nothing in WeldFlex issues this read any more**, so
+  code 14 no longer reaches the force display at all: `ft_read()` was made
+  cache-only and `weld_probe()` now derives its `ft_err` from whether the cache
+  produced an `fz`, not from an RPC return. `FT_RPC_BUSY_CODE` still sits in
+  `app.py` but nothing reads it — a leftover of the deleted weld-test page,
+  like the rest of that block. Any new code that reaches for this call inherits
+  the problem the removal solved, so don't.
 - **`FT_GetForceTorqueOrigin(self)`** — `Robot.py:7679`. Same dead local-cache
   pattern; the raw RPC is `r.robot.FT_GetForceTorqueOrigin(0)`. Useful as a
   cross-check: if RCS and Origin are identical, decoupling/zeroing is not being

@@ -9,17 +9,17 @@ This document contains full technical notes, bring-up findings, communication sp
 `weld.lua` owns the welding sub-process for a single stud, called per stud by `WeldFlex.lua`.
 The sequence moves through 6 distinct phases:
 
-1. **SEARCH**: `FT_FindSurface` creeps in until light contact (`CONTACT_FORCE_N = 10 N`), then `DI1` must confirm stud-on-work continuity.
-2. **PRESS**: `FT_Control` regulates target force (`PRESS_TARGET_LBF`, default 20 lbf / 88.96 N) while `FT_LinInsertion` drives in, holding pressure for `PRESS_HOLD_MS`.
-3. **WELD**: Re-checks `DI1` and `DI0` (capacitors charged), then pulses `DO0` for `WELD_PULSE_MS` (250 ms) only if `WELD_ARMED = 1`.
+1. **SEARCH**: `FT_FindSurface` approaches at `SEARCH_SPEED_MMS = 5 mm/s` until light contact (`CONTACT_FORCE_N = 10 N`), then `DI1` must confirm stud-on-work continuity.
+2. **PRESS**: `FT_Control` regulates target force (`PRESS_TARGET_LBF`, default 20 lbf / 88.96 N) while `FT_LinInsertion` drives in, holding pressure for `PRESS_HOLD_MS`. `FT_LinInsertion` ends on `PRESS_INSERT_THRESHOLD_LBF` — the target less a `PRESS_TOLERANCE_LBF = 0.5` low edge — while `FT_Control` keeps regulating at the full target through hold. `FTC_GAIN_P` is held at the conservative `0.0001` for all targets while the production press response is commissioned.
+3. **WELD**: Re-checks `DI1` and `DI0` (capacitors charged), then pulses the weld trigger output for its pulse duration, only if `WELD_ARMED = 1`. Both are set by the caller — `WELD_TRIGGER_DO` (default `0`, range 0–15) and `WELD_TRIGGER_PULSE_MS` (default `250`, range 1–1000) — so the trigger is no longer hardwired to DO0.
 4. **HOLD**: Remains at pressure for `POST_WELD_HOLD_MS` (500 ms) while weld solidifies.
-5. **RETRACT**: Returns to safe `Z_CLEARANCE` set by caller.
+5. **RETRACT**: Returns to the pre-search pose captured at the caller's current safe height, via `MoveCart` along the tool's own approach axis; falls back to a workpiece-Z lift to `Z_CLEARANCE` if that pose could not be read. Every departure from a stud goes through this path, faults included — a fault during press leaves the collet on the stud exactly like a good weld does. Lifting along workpiece Z instead dragged the collet sideways by however far the head sits out of square with the bed (~0.9 mm over a 25 mm retract at 2°), and the gun's length turns a light catch into a moment the sensor cannot take: 5 N·m over a ~0.25 m TCP offset is only ~20 N of side load, so the moment range is reached while Fz is still nowhere near its 200 N range. That is the resettable "force sensor range reached" seen on retract.
 6. **FEED**: Pulses `DO1` for `WELD_FEED_PULSE_MS` (250 ms by default) to
   trigger the next stud. The pulse ends before the outer program travels;
   mechanical reload continues during the following stud-to-stud move.
 
 > [!IMPORTANT]
-> Any phase unable to reach its required condition retracts to safe Z, ensures `DO0` is off, drops force overlays, sets `WELD_FAULT`, and returns control to the parent program.
+> Any phase unable to reach its required condition departs the stud (phase 5), ensures the weld trigger output is off, drops force overlays, sets `WELD_FAULT`, and returns control to the parent program.
 
 ---
 
@@ -65,12 +65,17 @@ After a fault, the program parks ~3s on a unique `WaitMs` line site (`1`, `4`, `
 
 ### Required Globals (Set by `WeldFlex.lua`):
 - `weldX`, `weldY`: Stud X/Y offsets from `zerozero` point.
-- `Z_CLEARANCE`: Safe Z clearance offset in work-object frame.
+- `Z_CLEARANCE`: Safe Z clearance offset in work-object frame. The parent
+  program derives it from `PART_Z + SAFE_Z`; `RETRACT_Z` remains recipe data
+  but is not used by the current safe-plane force-motion path.
 - `WELD_RUN`: Set to `1` to execute sequence. Controller upload check executes top-level Lua on upload; without `WELD_RUN = 1`, file is define-only.
 
 ### Optional Globals:
-- `WELD_ARMED`: `1` fires `DO0` for real. Any other value (or unset) suppresses the weld pulse while search, press, hold, retract, and feeder advance still run.
-- `WELD_FORCE_TEST`: `1` = force verification mode. Ignores `DI1` check failure (reports only), stretches hold to 5000 ms, ends after retract, forces `DO0` off.
+- `WELD_ARMED`: `1` fires the weld trigger output for real. Any other value (or unset) suppresses the weld pulse while search, press, hold, retract, and feeder advance still run.
+- `WELD_TRIGGER_DO` / `WELD_TRIGGER_PULSE_MS`: Weld trigger output number and pulse duration. Out-of-range values fall back to `0` and `250` ms respectively.
+- `WELD_SKIP_INTERLOCKS`: `1` bypasses the Atlas `DI1`/`DI0` checks. Set by `WeldFlex.lua` only for a Liberty dry or commissioning build. **A live arc with interlocks bypassed is refused** unless `WELD_LIBERTY_COMMISSIONING` is also `1`.
+- `WELD_LIBERTY_COMMISSIONING`: `1` permits the interlock bypass above, and skips the Atlas pre-fire input re-check.
+- `WELD_SKIP_FEED`: `1` suppresses the phase 6 feeder pulse.
 - `WELD_PRESS_LBF`: Press target in lbf, overriding 20.0 lbf default (clamped up to `PRESS_TARGET_MAX_LBF = 22.0 lbf` / 97.9 N), keeping `FT_LinInsertion` below its documented 100 N threshold limit.
 - `WELD_FEED_PULSE_MS`: Feeder trigger duration in ms, provided by the
   generated parent program. Values outside 1-10000 ms use the 250 ms default.
@@ -83,9 +88,9 @@ reload timer begins with the prior `DO1` pulse. After the electrical pulse ends,
 the next horizontal move and any generated dwell consume the rest of the
 recipe's reload time.
 
-DSC applies only to the post-weld horizontal move at retract height. Home,
-first-stud approach, descent, and return-to-home continue using the recipe's
-normal motion speed. It is disabled by default and refuses to build until
+DSC applies only to the post-weld horizontal move at safe height. Home,
+first-stud approach, force-guided descent, and return-to-home continue using
+the recipe's normal motion speed. It is disabled by default and refuses to build until
 `WELDFLEX_DSC_CALIBRATED=1` confirms a dry-run calibration for the controller's
 actual `Lin` timing model. The machine-level calibration values live in `.env`;
 restart the backend after changing them.

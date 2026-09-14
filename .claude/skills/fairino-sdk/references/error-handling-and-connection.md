@@ -50,9 +50,58 @@ Consequences for anyone writing against this:
   not a reason to reconnect.
 - An operator `disconnect` outranks a live feed. Disconnect is an intent, not a
   failure, and the feed must not paper over it.
-- Anything still reading `ConnSnapshot` directly rather than
-  `get_universal_state()` — the job manager's cycle tracker, notably — is still
-  exposed to the XML-RPC outage and will stall through it.
+- Anything reading `ConnSnapshot` directly rather than `get_universal_state()`
+  is exposed to the XML-RPC outage and will stall through it. The job manager's
+  cycle tracker used to be the notable example; it moved to
+  `get_universal_state()` in `f41dd0a` and no longer is.
+
+### The heartbeat must prove XML-RPC, not just read state
+
+`RobotLink._probe_body` is the only thing that decides `CONNECTED`, and
+`CONNECTED` is the only thing that gates `commands_available`. Its two state
+readers (`_read_program_state`, `_read_fault_codes`) both *prefer* the CNDE
+cache, so they can be answered without touching the network at all. That leaves
+exactly one call — `proxy.GetCurrentLine()` — as the probe's evidence that a
+command would still reach the controller.
+
+So that call is mandatory, and `RobotUnreachable` from it is re-raised
+(2026-09-09). Only a transport failure escapes; an `xmlrpc.client.Fault` or an
+odd response shape is still swallowed, because those are the controller
+*answering* over a working socket. **Do not restore the old `except Exception:
+pass` around it**, and do not add a fast path that returns before it: with CNDE
+streaming, the probe would report `CONNECTED` over a completely dead XML-RPC
+channel, the UI would read `ONLINE` through every `FT_FindSurface`, and Stop
+would silently do nothing. `telemetry` state exists precisely to make that
+visible. Pinned by `test_probe_fails_when_xmlrpc_is_dead_even_though_cnde_answers`.
+
+### `FRCNDEClient._robot_state_run_flag` latches True — it is not a liveness signal
+
+When the CNDE receive loop hits a socket error it sets `_sock_com_err[0]`,
+spawns a reconnect thread, `break`s and closes the socket (`Robot.py:1826-1849`)
+— but it never clears `_robot_state_run_flag`, and it closes `_tcp_socket`
+without nulling it. Both stay truthy over a dead stream forever, while
+`robot_state_pkg` keeps whatever values arrived last. Anything testing either
+attribute serves a frozen cache as live data.
+
+`RobotLink._cnde_streaming()` is the check to use: it requires the flag *and* a
+live `_recv_thread`, which does exit on that `break`. (WeldFlex's own
+`ForceSnapshot.is_fresh()` is the equivalent evidence on the force path, since
+`_on_cnde_state` only fires on a fully decoded frame.) Pinned by
+`test_cnde_cache_is_distrusted_once_its_receiver_thread_exits`.
+
+### `CloseRPC()` always raises `AttributeError`
+
+`Robot.py:13737` does `if self.thread.is_alive()`, and **`self.thread` is never
+assigned anywhere in `Robot.py`** — the only assignment in `RPC.__init__` is
+commented out, and was a local `thread` rather than an attribute. Every call
+therefore throws, and "RPC connection closed." never prints.
+
+It is benign in WeldFlex only because `_teardown_raw` wraps it: everything that
+matters happens before the raise (CNDE closed *and nulled*, `robot`,
+`sock_cli_state` and `robot_state_pkg` nulled). Two consequences: never call
+`CloseRPC()` unwrapped, and keep the explicit `_udp_client.close()` /
+`_cnde_client.close()` that follow it — `CloseRPC` never touches `_udp_client`
+at all, so its recv thread would otherwise outlive the connection.
 
 **The supervisor thread owns everything that blocks for seconds**: building
 `Robot.RPC()`, tearing one down (closing `FRCNDEClient` alone can spend ~3s

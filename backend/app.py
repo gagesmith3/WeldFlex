@@ -15,12 +15,13 @@ from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
-from flask import Flask, jsonify, make_response, redirect, render_template, request
+from flask import Flask, Response, jsonify, make_response, redirect, render_template, request, stream_with_context
 from markupsafe import Markup
 import frame_8083 as f8
 from job_manager import JobError, JobManager
 from lua_builder import (
     GATE_MODES,
+    WELDER_PROFILES,
     IO_MONITOR_DEFAULT_MS,
     IO_MONITOR_PATH,
     IO_MONITOR_PROGRAM_NAME,
@@ -45,6 +46,7 @@ logging.basicConfig(
 )
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
+_force_stream_slots = threading.BoundedSemaphore(4)
 
 ROBOT_IP = os.getenv("WELDFLEX_ROBOT_IP", "192.168.58.2")
 KIOSK_MODE = os.getenv("WELDFLEX_KIOSK", "0") == "1"
@@ -54,6 +56,32 @@ PORT = int(os.getenv("PORT", "5000"))
 GATE_MODE = os.getenv("WELDFLEX_GATE_MODE", "pause")
 if GATE_MODE not in GATE_MODES:
     GATE_MODE = "pause"
+
+
+def _liberty_live_config():
+    """Return the explicitly configured Liberty trigger, or its enable error."""
+    if os.getenv("WELDFLEX_LIBERTY_LIVE_ENABLED", "0").strip() != "1":
+        return None, "Set WELDFLEX_LIBERTY_LIVE_ENABLED=1 to enable live Liberty firing."
+
+    values = {}
+    for key in ("WELDFLEX_LIBERTY_TRIGGER_DO", "WELDFLEX_LIBERTY_TRIGGER_PULSE_MS"):
+        raw = os.getenv(key)
+        if raw is None or not raw.strip():
+            return None, f"Set {key} before enabling live Liberty firing."
+        try:
+            values[key] = int(raw)
+        except ValueError:
+            return None, f"{key} must be an integer."
+
+    trigger_do = values["WELDFLEX_LIBERTY_TRIGGER_DO"]
+    pulse_ms = values["WELDFLEX_LIBERTY_TRIGGER_PULSE_MS"]
+    if not 0 <= trigger_do <= 15:
+        return None, "WELDFLEX_LIBERTY_TRIGGER_DO must be DO0 through DO15."
+    if not 1 <= pulse_ms <= 1_000:
+        return None, "WELDFLEX_LIBERTY_TRIGGER_PULSE_MS must be 1 through 1000 ms."
+    return {"trigger_do": trigger_do, "trigger_pulse_ms": pulse_ms}, None
+
+
 robot = WeldFlexRobotService(robot_ip=ROBOT_IP)
 
 # Hold the connection from process start, independent of any browser. Before this the
@@ -191,6 +219,7 @@ def _recipes_enrich(recipes):
             'stud_type': r.get('stud_type') or 'M4',
             'substrate': r.get('substrate') or 'Mild Steel',
             'pressure_setting': _parse_pressure(r.get('pressure_setting')),
+            'welder_profile': r.get('welder_profile') if r.get('welder_profile') in WELDER_PROFILES else 'atlas',
             'dsc_enabled': bool(r.get('dsc_enabled', False)),
             'stud_reload_ms': _parse_stud_reload_ms(r.get('stud_reload_ms')),
         })
@@ -377,6 +406,7 @@ def manager_reports_page():
 
 @app.route("/operator/admin")
 def admin():
+    liberty_config, _ = _liberty_live_config()
     settings = {
         # The live target, not the last-saved .env value — these can differ.
         "robot_ip": robot.robot_ip,
@@ -385,7 +415,10 @@ def admin():
         "studs_data_path": os.getenv("WELDFLEX_STUDS_DATA_PATH", "/fruser/studs/"),
         "status_interval_ms": os.getenv("WELDFLEX_STATUS_INTERVAL_MS", "1000"),
     }
-    return render_template("admin.html", page_title="Admin", settings=settings)
+    return render_template(
+        "admin.html", page_title="Admin", settings=settings,
+        liberty_live_enabled=liberty_config is not None,
+    )
 
 @app.route("/ui/settings/save", methods=["POST"])
 def ui_settings_save():
@@ -496,6 +529,9 @@ def ui_recipes_save():
         speed = None
     dsc_enabled = request.form.get('dsc_enabled') == '1'
     stud_reload_ms = _parse_stud_reload_ms(request.form.get('stud_reload_ms'))
+    welder_profile = (request.form.get('welder_profile') or '').strip().lower()
+    if welder_profile not in WELDER_PROFILES:
+        welder_profile = None
 
     studs_json = (request.form.get('studs_json') or '').strip()
     studs_text = (request.form.get('studs_text') or '').strip()
@@ -526,6 +562,8 @@ def ui_recipes_save():
             existing['stud_type']        = stud_type
             existing['substrate']       = substrate
             existing['pressure_setting'] = pressure_setting
+            if welder_profile is not None:
+                existing['welder_profile'] = welder_profile
             existing['speed']            = speed
             existing['dsc_enabled']      = dsc_enabled
             existing['stud_reload_ms']   = stud_reload_ms
@@ -544,6 +582,7 @@ def ui_recipes_save():
                 'stud_type': stud_type,
                 'substrate': substrate,
                 'pressure_setting': pressure_setting,
+                'welder_profile': welder_profile or 'atlas',
                 'speed': speed,
                 'dsc_enabled': dsc_enabled,
                 'stud_reload_ms': stud_reload_ms,
@@ -669,7 +708,12 @@ def ui_job_load():
     recipe = next((r for r in enriched if r.get("id") == part_id), None)
     if not recipe:
         return jsonify({"ok": False, "error": "Part not found"}), 404
-    arm_mode = (request.form.get("arm_mode") or "live").strip().lower()
+    welder_profile = recipe.get("welder_profile", "atlas")
+    if welder_profile not in WELDER_PROFILES:
+        welder_profile = "atlas"
+    arm_mode = (request.form.get("arm_mode") or recipe.get("arm_mode") or "live").strip().lower()
+    if welder_profile == "liberty":
+        arm_mode = "dry"
     if arm_mode not in ("live", "dry"):
         arm_mode = "live"
     speed_raw = (request.form.get("speed") or "").strip()
@@ -685,6 +729,7 @@ def ui_job_load():
             cycles,
             gate_mode=gate_mode,
             arm_mode=arm_mode,
+            welder_profile=welder_profile,
             safe_z=recipe.get("safe_z", 60.0),
             retract_z=recipe.get("retract_z", 10.0),
             part_z=recipe.get("part_z", 0.0),
@@ -750,6 +795,94 @@ def ui_job_history():
 @app.route("/operator/job-history")
 def job_history_page():
     return render_template("job_history.html", page_title="Run History")
+
+
+@app.route("/operator/liberty")
+def liberty_page():
+    config, config_error = _liberty_live_config()
+    with _rec_lock:
+        recipes = _recipes_load()
+    liberty_recipes = [
+        recipe for recipe in _recipes_enrich(_hide_faceplate_recipe(recipes))
+        if recipe.get("welder_profile") == "liberty" and recipe.get("studs")
+    ]
+    return render_template(
+        "liberty.html", page_title="Liberty Endurance Test",
+        config=config, config_error=config_error, recipes=liberty_recipes,
+    )
+
+
+@app.route("/ui/liberty/start", methods=["POST"])
+def ui_liberty_start():
+    config, config_error = _liberty_live_config()
+    title = "Liberty Endurance Test"
+    if config_error:
+        return render_template(
+            "partials/command_result.html", ok=False, title=title,
+            payload={"error": config_error},
+        )
+
+    confirmation = (request.form.get("confirmation") or "").strip().upper()
+    if confirmation != "FIRE LIBERTY":
+        return render_template(
+            "partials/command_result.html", ok=False, title=title,
+            payload={"error": "Type FIRE LIBERTY to start a live Liberty endurance test."},
+        )
+
+    recipe_id = (request.form.get("recipe_id") or "").strip()
+    try:
+        cycles = int(request.form.get("cycles") or "")
+    except ValueError:
+        cycles = 0
+    if cycles < 1:
+        return render_template(
+            "partials/command_result.html", ok=False, title=title,
+            payload={"error": "Cycle count must be at least 1."},
+        )
+
+    with _rec_lock:
+        recipes = _recipes_load()
+    recipe = next((recipe for recipe in _recipes_enrich(recipes) if recipe.get("id") == recipe_id), None)
+    if not recipe or recipe.get("welder_profile") != "liberty":
+        return render_template(
+            "partials/command_result.html", ok=False, title=title,
+            payload={"error": "Select a saved Liberty recipe."},
+        )
+    if not recipe.get("studs"):
+        return render_template(
+            "partials/command_result.html", ok=False, title=title,
+            payload={"error": "The selected Liberty recipe has no stud locations."},
+        )
+
+    try:
+        job.load(
+            recipe["id"], recipe["name"], recipe["studs"], cycles,
+            gate_mode="none", arm_mode="live", welder_profile="liberty",
+            liberty_commissioning=True,
+            weld_trigger_do=config["trigger_do"],
+            weld_trigger_pulse_ms=config["trigger_pulse_ms"],
+            safe_z=recipe.get("safe_z", 60.0),
+            retract_z=recipe.get("retract_z", 10.0),
+            part_z=recipe.get("part_z", 0.0),
+            pressure_setting=recipe.get("pressure_setting", "high"),
+            stud_type=recipe.get("stud_type", "M4"),
+            substrate=recipe.get("substrate", "Mild Steel"),
+            speed=recipe.get("speed"),
+            dsc_enabled=recipe.get("dsc_enabled", False),
+            stud_reload_ms=recipe.get("stud_reload_ms"),
+            kind="liberty_endurance",
+        )
+        job.start()
+        payload = {
+            "message": "Liberty endurance test launched.",
+            "studs_per_cycle": len(recipe["studs"]),
+            "cycles": cycles,
+            "trigger": f"DO{config['trigger_do']} for {config['trigger_pulse_ms']} ms",
+        }
+        ok = True
+    except JobError as exc:
+        ok, payload = False, {"error": str(exc)}
+    return render_template("partials/command_result.html", ok=ok, title=title, payload=payload)
 
 @app.route("/operator/faceplate")
 def faceplate_page():
@@ -1115,10 +1248,9 @@ def ui_ft_inspect():
     try:
         config = robot.ft_config()
         compensation = robot.ft_compensation()
-        frames = robot.ft_frame_readings()
         return render_template(
             "partials/ft_setup_status.html", ok=True,
-            config=config, compensation=compensation, frames=frames,
+            config=config, compensation=compensation,
         )
     except Exception as e:
         return render_template("partials/ft_setup_status.html", ok=False, error=str(e))
@@ -1126,9 +1258,10 @@ def ui_ft_inspect():
 @app.route("/ui/ft/reading")
 def ui_ft_reading():
     try:
-        ustate = robot.get_universal_state()
         reading = robot.ft_read()
-        fz = (ustate.fz_lbf / N_TO_LBF) if ustate.fz_lbf is not None else (reading["fz"] * FT_FZ_DISPLAY_SIGN)
+        if reading["fz"] is None:
+            raise ValueError("Force data is unavailable or stale")
+        fz = reading["fz"] * FT_FZ_DISPLAY_SIGN
         frac = min(abs(fz) / FT_FZ_FULL_SCALE_N, 1.0)
         if frac >= FT_CRIT_FRAC:
             level = "crit"
@@ -1150,6 +1283,37 @@ def ui_ft_reading():
             lbf=None, fz_n=None, pct=0, level="ok", sign="pos", source=None,
             age_s=None,
         )
+
+@app.route("/ui/ft/stream")
+def ui_ft_stream():
+    """Push cached force readings without consuming the robot command queue."""
+    if not _force_stream_slots.acquire(blocking=False):
+        return Response(status=429, headers={"Retry-After": "2"})
+
+    released = False
+
+    def release():
+        nonlocal released
+        if not released:
+            released = True
+            _force_stream_slots.release()
+
+    def readings():
+        try:
+            yield "retry: 2000\n\n"
+            deadline = time.monotonic() + 30.0
+            while time.monotonic() < deadline:
+                yield "data: " + json.dumps({"html": ui_ft_reading()}) + "\n\n"
+                time.sleep(0.1)
+        finally:
+            release()
+
+    response = Response(
+        stream_with_context(readings()), mimetype="text/event-stream",
+        headers={"Cache-Control": "no-cache, no-store", "X-Accel-Buffering": "no"},
+    )
+    response.call_on_close(release)
+    return response
 
 # ---------------------------------------------------------------------------
 # Weld test — one stud, one pass of programs/weld.lua.

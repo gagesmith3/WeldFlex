@@ -38,6 +38,11 @@ for cycleIndex = 1, cycleCount do --{{LOOP_START}}
     if ARM_MODE == "live" then
         WELD_ARMED = 1
     end
+    WELD_SKIP_INTERLOCKS = 0
+    WELD_SKIP_FEED = 1
+    WELD_LIBERTY_COMMISSIONING = 0
+    WELD_TRIGGER_DO = 0
+    WELD_TRIGGER_PULSE_MS = 250
     WELD_SAFE_Z = SAFE_Z
     Z_CLEARANCE = PART_Z + SAFE_Z
     WELD_PART_Z = PART_Z

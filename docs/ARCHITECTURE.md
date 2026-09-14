@@ -38,11 +38,11 @@ directly, and no run state lives in `app.py`.
 
 1. **Operator selects a part** — `/operator/parts` renders the library from
    `recipes.json`.
-2. **Prompted for cycle count** — the run modal in
-   [`parts.html:55-83`](../backend/templates/parts.html#L55-L83).
-3. **Job is loaded into the Job Manager** — `POST /ui/job/load`
-   ([`app.py:479`](../backend/app.py#L479)) calls `JobManager.load()`, which
-   queues the part and redirects the browser to `/operator`.
+2. **Prompted for cycle count** — the `#run-modal` block in
+   [`parts.html`](../backend/templates/parts.html).
+3. **Job is loaded into the Job Manager** — `POST /ui/job/load` in
+   [`app.py`](../backend/app.py) calls `JobManager.load()`, which queues the
+   part and redirects the browser to `/operator`.
 4. **Operator hits Run** — `POST /ui/job/start`. `JobManager.start()` returns
    immediately in `starting` and does the slow work (build → upload → run) on its
    own thread, so the POST never blocks the kiosk for the length of a program load.
@@ -56,14 +56,15 @@ Because progress is driven by the manager's own thread rather than browser
 polling, **a job keeps advancing with the kiosk tab closed** — that is the
 "persists no matter what page the user is on" requirement, and it is met.
 
-Step 5 is the fragile one. `GetCurrentLine` is an XML-RPC poll, and the
-controller stops answering XML-RPC for the whole of a force operation — so a
-cycle boundary that falls inside that window can be missed. Everything else
-observable (program state, line, fault codes) has already moved to a pushed
-status feed on port 8083 that rides through the outage; cycle counting has not,
-and the intended fix is a counter the program publishes on digital outputs
-rather than a line number the host has to catch mid-flight.
-`docs/ROBOT_TELEMETRY.md` is the authoritative spec for all of this.
+Step 5 used to be the fragile one and no longer is. Cycle counting read
+`GetCurrentLine` over XML-RPC, and the controller stops answering XML-RPC for
+the whole of a force operation — so a cycle boundary falling inside that window
+could be missed. Since `f41dd0a` the monitor reads the consolidated
+`get_universal_state()`, which takes the line from the pushed port-8083 feed
+that rides through the outage. What remains is that a cycle boundary is still a
+*line number* the host has to recognise rather than a count the program
+publishes outright. `docs/ROBOT_TELEMETRY.md` is the authoritative spec for all
+of this.
 
 ## How a part becomes a program
 
@@ -89,6 +90,17 @@ Consequences worth knowing:
   The pendant's Auto Speed is a global multiplier/cap over those percentages;
   set it to 100% before calibrating or running DSC, or even a generated 100%
   leg will be limited below its intended speed.
+- **The welder profile is emitted the same way.** A recipe carries a
+  `welder_profile` — `atlas` (default) or `liberty` — and the builder emits
+  `WELDER_PROFILE`, `LIBERTY_COMMISSIONING`, `WELD_TRIGGER_DO` and
+  `WELD_TRIGGER_PULSE_MS` alongside the geometry, so the weld trigger output is
+  no longer hardwired to DO0. **Liberty is dry-run only** unless
+  `liberty_commissioning` is set: `lua_builder._validate_welder_profile` and
+  `JobManager.load()` each raise on a live Liberty job, and the check is
+  duplicated on purpose so neither entry point can bypass the other. A Liberty
+  dry or commissioning build sets `WELD_SKIP_INTERLOCKS = 1` in the program, and
+  `weld.lua` refuses to fire an arc with interlocks bypassed unless the run is
+  specifically a commissioning run.
 - `WeldFlex.lua` applies each stud position through
   `PointsOffsetEnable(0, ...)`, so percentage-mode `Lin` calls must use
   `Lin(point, speed, -1, 0, 0)`. Its final `0` means no *inline* offset; it is
@@ -114,7 +126,7 @@ Consequences worth knowing:
 | Mode | Behaviour | Status |
 |---|---|---|
 | `none` | Runs straight through | Works |
-| `pause` | Manager issues `ProgramPause` when it sees the cycle edge | **Default.** Works, but lands wherever the robot is inside the boundary dwell rather than exactly on the gate line |
+| `pause` | The **program pauses itself** — `lua_builder._gate_rows` emits a `Pause(PAUSE_GATE_CODE)` at the gate line, skipped after the last cycle. The host only watches for the paused state and offers Continue | **Default.** A host-issued `ProgramPause` is now only the backstop `job_manager._gate` sends if the program has not held by the end of the dwell — gating *by* `ProgramPause` did not reliably stop the robot on hardware |
 | `di` | Lua blocks on `WaitDI` for a part-ready input | Built, **not commissioned** — the DI number is unknown and Python cannot read the gate back |
 
 ## Not yet implemented
@@ -124,9 +136,9 @@ assume they work.
 
 | # | Gap | Detail | Owner |
 |---|---|---|---|
-| 1 | **No explicit live-run arming confirmation** | Live jobs set `WELD_ARMED = 1` automatically; dry jobs set it to `0` and run the same motion/process sequence without pulsing DO0. There is no separate arm/disarm confirmation between loading a live job and starting it. | Unassigned |
-| 2 | **User-entered waits are a dead field** | Every recipe carries a `pause_points: []` written at [`app.py:382`](../backend/app.py#L382), but nothing reads it — not `lua_builder.py`, not the part designer. `lua_builder._stud_rows` consumes only `x` and `y`. The per-cycle `gate_mode` is a *different* feature and does not cover this. | Deferred — wait system to be refactored later |
-| 3 | **The telemetry cutover is half done** | Program state, current line and fault codes now come from the port-8083 push. Force still rides the legacy CNDE stream — on a port the live `.env` does not set, defaulting to one that has never worked here — so **assume force may be dead in production until proven on hardware**. DI still rides the controller-Lua sysvar relay, and cycle counting still rides XML-RPC. | Gage — in progress; see `docs/ROBOT_TELEMETRY.md` |
+| 1 | **No explicit live-run arming confirmation** | Live jobs set `WELD_ARMED = 1` automatically; dry jobs set it to `0` and run the same motion/process sequence without pulsing the weld trigger output. There is no separate arm/disarm confirmation between loading a live job and starting it. | Unassigned |
+| 2 | **User-entered waits are a dead field** | Every recipe carries a `pause_points: []` — written in two places in [`app.py`](../backend/app.py), read nowhere — not `lua_builder.py`, not the part designer. `lua_builder._stud_rows` consumes only `x` and `y`. The per-cycle `gate_mode` is a *different* feature and does not cover this. | Deferred — wait system to be refactored later |
+| 3 | **The telemetry cutover is essentially done** | Program state, current line, fault codes, force, cycle counting **and now the DI and TCP-pose displays** come from the port-8083 push; CNDE survives only as a force fallback, so a dead CNDE port no longer means dead force. The heartbeat is down to one round trip while a frame is fresh. What is left is structural, not a migration: Lua system variables (the phase code and press diagnostics) have no feed equivalent and stay on XML-RPC permanently. | Gage — see `docs/ROBOT_TELEMETRY.md` |
 
 Gap 2 is the one most likely to mislead: the data model looks like it supports
 per-stud waits and it does not.

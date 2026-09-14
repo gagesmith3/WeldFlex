@@ -2,7 +2,7 @@
 
 ## Route inventory
 
-Page routes (`app.py`) — verified against the code 2026-08-05:
+Page routes (`app.py`) — verified against the code 2026-09-09:
 ```
 /                                   landing.html
 /operator                           operator.html
@@ -16,19 +16,27 @@ Page routes (`app.py`) — verified against the code 2026-08-05:
 /operator/tcp-calibrate             tcp_calibrate.html
 /operator/robot-diagnostics         robot_diagnostics.html
 /operator/settings                  settings.html
+/operator/liberty                   liberty.html   (endurance test — .env-gated, see below)
 /manager                            manager.html   (standalone shell — does not extend base.html)
 ```
 
-There is **no `/operator/liberty`** and no `liberty.html` — the Liberty
-experiment was removed and replaced by `job_manager.py`. Likewise there is no
-`/operator/calibrate`; `calibrate.html` is orphaned (see below).
+**`/operator/liberty` and `liberty.html` exist again** — not the old removed
+experiment, but the Liberty endurance page built on the `welder_profile`
+discriminator, paired with `POST /ui/liberty/start`. It runs a saved
+Liberty-profile recipe and is disabled unless `WELDFLEX_LIBERTY_LIVE_ENABLED`,
+`WELDFLEX_LIBERTY_TRIGGER_DO` and `WELDFLEX_LIBERTY_TRIGGER_PULSE_MS` are all
+set in `.env`. Earlier revisions of this file said no such route or template
+existed; that is no longer true. There is still no `/operator/calibrate`;
+`calibrate.html` is orphaned (see below).
 
 **`/operator/weld-test` is gone** — deleted in commit `11aff8c` (2026-08-03)
 along with `weld_test.html`, `lua_builder.build_weld_test_lua`, and its
-`/ui/weld-test/*` routes. `app.py` and `robot_service.py` still carry a few
-unreferenced leftovers from it (`_weld_test` dict, `_weld_test_toast()`,
-`_start_weld_telemetry()`, `weld_probe()`) — dead code, not a route to build
-against. If you need "one special Lua run with its own controls" again, the
+`/ui/weld-test/*` routes. `app.py` still carries a few unreferenced leftovers from it
+(the `_weld_test` dict, `_weld_test_toast()`, `_start_weld_telemetry()` and the
+`WELDFLEX_WELD_TEST_*_POLL_MS` settings) — dead code, not a route to build
+against. **`robot_service.weld_probe()` is not among them**: the Job Manager's
+telemetry sampler calls it every `JOB_TELEMETRY_INTERVAL_S` during a run, so it
+is live production code. Earlier revisions of this file listed it as dead. If you need "one special Lua run with its own controls" again, the
 `faceplate` feature below is the current pattern: it reuses `JobManager` and
 `partials/current_job.html` rather than a standalone runner.
 
@@ -39,10 +47,30 @@ nested further (never `/ui/tcp/calibrate`). Live features: `connection`,
 `diagnostics`, `faceplate`, `ft`, `job`, `jog`, `manager`, `parts`, `recipes`,
 `settings`, `tcp-calibrate`.
 
-`ft` is `/ui/ft/{reading,setup,zero,deactivate}`: `reading` is polled at 300 ms
-by `force_sensor.html` (lbs-only Fz readout); `setup` and `zero` are wired to
-that page's Initialize/Zero buttons (toast responses); `deactivate` exists but
-has no UI caller — deliberate, not an orphan to build on.
+`ft` is `/ui/ft/{reading,stream,inspect,setup,zero,deactivate}`. `setup` and
+`zero` are wired to `force_sensor.html`'s Initialize/Zero buttons (toast
+responses); `deactivate` exists but has no UI caller — deliberate, not an orphan
+to build on. The readout itself is the one place in the app that does **not**
+use an HTMX poll:
+
+- `reading` renders `partials/ft_reading.html` and now raises rather than
+  falling back to `get_universal_state()` when force is unavailable, so a stale
+  cache renders the error partial instead of a plausible-looking number.
+- `stream` is the same partial over Server-Sent Events — 10 Hz, capped at four
+  concurrent streams by a module-level `BoundedSemaphore` (a fifth client gets
+  `429` + `Retry-After`), self-terminating after 30 s with `retry: 2000` so the
+  browser reconnects on its own.
+- `backend/static/js/ft_live.js` drives it, and falls back to polling `reading`
+  with `fetch` when `EventSource` is missing or the stream errors. It closes the
+  stream on `visibilitychange`/`pagehide` and restores the page's server-rendered
+  "no fresh reading" markup rather than leaving a frozen value on screen.
+- `force_sensor.html` therefore no longer imports `htmx_mount`; it server-renders
+  the stale state into `#ft-readout` and lets the script take over.
+
+This is affordable **only because `robot.ft_read()` is a pure cache read**. If
+anything behind `/ui/ft/reading` ever issues an RPC again, 10 Hz becomes 10
+robot round trips a second per viewer. See `docs/ROBOT_TELEMETRY.md`,
+"Host-side discipline".
 
 `faceplate` is `POST /ui/faceplate/load` — queues a maintenance weld run for
 shop fixture faceplates through the same `JobManager` real part jobs use.
@@ -112,8 +140,9 @@ still in the code (see the audit log).
 | `partials/status.html` + `live_status_mount` macro (`components/ui.html:90-92`, default endpoint `/ui/status`) | Neither the macro nor the partial is invoked from any template; `/ui/status` doesn't exist. | `partials/connection_chips.html` via `/ui/connection`, or `partials/diagnostics_readout.html` via `/ui/diagnostics` |
 | `/operator/calibrate` + `/ui/calibrate/status\|enable-drag\|record-pin\|goto-clearance\|apply\|reset` | Linked from `calibration.html`; `calibrate.html`/`partials/calibrate_steps.html` exist and target all 6 endpoints — **none of these routes exist in `app.py` yet.** | This is the next planned feature — see `state-and-session.md` and the `fairino-sdk` skill's `coordinate-calibration.md` |
 
-`home.html`, `partials/home_current_run.html` and `liberty.html` have all since
-been deleted — earlier revisions of this file listed them as orphans. The
+`home.html` and `partials/home_current_run.html` have since been deleted —
+earlier revisions of this file listed them as orphans. (`liberty.html` was
+deleted too, but a new one now backs `/operator/liberty` — see above.) The
 current job panel is `partials/current_job.html`, mounted from
 `operator.html:10` via `htmx_mount(..., '/ui/job/status', 'load', 'innerHTML')`;
 the partial then carries its own adaptive poll trigger, so that mount only fires

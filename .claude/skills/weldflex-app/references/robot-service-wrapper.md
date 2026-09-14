@@ -8,47 +8,52 @@ method should follow the standard pattern below.
 
 ## `_call()` / `_unpack()` / `_has_conn_error()`
 
+> [!IMPORTANT]
+> **`_call` no longer owns the connection.** It is now a thin forwarder to
+> `RobotLink.call()`, which owns client construction, teardown, retries and the
+> worker thread. `WeldFlexRobotService` has no `self._robot`, no `self._executor`
+> and no `_close_client`. Anything below that describes this file managing an
+> `Robot.RPC` handle itself is describing a structure that no longer exists;
+> `backend/robot_link.py` and the `fairino-sdk` skill's
+> `error-handling-and-connection.md` are the current references for the
+> lifecycle.
+
 ```python
-SDK_TIMEOUT_S = 5.0   # robot_service.py:56
-
-def _call(self, fn, timeout=SDK_TIMEOUT_S, retries=3):
-    for attempt in range(retries):
-        try:
-            with self._lock:
-                if self._robot is None:
-                    self._robot = Robot.RPC(self.robot_ip)
-                client = self._robot
-            future = self._executor.submit(lambda: fn(client))
-            result = future.result(timeout=timeout)
-            if self._has_conn_error(result):
-                raise RuntimeError("SDK reported communication failure")
-            return result
-        except Exception as e:
-            with self._lock:
-                if self._robot is not None:
-                    self._close_client(self._robot)
-                    self._robot = None            # force reconnect next attempt
-            if attempt == retries - 1:
-                if isinstance(e, concurrent.futures.TimeoutError):
-                    raise RuntimeError(f"Robot did not respond within {int(timeout)}s — connection may be lost.")
-                raise e
-            time.sleep(0.1)
+def _call(self, fn, timeout=SDK_TIMEOUT_S, retries=3,
+          priority=0, coalesce_key=None, rpc_timeout=None):
+    """Run an SDK call on the link's worker thread with a hard timeout."""
+    return self._link.call(
+        fn, timeout=timeout, retries=retries,
+        label=getattr(fn, "__name__", "call"),
+        priority=priority, coalesce_key=coalesce_key, rpc_timeout=rpc_timeout,
+    )
 ```
-(`robot_service.py:111-135`) — acquires `self._lock`, lazily creates
-`Robot.RPC(self.robot_ip)` if needed, submits the call to the executor with a
-hard `timeout`, checks the result for connection-error codes, and on *any*
-exception closes+nulls the client (forcing a fresh `Robot.RPC` on the next
-attempt) before retrying up to `retries` times with a `0.1s` backoff.
 
-- **`_unpack(response)`** (`robot_service.py:150-160`) normalizes the SDK's
-  inconsistent return shapes — `(err_code, value)` tuple, `(err_code,)`
-  singleton, bare int, or opaque non-numeric — into `(int, Any)`. See the
-  `fairino-sdk` skill's `error-handling-and-connection.md` for *why* the SDK's
-  shapes vary this much; this helper is what absorbs that variance so callers
-  don't have to.
-- **`_has_conn_error(val)`** (`robot_service.py:137-148`) recursively checks
-  for SDK codes `-4`/`-3`/`-2` anywhere in a nested result and triggers client
-  recreation + retry.
+The four keyword arguments beyond `timeout`/`retries` are the ones worth
+knowing:
+
+- **`priority`** — operator command (`0`) beats core heartbeat (`1`) beats
+  detailed telemetry (`2`) on the link's single worker.
+- **`coalesce_key`** — equal requests sharing a connection generation share one
+  worker future instead of queueing duplicate controller reads. Key per *thing
+  read*, not per caller (`weld_probe` uses `f"weld-sysvar:{slot}"`).
+- **`rpc_timeout`** — narrows the XML-RPC transport's socket timeout for this
+  one call, then restores it. `timeout` bounds how long *you* wait; `rpc_timeout`
+  bounds how long the **worker** is occupied, which is what actually delays the
+  next operator command. Telemetry reads pass it (`TELEMETRY_RPC_TIMEOUT_S`,
+  0.5 s); commands should not.
+- A call whose caller has already timed out is dropped before it executes rather
+  than run against a worker nobody is waiting on.
+
+- **`_unpack(response)`** normalizes the SDK's inconsistent return shapes —
+  `(err_code, value)` tuple, `(err_code,)` singleton, bare int, or opaque
+  non-numeric — into `(int, Any)`. See the `fairino-sdk` skill's
+  `error-handling-and-connection.md` for *why* the SDK's shapes vary this much;
+  this helper is what absorbs that variance so callers don't have to.
+- **`_has_conn_error(val)`** recursively checks for SDK codes `-4`/`-3`/`-2`
+  anywhere in a nested result. It and `_is_conn_code` are now `staticmethod`
+  re-exports of `robot_link.has_conn_error` / `is_conn_code`, so the link's own
+  dispatch path and the wrapper layer cannot drift apart.
 
 ## Standard method pattern
 
@@ -63,25 +68,25 @@ def some_action(self, ...) -> ReturnType:
     return value
 ```
 
-Concrete examples: `pause_program()` (`robot_service.py:162-166`),
-`tcp_compute_and_apply()` (`robot_service.py:369-379`), `jog_step()`
-(`robot_service.py:315-326`). This is the pattern to copy for any new
+Concrete examples: `pause_program()`, `tcp_compute_and_apply()`, `jog_step()`. This is the pattern to copy for any new
 SDK-backed method — including the work-object calibration methods
 (`wobj_enable_drag`/`wobj_record_point`/`wobj_compute_and_apply`, mirroring
 `tcp_enable_drag`/`tcp_record_point`/`tcp_compute_and_apply`).
 
 ## Named deviations
 
-- **`status()`/`diagnostics()`** (`robot_service.py:427-497`) use `retries=1`
-  instead of the default 3 — since they're polled every ~1s, a slow retry loop
-  would stack up requests. They also manually force-close the client only when
-  `-4` comes back from *both* underlying calls simultaneously, rather than
-  relying on `_has_conn_error` alone — a single `-4` from one call isn't
-  necessarily fatal (e.g. `GetCurrentLine` can transiently `-4` while
-  `GetProgramState` succeeds).
-- **`reconnect()`** (`robot_service.py:505-511`) is the manual "force a new
-  SDK client" escape hatch, surfaced by `/ui/diagnostics/reconnect`.
-- **`jog_step()`** (`robot_service.py:315-335`) is the one method that
+- **`status()`/`diagnostics()` do no robot I/O at all.** They read
+  `self._link.snapshot()` and shape it. Polled once a second by every open page,
+  so this is the point: the controller is contacted once per heartbeat by the
+  supervisor regardless of how many browsers are watching. The same now holds for
+  `get_universal_state()`, `ft_read()`, `force_snapshot()` and `feed_snapshot()`
+  — see gotcha 15 in the SKILL. Any new polled route must follow them; a route
+  that calls `_call()` per poll multiplies robot traffic by the number of open
+  tabs.
+- **`reconnect()`** is one line — `self._link.request_reconnect()`, which asks
+  the supervisor thread to cycle the client. It does **not** build or tear down
+  anything on the calling thread. Surfaced by `/ui/diagnostics/reconnect`.
+- **`jog_step()`** is the one method that
   combines a command call with a blocking wait loop instead of returning
   immediately: it calls `StartJOG`, then polls `GetRobotMotionDone()` (with
   `retries=1`) up to `JOG_MOTION_TIMEOUT_S=5.0` at `JOG_MOTION_POLL_S=0.02s`
@@ -93,7 +98,7 @@ SDK-backed method — including the work-object calibration methods
 ## The jog ref-mapping table
 
 ```python
-# robot_service.py:67-73
+# robot_service.py, above the class
 JOG_START_REF = {
     ("cartesian", "base"): 2,
     ("cartesian", "tool"): 4,
@@ -111,9 +116,10 @@ support joint mode (`ref=0`) — don't re-derive the ref numbers from memory.
 
 The SDK's `GetProgramState` can return `4` (drag-teach mode active), a value
 its own docstring never mentions (see the `fairino-sdk` skill's
-`program-and-file-management.md`). `robot_service.py`'s `STATE_MAP`
-(`robot_service.py:58`) only maps `0`/`1`/`2`/`3` → a read of `4` falls
-through to `"unknown"`. This matters if a future feature (e.g. work-object
-drag-teach) leaves the robot in drag mode while something else polls
-`status()`/`diagnostics()` — the UI will show "unknown" rather than something
-meaningful. Not currently fixed; see `../../sdk-alignment-findings.md`.
+`program-and-file-management.md`). **`STATE_MAP` now handles it** — it maps
+`-1` → `"offline"`, `0`/`1` → `"stopped"`, `2` → `"running"`, `3` → `"paused"`
+and `4` → `"drag"`, so a robot left in drag-teach reads as `drag` rather than
+`unknown`. Earlier revisions of this file said it fell through to `"unknown"`
+and was "not currently fixed"; that is no longer true. `frame_8083.PROGRAM_STATES`
+carries the same `1`–`4` mapping for the pushed feed, and the two must agree — the
+telemetry cutover relies on it being a change of source, not of meaning.

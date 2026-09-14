@@ -52,6 +52,7 @@ PRESS_LBF_MAX = 22.0
 
 GATE_MODES = ("none", "pause", "di")
 ARM_MODES = ("live", "dry")
+WELDER_PROFILES = ("atlas", "liberty")
 
 # Dynamic speed compensation stays opt-in until measurements from the actual
 # controller motion path have established a conservative timing model. The
@@ -363,11 +364,30 @@ def _parse_pressure(val: float | int | str | None) -> float:
         return PRESSURE_LBF_MAP.get(str(val).lower().strip(), 20.0)
 
 
+def _validate_welder_profile(
+    welder_profile: str, arm_mode: str, liberty_commissioning: bool
+) -> None:
+    if welder_profile not in WELDER_PROFILES:
+        raise ValueError(
+            f"Unknown welder_profile {welder_profile!r}; expected one of {WELDER_PROFILES}"
+        )
+    if liberty_commissioning and (welder_profile != "liberty" or arm_mode != "live"):
+        raise ValueError("Liberty commissioning requires the live Liberty profile")
+    if welder_profile == "liberty" and arm_mode != "dry" and not liberty_commissioning:
+        raise ValueError(
+            "The LYNX Liberty profile is dry-run only until its live weld interlocks are commissioned"
+        )
+
+
 def build_weldflex_lua(
     studs: Sequence[dict],
     cycles: int,
     gate_mode: str = "pause",
     arm_mode: str = "live",
+    welder_profile: str = "atlas",
+    liberty_commissioning: bool = False,
+    weld_trigger_do: int = 0,
+    weld_trigger_pulse_ms: int = 250,
     template_path: str | os.PathLike | None = None,
     gate_di: int | None = None,
     gate_timeout_ms: int | None = None,
@@ -388,6 +408,7 @@ def build_weldflex_lua(
         raise ValueError(f"Unknown gate_mode {gate_mode!r}; expected one of {GATE_MODES}")
     if arm_mode not in ARM_MODES:
         raise ValueError(f"Unknown arm_mode {arm_mode!r}; expected one of {ARM_MODES}")
+    _validate_welder_profile(welder_profile, arm_mode, liberty_commissioning)
     cycles = int(cycles)
     if cycles < 1:
         raise ValueError(f"cycles must be >= 1, got {cycles}")
@@ -407,6 +428,15 @@ def build_weldflex_lua(
         raise ValueError(f"ft_sensor_num must be in [1, 255], got {ft_sensor_num!r}")
     stud_type_val = stud_type or "M4"
     substrate_val = substrate or "Mild Steel"
+    weld_trigger_do_val = int(weld_trigger_do)
+    if not 0 <= weld_trigger_do_val <= 15:
+        raise ValueError(f"weld_trigger_do must be in [0, 15], got {weld_trigger_do!r}")
+    weld_trigger_pulse_ms_val = int(weld_trigger_pulse_ms)
+    if not 1 <= weld_trigger_pulse_ms_val <= 1_000:
+        raise ValueError(
+            "weld_trigger_pulse_ms must be in [1, 1000], "
+            f"got {weld_trigger_pulse_ms!r}"
+        )
     # Dry runs are for watching travel safely, not production cadence — default
     # them much slower unless the caller asks for a specific speed.
     speed_val = max(1, min(100, int(speed))) if speed is not None else (10 if arm_mode == "dry" else 25)
@@ -433,6 +463,14 @@ def build_weldflex_lua(
             boundary_seen = True
         elif "--{{ARM_MODE}}" in line:
             out.append(f"{indent}ARM_MODE = {format_lua_string(arm_mode)}")
+        elif "--{{WELDER_PROFILE}}" in line:
+            out.append(f"{indent}WELDER_PROFILE = {format_lua_string(welder_profile)}")
+        elif "--{{LIBERTY_COMMISSIONING}}" in line:
+            out.append(f"{indent}LIBERTY_COMMISSIONING = {1 if liberty_commissioning else 0}")
+        elif "--{{WELD_TRIGGER_DO}}" in line:
+            out.append(f"{indent}WELD_TRIGGER_DO = {weld_trigger_do_val}")
+        elif "--{{WELD_TRIGGER_PULSE_MS}}" in line:
+            out.append(f"{indent}WELD_TRIGGER_PULSE_MS = {weld_trigger_pulse_ms_val}")
         elif "--{{SPEED}}" in line:
             out.append(f"{indent}speed = {speed_val}")
         elif "--{{FEED_PULSE_MS}}" in line:

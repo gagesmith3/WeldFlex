@@ -217,7 +217,8 @@ def test_load_accepts_arm_mode_and_passes_it_to_generated_program(tmp_path, monk
     seen = []
 
     def spy(studs, cycles, gate_mode="pause", arm_mode="live", **kwargs):
-        seen.append((arm_mode, kwargs.get("speed"), kwargs.get("dsc_enabled"), kwargs.get("stud_reload_ms")))
+        seen.append((arm_mode, kwargs.get("welder_profile"), kwargs.get("speed"),
+                     kwargs.get("dsc_enabled"), kwargs.get("stud_reload_ms")))
         return real_build(studs, cycles, gate_mode=gate_mode, arm_mode=arm_mode, **kwargs)
 
     monkeypatch.setattr(jm, "build_weldflex_lua", spy)
@@ -226,12 +227,55 @@ def test_load_accepts_arm_mode_and_passes_it_to_generated_program(tmp_path, monk
     mgr = make_manager(tmp_path, robot)
     mgr.load(
         "p1", "Bracket", [{"x": 1, "y": 2}], cycles=1,
-        gate_mode="none", arm_mode="dry", speed=42,
+        gate_mode="none", arm_mode="dry", welder_profile="liberty", speed=42,
         dsc_enabled=True, stud_reload_ms=600,
     )
     mgr.start()
     wait_state(mgr, JobState.RUNNING.value)
-    assert seen == [("dry", 42, True, 600)]
+    assert seen == [("dry", "liberty", 42, True, 600)]
+    mgr.shutdown()
+
+
+def test_live_liberty_commissioning_passes_the_trigger_to_the_builder(tmp_path, monkeypatch):
+    import job_manager as jm
+
+    real_build = jm.build_weldflex_lua
+    seen = []
+
+    def spy(studs, cycles, **kwargs):
+        seen.append((
+            kwargs["liberty_commissioning"],
+            kwargs["weld_trigger_do"],
+            kwargs["weld_trigger_pulse_ms"],
+        ))
+        return real_build(studs, cycles, **kwargs)
+
+    monkeypatch.setattr(jm, "build_weldflex_lua", spy)
+
+    robot = FakeRobot()
+    mgr = make_manager(tmp_path, robot)
+    mgr.load(
+        "liberty-plate", "Liberty Plate", [{"x": 1, "y": 2}], cycles=3,
+        gate_mode="none", arm_mode="live", welder_profile="liberty",
+        liberty_commissioning=True, weld_trigger_do=4, weld_trigger_pulse_ms=120,
+    )
+    mgr.start()
+    wait_state(mgr, JobState.RUNNING.value)
+
+    assert seen == [(True, 4, 120)]
+    mgr.stop()
+    record = json.loads((tmp_path / "run_history.jsonl").read_text(encoding="utf-8"))
+    assert record["liberty_commissioning"] is True
+    assert record["weld_trigger_do"] == 4
+    assert record["weld_trigger_pulse_ms"] == 120
+    events = [
+        json.loads(line)
+        for line in (tmp_path / "run_events.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    load_event = next(event for event in events if event["event"] == "load")
+    assert load_event["detail"]["liberty_commissioning"] is True
+    assert load_event["detail"]["weld_trigger_do"] == 4
+    assert load_event["detail"]["weld_trigger_pulse_ms"] == 120
     mgr.shutdown()
 
 

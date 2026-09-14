@@ -35,6 +35,7 @@ import sys
 import threading
 import time
 import xmlrpc.client
+from contextlib import contextmanager, nullcontext
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -121,6 +122,7 @@ XMLRPC_SOCKET_TIMEOUT_S = _env_float("WELDFLEX_XMLRPC_TIMEOUT_S", 12.0)
 HEARTBEAT_IDLE_S = _env_float("WELDFLEX_HEARTBEAT_IDLE_S", 1.0)
 HEARTBEAT_FAST_S = _env_float("WELDFLEX_HEARTBEAT_FAST_S", 0.5)
 PROBE_TIMEOUT_S = _env_float("WELDFLEX_PROBE_TIMEOUT_S", 12.0)
+TELEMETRY_RPC_TIMEOUT_S = 0.5
 
 # Consecutive probe failures before the link is declared faulted rather than degraded.
 FAIL_THRESHOLD = int(_env_float("WELDFLEX_FAIL_THRESHOLD", 30))
@@ -156,6 +158,15 @@ class _TimeoutTransport(xmlrpc.client.Transport):
     def __init__(self, timeout: float) -> None:
         super().__init__()
         self._timeout = timeout
+
+    @contextmanager
+    def limit_timeout(self, timeout: float):
+        previous = self._timeout
+        self._timeout = min(previous, timeout)
+        try:
+            yield
+        finally:
+            self._timeout = previous
 
     def make_connection(self, host):
         conn = super().make_connection(host)
@@ -643,6 +654,7 @@ class RobotLink:
         label: str = "",
         priority: int = 0,
         coalesce_key: str | None = None,
+        rpc_timeout: float | None = None,
     ) -> Any:
         """Run an SDK call on the worker thread against the current client.
 
@@ -666,9 +678,25 @@ class RobotLink:
                 raise RuntimeError(f"Robot not connected ({snap.state}): {detail}")
 
             try:
+                deadline = time.monotonic() + timeout
+
+                def invoke():
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise concurrent.futures.TimeoutError()
+                    with self._state_lock:
+                        if self._handle is not handle:
+                            raise RuntimeError("Robot connection changed before dispatch")
+                    context = (
+                        handle.rpc.robot("transport").limit_timeout(min(rpc_timeout, remaining))
+                        if rpc_timeout is not None else nullcontext()
+                    )
+                    with context:
+                        return fn(handle.rpc)
+
                 key = None if coalesce_key is None else f"{coalesce_key}:{handle.gen}"
                 future = self._worker.submit(
-                    lambda: fn(handle.rpc),
+                    invoke,
                     label=label or "call",
                     priority=priority,
                     coalesce_key=key,
@@ -679,6 +707,7 @@ class RobotLink:
                 self._note_success()
                 return result
             except concurrent.futures.TimeoutError as exc:
+                future.cancel()
                 # Giving up waiting is not evidence that the link is dead. This call may
                 # simply be queued behind a legitimate long one (a 30s upload), and
                 # tearing the client down here would kill *that* command's connection
@@ -845,7 +874,8 @@ class RobotLink:
                 return 1.0
             if self._handle is None:
                 return min(self._backoff, BACKOFF_MAX_S)
-            return HEARTBEAT_FAST_S if self._fast_heartbeat else HEARTBEAT_IDLE_S
+            fast = self._fast_heartbeat and not self._feed.snapshot().is_fresh()
+            return HEARTBEAT_FAST_S if fast else HEARTBEAT_IDLE_S
 
     def _tick(self) -> None:
         self._drain_teardowns()
@@ -1030,9 +1060,14 @@ class RobotLink:
         cannot safely interleave request/response pairs on one connection.
         """
         future = self._worker.submit(
-            lambda: self._probe_body(client), label="probe", priority=1
+            lambda: self._probe_body(client), label="probe", priority=1,
+            coalesce_key=f"probe:{id(client)}",
         )
-        return future.result(timeout=PROBE_TIMEOUT_S)
+        try:
+            return future.result(timeout=PROBE_TIMEOUT_S)
+        except concurrent.futures.TimeoutError:
+            future.cancel()
+            raise
 
     def _on_cnde_state(self, client: Any, state: Any) -> None:
         """Copy a fully decoded CNDE force frame for every in-process consumer."""
@@ -1053,29 +1088,26 @@ class RobotLink:
             )
 
     def _probe_body(self, client: Any) -> dict[str, Any]:
-        """One real XML-RPC round trip, plus the state the UI needs.
-
-        Calls go through `client.robot` — the raw hardened proxy — rather than the SDK
-        wrappers, for two reasons. The wrappers short-circuit to -4 whenever the global
-        RPC.is_connect is False, which would make a stale flag self-latching and leave
-        the probe unable to ever observe recovery. And they retry forever on socket
-        errors, which is the loop that wedges the worker.
-
-        Everything the diagnostics page shows is gathered here so that page can be
-        served from cache instead of adding robot traffic per poll.
-        """
+        """Prove RPC liveness once; use pushed state whenever it is fresh."""
         proxy = client.robot
-        t0 = time.monotonic()
-        state_raw, state_src = self._read_program_state(client)
-        latency_ms = (time.monotonic() - t0) * 1000.0
-
         line = None
-        try:
-            line = self._second(proxy.GetCurrentLine())
-        except Exception:  # noqa: BLE001 - liveness already established above
-            pass
-
-        fault_main, fault_sub, fault_src = self._read_fault_codes(client)
+        t0 = time.monotonic()
+        with proxy("transport").limit_timeout(TELEMETRY_RPC_TIMEOUT_S):
+            try:
+                line = self._second(proxy.GetCurrentLine())
+            except RobotUnreachable:
+                raise
+            except Exception:
+                pass
+            latency_ms = (time.monotonic() - t0) * 1000.0
+            feed = self.feed_snapshot()
+            if feed.is_fresh() and feed.program_state is not None:
+                state_raw, state_src = feed.program_state, "8083"
+                fault_main, fault_sub = feed.fault_main or None, feed.fault_sub or None
+                fault_src = "8083"
+            else:
+                state_raw, state_src = self._read_program_state(client)
+                fault_main, fault_sub, fault_src = self._read_fault_codes(client)
 
         return {
             "latency_ms": latency_ms,
@@ -1087,11 +1119,26 @@ class RobotLink:
             "fault_src": fault_src,
         }
 
+    @staticmethod
+    def _cnde_streaming(cnde: Any) -> bool:
+        """Is the CNDE receiver alive, or merely started once?
+
+        `_robot_state_run_flag` latches. The SDK's recv thread breaks out of its loop
+        on a socket error (Robot.py:1826-1833) without ever clearing it, and closes
+        `_tcp_socket` without nulling it, so both stay truthy over a dead stream while
+        `robot_state_pkg` holds its last values — trusting either serves a frozen
+        cache as live data. The recv thread exiting is the honest signal.
+        """
+        if cnde is None or not getattr(cnde, "_robot_state_run_flag", False):
+            return False
+        thread = getattr(cnde, "_recv_thread", None)
+        return bool(thread is not None and thread.is_alive())
+
     def _read_program_state(self, client: Any) -> tuple[int | None, str]:
         """Prefer the CNDE real-time stream when active; fall back to RPC query."""
         try:
             cnde = getattr(client, "_cnde_client", None)
-            streaming = bool(cnde is not None and getattr(cnde, "_robot_state_run_flag", False))
+            streaming = self._cnde_streaming(cnde)
             pkg = getattr(client, "robot_state_pkg", None)
             if streaming and pkg is not None:
                 val = getattr(pkg, "program_state", 0)
@@ -1127,7 +1174,7 @@ class RobotLink:
         """Prefer the CNDE real-time stream when active; fall back to RPC query."""
         try:
             cnde = getattr(client, "_cnde_client", None)
-            streaming = bool(cnde is not None and getattr(cnde, "_robot_state_run_flag", False))
+            streaming = self._cnde_streaming(cnde)
             pkg = getattr(client, "robot_state_pkg", None)
             if streaming and pkg is not None:
                 main = getattr(pkg, "main_code", 0)
@@ -1154,7 +1201,7 @@ class RobotLink:
 
         try:
             cnde = getattr(client, "_cnde_client", None)
-            streaming = bool(cnde is not None and getattr(cnde, "_robot_state_run_flag", False))
+            streaming = self._cnde_streaming(cnde)
             pkg = getattr(client, "robot_state_pkg", None)
             if streaming and pkg is not None:
                 return int(pkg.main_code) or None, int(pkg.sub_code) or None, "cache"

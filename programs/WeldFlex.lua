@@ -13,12 +13,11 @@ PRESS_LBF = 20.0 --{{PRESS_LBF}}
 FT_SENSOR_NUM = 1 --{{FT_SENSOR_NUM}}
 STUD_TYPE = "M4" --{{STUD_TYPE}}
 SUBSTRATE = "Mild Steel" --{{SUBSTRATE}}
-ARM_MODE = "live" --{{ARM_MODE}}
-WELDER_PROFILE = "atlas" --{{WELDER_PROFILE}}
-LIBERTY_COMMISSIONING = 0 --{{LIBERTY_COMMISSIONING}}
-WELD_TRIGGER_DO = 0 --{{WELD_TRIGGER_DO}}
-WELD_TRIGGER_PULSE_MS = 250 --{{WELD_TRIGGER_PULSE_MS}}
 BOUNDARY_MS = 1500 --{{BOUNDARY_MS}}
+
+-- weld.lua's run mode (WELD_ARMED, WELD_DI_CHECK), resolved once by
+-- lua_builder.RunMode. Published here and never changed below.
+--{{RUN_MODE}}
 
 -- Home Position (homewf registered point on controller)
 USE_HOME_MOVE = 1
@@ -44,18 +43,6 @@ for cycleIndex = 1, cycleCount do --{{LOOP_START}}
         weldX = stud.x
         weldY = stud.y
         WELD_RUN = 1
-        WELD_ARMED = 0
-        if ARM_MODE == "live" then
-            WELD_ARMED = 1
-        end
-        WELD_SKIP_INTERLOCKS = 0
-        WELD_SKIP_FEED = 0
-        WELD_LIBERTY_COMMISSIONING = LIBERTY_COMMISSIONING
-        if WELDER_PROFILE == "liberty" then
-            if ARM_MODE == "dry" or LIBERTY_COMMISSIONING == 1 then
-                WELD_SKIP_INTERLOCKS = 1
-            end
-        end
         WELD_SAFE_Z = SAFE_Z
         WELD_PART_Z = PART_Z
         Z_CLEARANCE = PART_Z + SAFE_Z

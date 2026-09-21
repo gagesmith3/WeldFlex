@@ -28,9 +28,18 @@
     <label class="run-modal-label" for="run-modal-cycles">Number of cycles</label>
     <input type="number" id="run-modal-cycles" class="pd-create-input run-modal-cycles-input"
            value="1" min="1" max="999" autocomplete="off">
+    {# No default: the operator's tap on Live or Dry is the arming choice for this run. #}
+    <span class="run-modal-label">Weld mode</span>
+    <div class="arm-mode-seg" role="group" aria-label="Weld mode">
+      <button type="button" class="btn arm-mode-btn" data-arm-mode="live" aria-pressed="false"
+              onclick="runModalPickArm('live')">Live</button>
+      <button type="button" class="btn arm-mode-btn" data-arm-mode="dry" aria-pressed="false"
+              onclick="runModalPickArm('dry')">Dry</button>
+    </div>
+    <p id="run-modal-di-note" class="arm-mode-di-note" hidden>DI check is off for this part: DI0 welder ready and DI1 stud on work are not checked.</p>
     <div class="wf-modal-actions">
       <button type="button" class="btn wf-cancel" onclick="runModalCancel()">Cancel</button>
-      <button type="button" class="btn run" onclick="runModalConfirm()">Run</button>
+      <button type="button" class="btn run" id="run-modal-confirm" onclick="runModalConfirm()" disabled>Run</button>
     </div>
   </div>
 </div>
@@ -52,25 +61,41 @@ function syncPartsEditorUrl() {
 {% else %}
 <script>
 let _runRecipeId = null;
+let _runArmMode = null;
 document.querySelectorAll('.js-table-run').forEach(function(btn) {
   btn.addEventListener('click', function() {
     _runRecipeId = btn.dataset.recipeId;
     document.getElementById('run-modal-part-name').textContent = btn.dataset.recipeName;
     document.getElementById('run-modal-cycles').value = '1';
+    document.getElementById('run-modal-di-note').hidden = btn.dataset.diCheck !== '0';
+    runModalPickArm(null);
     document.getElementById('run-modal').removeAttribute('hidden');
     document.getElementById('run-modal-cycles').focus();
     document.getElementById('run-modal-cycles').select();
   });
 });
+// Live or Dry is picked for every run; opening the modal clears the last choice.
+function runModalPickArm(mode) {
+  _runArmMode = mode;
+  document.querySelectorAll('#run-modal [data-arm-mode]').forEach(function(b) {
+    var on = b.dataset.armMode === mode;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
+  document.getElementById('run-modal-confirm').disabled = !mode;
+}
 function runModalCancel() {
   document.getElementById('run-modal').setAttribute('hidden', '');
 }
 async function runModalConfirm() {
+  if (!_runArmMode) return;
   const cycles = Math.max(1, parseInt(document.getElementById('run-modal-cycles').value, 10) || 1);
+  const armMode = _runArmMode;
   runModalCancel();
   const fd = new FormData();
   fd.append('recipe_id', _runRecipeId);
   fd.append('cycles', cycles);
+  fd.append('arm_mode', armMode);
   // Queues the job; the operator page is where it actually gets started.
   const resp = await fetch('/ui/job/load', { method: 'POST', body: fd });
   const data = await resp.json();

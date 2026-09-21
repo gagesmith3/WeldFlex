@@ -352,7 +352,7 @@ def test_get_universal_state_consolidates_robot_sources(monkeypatch):
         is_fresh=lambda: True,
         generation=12,
         tcp_z=145.2,
-        sysvar=lambda slot: {1: 31.0, 2: 0.0, 3: 150.0, 4: 4.8, 5: 1.0, 6: 1.0, 7: 1.0, 8: 20.0}.get(slot),
+        sysvar=lambda slot: {1: 31.0, 2: 0.0, 3: 150.0, 4: 4.8, 5: 1.0, 6: 1.0, 7: 1.0, 8: 20.0, 9: 0.6, 10: -0.2}.get(slot),
     )
     monkeypatch.setattr(service, "_weld_telemetry", fake_telemetry)
 
@@ -370,6 +370,8 @@ def test_get_universal_state_consolidates_robot_sources(monkeypatch):
     assert ustate.last_ft_return == 0
     assert ustate.contact_z == 150.0
     assert ustate.press_travel_mm == 4.8
+    assert ustate.press_hold_travel_mm == 0.6
+    assert ustate.weld_jolt_travel_mm == -0.2
     assert ustate.collision_guard_code == 1
     assert ustate.collision_guard_label == "custom thresholds"
     assert ustate.collision_guard_applied is True

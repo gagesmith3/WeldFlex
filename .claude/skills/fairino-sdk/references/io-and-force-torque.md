@@ -11,17 +11,13 @@ the wrong signal and still "works".
 | **DI1** | **Stud on work** — continuity through welder → work surface → gun. This is what turns "we touched something" into "the stud is seated". | `weld.lua` `DI_STUD_ON_WORK`; `app.py` `WELD_STUD_DI` |
 | **DI0** | **Ready / caps at charge** — the welder itself is able to fire. Drops after every shot, returns when the bank recovers. | `weld.lua` `DI_WELD_READY`; `app.py` `WELD_READY_DI` |
 | **DO0** | Weld trigger (250 ms pulse) | `weld.lua` `DO_WELD` |
-| **DO1** | Stud feeder advance (1 s pulse) | `weld.lua` `DO_FEED`, and `feedCycle.lua` |
+| **DO1** | Stud feeder advance (`WELDFLEX_FEED_PULSE_MS` pulse, 250 ms default) | `weld.lua` `DO_FEED`; `app.py` `FEED_DO` for the Single Shot page's manual Feed button |
 
-**DO1 has a second, different behavior on a faceplate run.** `weld_faceplate.lua`
-(the `/operator/faceplate` maintenance-weld page) holds DO1 **high through the
-inter-cycle pause** instead of the normal 1 s pulse — the operator manually
-feeds the next faceplate while the program is paused, then presses Continue,
-and the next cycle clears DO1 before moving. To keep the normal timed pulse
-from also firing during that path, `weld.lua` gates its own `feedNextStud()`
-call behind a new sentinel (`if WELD_SKIP_FEED ~= 1 then`), which
-`weld_faceplate.lua` sets and `WeldFlex.lua` never does. See
-`weldflex-app`'s `references/routes-and-templates.md`, `faceplate` section.
+**DO1 behaves the same on every run** (2026-09-14). `weld.lua` pulses it after
+the retract of every completed stud, dry runs and Single Shot included. The
+`WELD_SKIP_FEED` sentinel and the old faceplate program's DO1 handling are gone.
+**DO0 is fixed too**: `DO_WELD = 0` and `WELD_PULSE_MS = 250` are constants in
+`weld.lua`, no longer caller inputs.
 
 Corrected 2026-07-28 — DI0/DI1 were previously implemented the other way round,
 with DI0 documented as "stud on work" and the ready line not monitored at all.

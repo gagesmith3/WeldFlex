@@ -15,7 +15,7 @@ let _state = {
   speed: 25,
   dsc_enabled: false,
   stud_reload_ms: 600,
-  arm_mode: 'live',
+  di_check: true,
   isDirty: false,
 };
 
@@ -80,9 +80,17 @@ function pdInit() {
   });
 
   const settingsModal = document.getElementById('pd-settings-modal');
-  if (settingsModal) settingsModal.addEventListener('click', e => {
-    if (e.target === settingsModal) pdCloseJobSettingsModal();
-  });
+  if (settingsModal) {
+    settingsModal.addEventListener('click', e => {
+      if (e.target === settingsModal) pdCloseJobSettingsModal();
+    });
+    settingsModal.addEventListener('keydown', pdsOnKeydown);
+    settingsModal.addEventListener('input', () => pdsRefresh());
+    settingsModal.addEventListener('change', e => {
+      if (e.target.classList.contains('pds-input')) e.target.dataset.touched = '1';
+      pdsRefresh();
+    });
+  }
 
   const dryRunModal = document.getElementById('pd-dry-run-confirm-modal');
   if (dryRunModal) dryRunModal.addEventListener('click', e => {
@@ -102,17 +110,19 @@ function pdInit() {
 const BED = 762; // 30in bed, in mm
 const MM_PER_INCH = 25.4;
 
+// Length helpers default to the part's units; the Part Settings modal passes its
+// own until Apply.
 function toSVG(px, py)  { return { x: px, y: BED - py }; }
 function toPhys(sx, sy) { return { x: sx, y: BED - sy }; }
-function isInches() { return _state.units === 'in'; }
-function lengthFactor() { return isInches() ? MM_PER_INCH : 1; }
-function lengthStep() { return isInches() ? '0.0001' : '0.001'; }
-function formatLength(mm) {
-  const decimals = isInches() ? 4 : 3;
-  return Number((mm / lengthFactor()).toFixed(decimals)).toString();
+function isInches(units = _state.units) { return units === 'in'; }
+function lengthFactor(units = _state.units) { return isInches(units) ? MM_PER_INCH : 1; }
+function lengthStep(units = _state.units) { return isInches(units) ? '0.0001' : '0.001'; }
+function formatLength(mm, units = _state.units) {
+  const decimals = isInches(units) ? 4 : 3;
+  return Number((mm / lengthFactor(units)).toFixed(decimals)).toString();
 }
 function parseLength(value) { return parseFloat(value) * lengthFactor(); }
-function unitLabel() { return isInches() ? 'in' : 'mm'; }
+function unitLabel(units = _state.units) { return isInches(units) ? 'in' : 'mm'; }
 
 // ── Grid ────────────────────────────────────────────────────────────────────
 
@@ -266,11 +276,12 @@ function loadPart(id, name, idx) {
           : 25;
         _state.dsc_enabled = data.recipe.dsc_enabled === true;
         _state.stud_reload_ms = normalizeStudReloadMs(data.recipe.stud_reload_ms);
+        _state.di_check = data.recipe.di_check !== false;
       }
       renderPoints();
       renderStudList();
       setCoords(null);
-      syncUnitsControl();
+      buildGrid();
     })
     .catch(() => {
       _state.points = [];
@@ -407,6 +418,7 @@ function pdStartNewPart(name) {
   _state.speed         = 25;
   _state.dsc_enabled   = false;
   _state.stud_reload_ms = 600;
+  _state.di_check      = true;
 
   const titleEl = document.getElementById('pd-canvas-part-title');
   if (titleEl) titleEl.textContent = name;
@@ -415,7 +427,7 @@ function pdStartNewPart(name) {
   renderPoints();
   renderStudList();
   setCoords(null);
-  syncUnitsControl();
+  buildGrid();
   pdSetDirty(true);
 
   const coords = document.getElementById('pd-coords');
@@ -455,6 +467,7 @@ function pdSave() {
   const speed = _state.speed !== undefined ? _state.speed : 25;
   const dsc_enabled = _state.dsc_enabled === true ? '1' : '0';
   const stud_reload_ms = normalizeStudReloadMs(_state.stud_reload_ms);
+  const di_check = _state.di_check === false ? '0' : '1';
 
   const body = new URLSearchParams({
     recipe_name: name,
@@ -469,6 +482,7 @@ function pdSave() {
     speed,
     dsc_enabled,
     stud_reload_ms,
+    di_check,
   });
   if (_state.activeId) body.set('recipe_id', _state.activeId);
 
@@ -545,49 +559,6 @@ function setCoords(p) {
   el.textContent = p
     ? `Point ${p.id}  ·  X: ${formatLength(p.x)} ${unitLabel()}  ·  Y: ${formatLength(p.y)} ${unitLabel()} from zerozero`
     : `zerozero reference · ${formatLength(BED)} × ${formatLength(BED)} ${unitLabel()} bed`;
-}
-
-function syncUnitsControl() {
-  const select = document.getElementById('pd-units');
-  if (select) select.value = _state.units;
-  document.querySelectorAll('.pd-length-unit').forEach(el => { el.textContent = unitLabel(); });
-}
-
-function pdSetUnits(units) {
-  const prevFactor = lengthFactor();
-  const mSafeZ = document.getElementById('pd-modal-safe-z');
-  const mRetractZ = document.getElementById('pd-modal-retract-z');
-  const mPartZ = document.getElementById('pd-modal-part-z');
-  // Read the modal's current (unsaved) values in the old units before switching, so edits aren't lost.
-  const safeZMm = mSafeZ && mSafeZ.value !== '' ? parseFloat(mSafeZ.value) * prevFactor : undefined;
-  const retractZMm = mRetractZ && mRetractZ.value !== '' ? parseFloat(mRetractZ.value) * prevFactor : undefined;
-  const partZMm = mPartZ && mPartZ.value !== '' ? parseFloat(mPartZ.value) * prevFactor : undefined;
-
-  _state.units = units === 'in' ? 'in' : 'mm';
-  buildGrid();
-  renderPoints();
-  renderStudList();
-  const selected = _state.points.find(point => point.id === _state.selectedPoint);
-  setCoords(selected || null);
-  syncUnitsControl();
-  pdRefreshModalLengthFields(safeZMm, retractZMm, partZMm);
-  pdSetDirty(true);
-}
-
-// Re-displays the Job Settings modal's Z-height fields in the newly selected units.
-// Accepts optional mm overrides (the modal's own unsaved values) so an in-progress edit isn't lost.
-function pdRefreshModalLengthFields(safeZMmOverride, retractZMmOverride, partZMmOverride) {
-  const safeZ = safeZMmOverride !== undefined ? safeZMmOverride : (_state.safe_z !== undefined ? _state.safe_z : 60.0);
-  const retractZ = retractZMmOverride !== undefined ? retractZMmOverride : (_state.retract_z !== undefined ? _state.retract_z : 10.0);
-  const partZ = partZMmOverride !== undefined ? partZMmOverride : (_state.part_z !== undefined ? _state.part_z : 0.0);
-
-  const mSafeZ = document.getElementById('pd-modal-safe-z');
-  const mRetractZ = document.getElementById('pd-modal-retract-z');
-  const mPartZ = document.getElementById('pd-modal-part-z');
-
-  if (mSafeZ) { mSafeZ.value = formatLength(safeZ); mSafeZ.step = lengthStep(); }
-  if (mRetractZ) { mRetractZ.value = formatLength(retractZ); mRetractZ.step = lengthStep(); }
-  if (mPartZ) { mPartZ.value = formatLength(partZ); mPartZ.step = lengthStep(); }
 }
 
 // ── Stud list ─────────────────────────────────────────────────────────────────
@@ -756,95 +727,276 @@ function svgEl(tag, attrs = {}) {
   return el;
 }
 
-// ── Job Settings & Reports Modals ─────────────────────────────────────────────
+// ── Part Settings modal ───────────────────────────────────────────────────────
+// Three tabs over one form. Nothing reaches _state until Apply & Save, so Cancel,
+// Esc and a backdrop tap discard every edit, the units switch included. Limits are
+// read from the inputs' own min/max, which tests hold to weld.lua and lua_builder.
+
+const PDS_TABS = ['heights', 'weld', 'motion'];
+const PDS_LENGTH_IDS = ['pd-modal-safe-z', 'pd-modal-retract-z', 'pd-modal-part-z'];
+
+let _pdsTab = 'heights';      // reopens on the tab last used
+let _pdsUnits = 'mm';         // the modal's units until Apply
+let _pdsShowErrors = false;   // set by the first Apply attempt
+
+function pdsEl(id) { return document.getElementById(id); }
+
+function pdsNum(id) {
+  const raw = (pdsEl(id)?.value || '').trim();
+  return raw === '' ? NaN : Number(raw);
+}
+
+function pdsLimit(id, attr) { return Number(pdsEl(id)?.getAttribute(attr)); }
+
+function pdsText(id, text) {
+  const el = pdsEl(id);
+  if (el) el.textContent = text;
+}
+
+function pdsSetValue(id, value) {
+  const el = pdsEl(id);
+  if (el) el.value = value;
+}
+
+function pdsSetSelect(id, value) {
+  const el = pdsEl(id);
+  if (!el) return;
+  // Keep a saved value the list doesn't offer rather than silently replacing it.
+  if (value && ![...el.options].some(option => option.value === value)) el.add(new Option(value, value));
+  el.value = value;
+}
 
 function pdOpenJobSettingsModal() {
-  const modal = document.getElementById('pd-settings-modal');
-  if (!modal) return;
-  const nameEl = document.getElementById('pd-modal-settings-part-name');
-  if (nameEl) nameEl.textContent = _state.activePart || 'Untitled';
+  const modal = pdsEl('pd-settings-modal');
+  if (!modal || (!_state.activeId && !_state.activePart)) return;
 
-  const safeZ = _state.safe_z !== undefined ? _state.safe_z : 60.0;
-  const retractZ = _state.retract_z !== undefined ? _state.retract_z : 10.0;
-  const partZ = _state.part_z !== undefined ? _state.part_z : 0.0;
-  const studType = _state.stud_type || 'M4';
-  const substrate = _state.substrate || 'Mild Steel';
-  const pressure = _state.pressure_setting || '20.0';
-  const speed = _state.speed !== undefined ? _state.speed : 25;
-  const dscEnabled = _state.dsc_enabled === true;
-  const studReloadMs = normalizeStudReloadMs(_state.stud_reload_ms);
-  const armMode = _state.arm_mode === 'dry' ? 'dry' : 'live';
+  _pdsUnits = _state.units === 'in' ? 'in' : 'mm';
+  _pdsShowErrors = false;
+  pdsText('pd-modal-settings-part-name', _state.activePart || 'Untitled');
 
-  const mSafeZ = document.getElementById('pd-modal-safe-z');
-  const mRetractZ = document.getElementById('pd-modal-retract-z');
-  const mPartZ = document.getElementById('pd-modal-part-z');
-  const mStudType = document.getElementById('pd-modal-stud-type');
-  const mSubstrate = document.getElementById('pd-modal-substrate');
-  const mPressure = document.getElementById('pd-modal-pressure');
-  const mSpeed = document.getElementById('pd-modal-speed');
-  const mDscEnabled = document.getElementById('pd-modal-dsc-enabled');
-  const mStudReloadMs = document.getElementById('pd-modal-stud-reload-ms');
-  const mArmMode = document.getElementById('pd-modal-arm-mode');
+  pdsSetValue('pd-modal-safe-z', formatLength(_state.safe_z ?? 60.0, _pdsUnits));
+  pdsSetValue('pd-modal-retract-z', formatLength(_state.retract_z ?? 10.0, _pdsUnits));
+  pdsSetValue('pd-modal-part-z', formatLength(_state.part_z ?? 0.0, _pdsUnits));
+  pdsSetSelect('pd-modal-stud-type', _state.stud_type || 'M4');
+  pdsSetSelect('pd-modal-substrate', _state.substrate || 'Mild Steel');
+  pdsSetValue('pd-modal-pressure', _state.pressure_setting ?? 20.0);
+  pdsSetValue('pd-modal-speed', _state.speed ?? 25);
+  pdsSetValue('pd-modal-stud-reload-ms', normalizeStudReloadMs(_state.stud_reload_ms));
+  const diCheck = pdsEl('pd-modal-di-check');
+  if (diCheck) diCheck.checked = _state.di_check !== false;
+  const dsc = pdsEl('pd-modal-dsc-enabled');
+  if (dsc) dsc.checked = _state.dsc_enabled === true;
+  modal.querySelectorAll('.pds-input').forEach(input => { delete input.dataset.touched; });
 
-  if (mSafeZ) { mSafeZ.value = formatLength(safeZ); mSafeZ.step = lengthStep(); }
-  if (mRetractZ) { mRetractZ.value = formatLength(retractZ); mRetractZ.step = lengthStep(); }
-  if (mPartZ) { mPartZ.value = formatLength(partZ); mPartZ.step = lengthStep(); }
-  if (mStudType) mStudType.value = studType;
-  if (mSubstrate) mSubstrate.value = substrate;
-  if (mPressure) mPressure.value = pressure;
-  if (mSpeed) mSpeed.value = speed;
-  if (mDscEnabled) mDscEnabled.checked = dscEnabled;
-  if (mStudReloadMs) mStudReloadMs.value = studReloadMs;
-  if (mArmMode) mArmMode.value = armMode;
-
-  pdSyncDscControls();
-
+  pdsSyncUnits();
+  pdsRefresh();
   modal.removeAttribute('hidden');
+  pdsSelectTab(_pdsTab, true);
 }
 
 function pdCloseJobSettingsModal() {
-  const modal = document.getElementById('pd-settings-modal');
+  const modal = pdsEl('pd-settings-modal');
   if (modal) modal.setAttribute('hidden', '');
 }
 
 function pdSaveJobSettingsModal() {
-  const mSafeZ = document.getElementById('pd-modal-safe-z')?.value;
-  const mRetractZ = document.getElementById('pd-modal-retract-z')?.value;
-  const mPartZ = document.getElementById('pd-modal-part-z')?.value;
-  const mStudType = document.getElementById('pd-modal-stud-type')?.value;
-  const mSubstrate = document.getElementById('pd-modal-substrate')?.value;
-  const mPressure = document.getElementById('pd-modal-pressure')?.value;
-  const mSpeed = document.getElementById('pd-modal-speed')?.value;
-  const mDscEnabled = document.getElementById('pd-modal-dsc-enabled')?.checked;
-  const mStudReloadMs = document.getElementById('pd-modal-stud-reload-ms')?.value;
-
-  if (mSafeZ !== undefined) _state.safe_z = parseLength(mSafeZ) || 60.0;
-  if (mRetractZ !== undefined) _state.retract_z = parseLength(mRetractZ) || 10.0;
-  if (mPartZ !== undefined) _state.part_z = parseLength(mPartZ) || 0.0;
-  if (mStudType !== undefined) _state.stud_type = mStudType;
-  if (mSubstrate !== undefined) _state.substrate = mSubstrate;
-  if (mPressure !== undefined) _state.pressure_setting = parseFloat(mPressure) || 20.0;
-  if (mSpeed !== undefined) {
-    const speed = Math.round(parseFloat(mSpeed));
-    _state.speed = Number.isFinite(speed) ? Math.max(1, Math.min(100, speed)) : 25;
+  _pdsShowErrors = true;
+  const { values, errors } = pdsRefresh();
+  const invalid = [...document.querySelectorAll('#pd-settings-modal .pds-input')].find(input => errors[input.id]);
+  if (invalid) {
+    pdsSelectTab(invalid.closest('.pds-panel').dataset.tab, false);
+    invalid.focus();
+    return;
   }
-  if (mDscEnabled !== undefined) _state.dsc_enabled = mDscEnabled;
-  if (mStudReloadMs !== undefined) _state.stud_reload_ms = normalizeStudReloadMs(mStudReloadMs);
+
+  const unitsChanged = _pdsUnits !== _state.units;
+  Object.assign(_state, values, { units: _pdsUnits });
+  if (unitsChanged) {
+    buildGrid();
+    renderStudList();
+    setCoords(_state.points.find(point => point.id === _state.selectedPoint) || null);
+  }
 
   pdCloseJobSettingsModal();
   pdSetDirty(true);
   pdSave();
 }
 
+// Reads every field. `values` holds the ones that will save, in mm and the
+// recipe's own units; `errors` maps an input id to why it won't.
+function pdsReadForm() {
+  const values = {};
+  const errors = {};
+  const factor = lengthFactor(_pdsUnits);
+
+  const safeZ = pdsNum('pd-modal-safe-z');
+  if (safeZ > 0) values.safe_z = safeZ * factor;
+  else errors['pd-modal-safe-z'] = 'Enter a height above 0.';
+
+  const retractZ = pdsNum('pd-modal-retract-z');
+  if (retractZ > 0) values.retract_z = retractZ * factor;
+  else errors['pd-modal-retract-z'] = 'Enter a height above 0.';
+
+  const partZ = pdsNum('pd-modal-part-z');
+  if (Number.isFinite(partZ)) values.part_z = partZ * factor;
+  else errors['pd-modal-part-z'] = 'Enter a height.';
+
+  values.stud_type = pdsEl('pd-modal-stud-type')?.value || 'M4';
+  values.substrate = pdsEl('pd-modal-substrate')?.value || 'Mild Steel';
+
+  const pressure = pdsNum('pd-modal-pressure');
+  const pressureMax = pdsLimit('pd-modal-pressure', 'max');
+  if (pressure > 0 && pressure <= pressureMax) values.pressure_setting = pressure;
+  else errors['pd-modal-pressure'] = `Enter more than 0, up to ${pressureMax} lbf.`;
+
+  values.di_check = pdsEl('pd-modal-di-check')?.checked !== false;
+
+  const speed = Math.round(pdsNum('pd-modal-speed'));
+  const speedMin = pdsLimit('pd-modal-speed', 'min');
+  const speedMax = pdsLimit('pd-modal-speed', 'max');
+  if (speed >= speedMin && speed <= speedMax) values.speed = speed;
+  else errors['pd-modal-speed'] = `Enter ${speedMin} to ${speedMax} %.`;
+
+  values.dsc_enabled = pdsEl('pd-modal-dsc-enabled')?.checked === true;
+  const reloadMs = Math.round(pdsNum('pd-modal-stud-reload-ms'));
+  const reloadMin = pdsLimit('pd-modal-stud-reload-ms', 'min');
+  const reloadMax = pdsLimit('pd-modal-stud-reload-ms', 'max');
+  if (reloadMs >= reloadMin && reloadMs <= reloadMax) values.stud_reload_ms = reloadMs;
+  else if (!values.dsc_enabled) values.stud_reload_ms = normalizeStudReloadMs(reloadMs);
+  else errors['pd-modal-stud-reload-ms'] = `Enter ${reloadMin} to ${reloadMax} ms.`;
+
+  return { values, errors };
+}
+
+// Redraws everything that depends on the fields: tab summaries and dots, the
+// warning notes, field errors and the heights drawing. Returns pdsReadForm().
+function pdsRefresh() {
+  const form = pdsReadForm();
+  const modal = pdsEl('pd-settings-modal');
+  if (!modal) return form;
+
+  const raw = id => (pdsEl(id)?.value || '').trim() || '—';
+  const diOn = pdsEl('pd-modal-di-check')?.checked !== false;
+  const dscOn = pdsEl('pd-modal-dsc-enabled')?.checked === true;
+
+  pdsText('pds-sum-heights', `Safe ${raw('pd-modal-safe-z')} · Part ${raw('pd-modal-part-z')} ${unitLabel(_pdsUnits)}`);
+  pdsText('pds-sum-weld', `${raw('pd-modal-stud-type')} · ${raw('pd-modal-pressure')} lbf · DI ${diOn ? 'on' : 'off'}`);
+  pdsText('pds-sum-motion', `${raw('pd-modal-speed')}% · DSC ${dscOn ? 'on' : 'off'}`);
+
+  const diNote = pdsEl('pds-di-note');
+  if (diNote) diNote.hidden = diOn;
+  const calibrationNote = pdsEl('pds-dsc-cal-note');  // rendered only on an uncalibrated machine
+  if (calibrationNote) calibrationNote.hidden = !dscOn;
+  const reload = pdsEl('pd-modal-stud-reload-ms');
+  if (reload) reload.disabled = !dscOn;
+
+  // A field shows its error once it has been committed or Apply was tried, not
+  // while the first digit is still being typed.
+  const tabsWithErrors = new Set();
+  let errorCount = 0;
+  modal.querySelectorAll('.pds-input').forEach(input => {
+    const message = (_pdsShowErrors || input.dataset.touched) ? (form.errors[input.id] || '') : '';
+    input.classList.toggle('is-invalid', !!message);
+    input.setAttribute('aria-invalid', message ? 'true' : 'false');
+    pdsText(`${input.id}-error`, message);
+    if (message) {
+      errorCount += 1;
+      tabsWithErrors.add(input.closest('.pds-panel')?.dataset.tab);
+    }
+  });
+
+  const warnings = { weld: !diOn, motion: dscOn && !!calibrationNote };
+  modal.querySelectorAll('.pds-tab').forEach(tab => {
+    const name = tab.dataset.tab;
+    tab.dataset.state = tabsWithErrors.has(name) ? 'error' : (warnings[name] ? 'warn' : '');
+  });
+  pdsText('pds-foot-msg', errorCount ? `Fix ${errorCount} field${errorCount === 1 ? '' : 's'} before saving.` : '');
+
+  pdsDrawHeights();
+  return form;
+}
+
+function pdsDrawHeights() {
+  const unit = unitLabel(_pdsUnits);
+  const safeZ = pdsNum('pd-modal-safe-z');
+  const goToZ = pdsNum('pd-modal-retract-z');
+  const partZ = pdsNum('pd-modal-part-z');
+  const show = (value, sign) => (Number.isFinite(value) ? `${sign}${value} ${unit}` : '—');
+
+  // The higher plane takes the top slot, so the drawing never puts the go-to
+  // height above Safe Z unless it really is.
+  const goToOnTop = goToZ > safeZ;
+  pdsEl('pds-zd-safe')?.setAttribute('transform', `translate(0 ${goToOnTop ? 122 : 52})`);
+  pdsEl('pds-zd-goto')?.setAttribute('transform', `translate(0 ${goToOnTop ? 52 : 122})`);
+  pdsText('pds-zd-safe-val', show(safeZ, '+'));
+  pdsText('pds-zd-goto-val', show(goToZ, '+'));
+  pdsText('pds-zd-part-val', show(partZ, ''));
+}
+
+function pdsSetUnits(units) {
+  const next = units === 'in' ? 'in' : 'mm';
+  if (next === _pdsUnits) return;
+  const toNext = lengthFactor(_pdsUnits);
+  PDS_LENGTH_IDS.forEach(id => {
+    const value = pdsNum(id);
+    if (Number.isFinite(value)) pdsSetValue(id, formatLength(value * toNext, next));
+  });
+  _pdsUnits = next;
+  pdsSyncUnits();
+  pdsRefresh();
+}
+
+function pdsSyncUnits() {
+  document.querySelectorAll('#pd-settings-modal .pds-seg-btn').forEach(btn => {
+    const on = btn.dataset.units === _pdsUnits;
+    btn.classList.toggle('active', on);
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
+  document.querySelectorAll('#pd-settings-modal .pd-length-unit').forEach(el => { el.textContent = unitLabel(_pdsUnits); });
+  PDS_LENGTH_IDS.forEach(id => {
+    const el = pdsEl(id);
+    if (el) el.step = lengthStep(_pdsUnits);
+  });
+}
+
+function pdsSelectTab(name, focusTab) {
+  _pdsTab = PDS_TABS.includes(name) ? name : PDS_TABS[0];
+  document.querySelectorAll('#pd-settings-modal .pds-tab').forEach(tab => {
+    const on = tab.dataset.tab === _pdsTab;
+    tab.classList.toggle('active', on);
+    tab.setAttribute('aria-selected', on ? 'true' : 'false');
+    tab.tabIndex = on ? 0 : -1;
+    if (on && focusTab) tab.focus();
+  });
+  document.querySelectorAll('#pd-settings-modal .pds-panel').forEach(panel => {
+    panel.classList.toggle('active', panel.dataset.tab === _pdsTab);
+  });
+}
+
+function pdsOnKeydown(e) {
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    pdCloseJobSettingsModal();
+    return;
+  }
+  // Arrow keys move between tabs, as a tablist should.
+  const tab = e.target.closest?.('.pds-tab');
+  if (!tab) return;
+  const index = PDS_TABS.indexOf(tab.dataset.tab);
+  const next = {
+    ArrowRight: PDS_TABS[(index + 1) % PDS_TABS.length],
+    ArrowLeft: PDS_TABS[(index - 1 + PDS_TABS.length) % PDS_TABS.length],
+    Home: PDS_TABS[0],
+    End: PDS_TABS[PDS_TABS.length - 1],
+  }[e.key];
+  if (!next) return;
+  e.preventDefault();
+  pdsSelectTab(next, true);
+}
+
 function normalizeStudReloadMs(value) {
   const reloadMs = Math.round(parseFloat(value));
   return Number.isFinite(reloadMs) ? Math.max(1, Math.min(10000, reloadMs)) : 600;
-}
-
-function pdSyncDscControls() {
-  const toggle = document.getElementById('pd-modal-dsc-enabled');
-  const reload = document.getElementById('pd-modal-stud-reload-ms');
-  if (reload) reload.disabled = !toggle?.checked;
 }
 
 function pdOpenJobReportsModal() {

@@ -125,74 +125,206 @@
   </div>
 </div>
 
-<!-- Job Settings modal -->
+<!-- Part Settings modal. Three tabs over one form: nothing reaches the part until
+     Apply & Save, so Cancel, Esc and a backdrop tap discard every edit, the units
+     switch included. The min/max typed on these inputs are the limits the weld
+     code enforces; tests/test_manager_part_settings.py holds them together. -->
 <div id="pd-settings-modal" class="wf-modal-overlay" hidden>
-  <div class="wf-modal pd-modal-wide">
-    <p class="wf-modal-msg">Job Settings — <span id="pd-modal-settings-part-name">Part</span></p>
-    <div class="pd-modal-form-grid">
-      <div class="pd-param-group">
-        <label for="pd-units" class="pd-param-label">Units</label>
-        <select id="pd-units" class="pd-param-select" aria-label="Design units" onchange="pdSetUnits(this.value)">
-          <option value="mm">mm</option>
-          <option value="in">in</option>
-        </select>
+  <div class="wf-modal pds-modal" role="dialog" aria-modal="true" aria-labelledby="pds-title">
+    <div class="pds-head">
+      <div class="pds-head-text">
+        <p class="pds-title" id="pds-title">Part Settings</p>
+        <p class="pds-subtitle" id="pd-modal-settings-part-name">Part</p>
       </div>
-      <div class="pd-param-group">
-        <label for="pd-modal-part-z" class="pd-param-label">Part Z (Surface Height, <span class="pd-length-unit">mm</span>)</label>
-        <input type="number" id="pd-modal-part-z" class="pd-param-input" step="0.1" value="0.0" inputmode="none" data-kbd="num">
-      </div>
-      <div class="pd-param-group">
-        <label for="pd-modal-retract-z" class="pd-param-label">Retract Height (<span class="pd-length-unit">mm</span>)</label>
-        <input type="number" id="pd-modal-retract-z" class="pd-param-input" step="0.1" value="10.0" inputmode="none" data-kbd="num">
-      </div>
-      <div class="pd-param-group">
-        <label for="pd-modal-safe-z" class="pd-param-label">Safe Z (Home Travel, <span class="pd-length-unit">mm</span>)</label>
-        <input type="number" id="pd-modal-safe-z" class="pd-param-input" step="0.1" value="60.0" inputmode="none" data-kbd="num">
-      </div>
-      <div class="pd-param-group">
-        <label for="pd-modal-stud-type" class="pd-param-label">Stud Selector</label>
-        <select id="pd-modal-stud-type" class="pd-param-select">
-          <option value="#8">#8</option>
-          <option value="#10">#10</option>
-          <option value='1/4"'>1/4"</option>
-          <option value="M3">M3</option>
-          <option value="M4">M4</option>
-          <option value="M5">M5</option>
-        </select>
-      </div>
-      <div class="pd-param-group">
-        <label for="pd-modal-substrate" class="pd-param-label">Substrate Material</label>
-        <select id="pd-modal-substrate" class="pd-param-select">
-          <option value="Mild Steel">Mild Steel</option>
-          <option value="Stainless Steel">Stainless Steel</option>
-          <option value="Aluminum">Aluminum</option>
-          <option value="Galvanized">Galvanized</option>
-        </select>
-      </div>
-      <div class="pd-param-group">
-        <label for="pd-modal-pressure" class="pd-param-label">Target Pressure (lbf)</label>
-        <input type="number" id="pd-modal-pressure" class="pd-param-input" step="0.1" value="20.0" inputmode="none" data-kbd="num">
-      </div>
-      <div class="pd-param-group">
-        <label for="pd-modal-speed" class="pd-param-label">Home / Approach Speed (%)</label>
-        <input type="number" id="pd-modal-speed" class="pd-param-input" step="1" min="1" max="100" value="25" inputmode="none" data-kbd="num">
-      </div>
-      <div class="pd-param-group">
-        <label for="pd-modal-dsc-enabled" class="pd-param-label">Dynamic Speed Compensation</label>
-        <label class="pd-toggle">
-          <input type="checkbox" id="pd-modal-dsc-enabled" onchange="pdSyncDscControls()">
-          <span class="pd-toggle-track" aria-hidden="true"></span>
-          <span class="pd-toggle-value">Enabled</span>
-        </label>
-      </div>
-      <div class="pd-param-group">
-        <label for="pd-modal-stud-reload-ms" class="pd-param-label">Stud Reload Time (ms)</label>
-        <input type="number" id="pd-modal-stud-reload-ms" class="pd-param-input" step="1" min="1" max="10000" value="600" inputmode="none" data-kbd="num">
+      <div class="pds-units" role="group" aria-label="Units">
+        <span class="pds-units-label">Units</span>
+        <div class="pds-seg">
+          <button type="button" class="pds-seg-btn active" data-units="mm" aria-pressed="true" onclick="pdsSetUnits('mm')">mm</button>
+          <button type="button" class="pds-seg-btn" data-units="in" aria-pressed="false" onclick="pdsSetUnits('in')">in</button>
+        </div>
       </div>
     </div>
-    <div class="wf-modal-actions">
-      <button type="button" class="btn wf-cancel" onclick="pdCloseJobSettingsModal()">Cancel</button>
-      <button type="button" class="btn run" onclick="pdSaveJobSettingsModal()">Apply & Save</button>
+
+    <div class="pds-tabs" role="tablist" aria-label="Setting categories">
+      <button type="button" class="pds-tab active" role="tab" id="pds-tab-heights" data-tab="heights"
+              aria-controls="pds-panel-heights" aria-selected="true" onclick="pdsSelectTab('heights')">
+        <span class="pds-tab-name">{{ icon_safe('arrow_down_to_line', width=14, height=14) }}Heights<span class="pds-tab-dot" aria-hidden="true"></span></span>
+        <span class="pds-tab-summary" id="pds-sum-heights"></span>
+      </button>
+      <button type="button" class="pds-tab" role="tab" id="pds-tab-weld" data-tab="weld" tabindex="-1"
+              aria-controls="pds-panel-weld" aria-selected="false" onclick="pdsSelectTab('weld')">
+        <span class="pds-tab-name">{{ icon_safe('zap', width=14, height=14) }}Weld<span class="pds-tab-dot" aria-hidden="true"></span></span>
+        <span class="pds-tab-summary" id="pds-sum-weld"></span>
+      </button>
+      <button type="button" class="pds-tab" role="tab" id="pds-tab-motion" data-tab="motion" tabindex="-1"
+              aria-controls="pds-panel-motion" aria-selected="false" onclick="pdsSelectTab('motion')">
+        <span class="pds-tab-name">{{ icon_safe('activity', width=14, height=14) }}Motion<span class="pds-tab-dot" aria-hidden="true"></span></span>
+        <span class="pds-tab-summary" id="pds-sum-motion"></span>
+      </button>
+    </div>
+
+    <div class="pds-panels">
+
+      <!-- Heights: Safe Z and the go-to height both stack on Part Z. -->
+      <section class="pds-panel active" role="tabpanel" id="pds-panel-heights" data-tab="heights" aria-labelledby="pds-tab-heights">
+        <div class="pds-heights">
+          <div class="pds-fields">
+            <div class="pds-field">
+              <label for="pd-modal-safe-z" class="pds-label">Safe Z</label>
+              <div class="pds-input-wrap">
+                <input type="number" id="pd-modal-safe-z" class="pds-input" step="0.1" inputmode="none" data-kbd="num"
+                       aria-describedby="pd-modal-safe-z-hint pd-modal-safe-z-error">
+                <span class="pds-suffix pd-length-unit">mm</span>
+              </div>
+              <p class="pds-hint" id="pd-modal-safe-z-hint">Above Part Z. Every traverse, and the lift after each weld.</p>
+              <p class="pds-error" id="pd-modal-safe-z-error"></p>
+            </div>
+            <div class="pds-field">
+              <label for="pd-modal-retract-z" class="pds-label">Go-To Height</label>
+              <div class="pds-input-wrap">
+                <input type="number" id="pd-modal-retract-z" class="pds-input" step="0.1" inputmode="none" data-kbd="num"
+                       aria-describedby="pd-modal-retract-z-hint pd-modal-retract-z-error">
+                <span class="pds-suffix pd-length-unit">mm</span>
+              </div>
+              <p class="pds-hint" id="pd-modal-retract-z-hint">Above Part Z, for the &#8982; move-to-stud button. Runs use Safe Z.</p>
+              <p class="pds-error" id="pd-modal-retract-z-error"></p>
+            </div>
+            <div class="pds-field">
+              <label for="pd-modal-part-z" class="pds-label">Part Z</label>
+              <div class="pds-input-wrap">
+                <input type="number" id="pd-modal-part-z" class="pds-input" step="0.1" inputmode="none" data-kbd="num"
+                       aria-describedby="pd-modal-part-z-hint pd-modal-part-z-error">
+                <span class="pds-suffix pd-length-unit">mm</span>
+              </div>
+              <p class="pds-hint" id="pd-modal-part-z-hint">Top surface of the part, up from the taught zerozero point.</p>
+              <p class="pds-error" id="pd-modal-part-z-error"></p>
+            </div>
+          </div>
+          <svg class="pds-zdiag" viewBox="0 0 210 230" role="img" aria-label="Safe Z and the go-to height are measured up from Part Z">
+            <defs>
+              <marker id="pds-zd-arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path class="pds-zd-arrowhead" d="M0 0 10 5 0 10z"/>
+              </marker>
+            </defs>
+            <line class="pds-zd-rise" x1="105" y1="190" x2="105" y2="60" marker-end="url(#pds-zd-arrow)"/>
+            <g id="pds-zd-safe" transform="translate(0 52)">
+              <line class="pds-zd-plane is-safe" x1="8" y1="0" x2="202" y2="0"/>
+              <text class="pds-zd-name" x="10" y="-7">Safe Z</text>
+              <text class="pds-zd-val" id="pds-zd-safe-val" x="200" y="-7" text-anchor="end"></text>
+            </g>
+            <g id="pds-zd-goto" transform="translate(0 122)">
+              <line class="pds-zd-plane is-goto" x1="8" y1="0" x2="202" y2="0"/>
+              <text class="pds-zd-name" x="10" y="-7">Go-to</text>
+              <text class="pds-zd-val" id="pds-zd-goto-val" x="200" y="-7" text-anchor="end"></text>
+            </g>
+            <text class="pds-zd-name" x="10" y="184">Part Z</text>
+            <text class="pds-zd-val" id="pds-zd-part-val" x="200" y="184" text-anchor="end"></text>
+            <rect class="pds-zd-part" x="8" y="190" width="194" height="34" rx="4"/>
+            <text class="pds-zd-part-label" x="105" y="212" text-anchor="middle">PART</text>
+          </svg>
+        </div>
+      </section>
+
+      <!-- Weld: what the stud and the press do at each point. -->
+      <section class="pds-panel" role="tabpanel" id="pds-panel-weld" data-tab="weld" aria-labelledby="pds-tab-weld">
+        <div class="pds-row">
+          <div class="pds-field">
+            <label for="pd-modal-stud-type" class="pds-label">Stud Size</label>
+            <select id="pd-modal-stud-type" class="pds-select">
+              <option value="#8">#8</option>
+              <option value="#10">#10</option>
+              <option value='1/4"'>1/4"</option>
+              <option value="M3">M3</option>
+              <option value="M4">M4</option>
+              <option value="M5">M5</option>
+            </select>
+          </div>
+          <div class="pds-field">
+            <label for="pd-modal-substrate" class="pds-label">Substrate</label>
+            <select id="pd-modal-substrate" class="pds-select">
+              <option value="Mild Steel">Mild Steel</option>
+              <option value="Stainless Steel">Stainless Steel</option>
+              <option value="Aluminum">Aluminum</option>
+              <option value="Galvanized">Galvanized</option>
+            </select>
+          </div>
+        </div>
+        <p class="pds-note">Stud size and substrate are saved with the part. The weld sequence doesn't use them yet.</p>
+        <div class="pds-row">
+          <div class="pds-field">
+            <label for="pd-modal-pressure" class="pds-label">Target Pressure</label>
+            <div class="pds-input-wrap">
+              <!-- max = weld.lua PRESS_TARGET_MAX_LBF; weld.lua ignores anything above it. -->
+              <input type="number" id="pd-modal-pressure" class="pds-input" step="0.1" max="22" inputmode="none" data-kbd="num"
+                     aria-describedby="pd-modal-pressure-hint pd-modal-pressure-error">
+              <span class="pds-suffix">lbf</span>
+            </div>
+            <p class="pds-hint" id="pd-modal-pressure-hint">Press force on the stud, up to weld.lua's 22 lbf limit.</p>
+            <p class="pds-error" id="pd-modal-pressure-error"></p>
+          </div>
+          <div class="pds-field">
+            <label for="pd-modal-di-check" class="pds-label">DI Check</label>
+            <label class="pds-switch">
+              <input type="checkbox" id="pd-modal-di-check" aria-describedby="pd-modal-di-check-hint">
+              <span class="pds-switch-track" aria-hidden="true"></span>
+              <span class="pds-switch-state" aria-hidden="true"></span>
+            </label>
+            <p class="pds-hint" id="pd-modal-di-check-hint">Waits for welder ready (DI0) and checks stud on work (DI1).</p>
+          </div>
+        </div>
+        <p class="pds-note is-warn" id="pds-di-note" hidden>DI check is off for this part: DI0 welder ready and DI1 stud on work are not checked, on live runs too.</p>
+      </section>
+
+      <!-- Motion: how fast the arm travels between studs and home. -->
+      <section class="pds-panel" role="tabpanel" id="pds-panel-motion" data-tab="motion" aria-labelledby="pds-tab-motion">
+        <div class="pds-row">
+          <div class="pds-field">
+            <label for="pd-modal-speed" class="pds-label">Travel Speed</label>
+            <div class="pds-input-wrap">
+              <input type="number" id="pd-modal-speed" class="pds-input" step="1" min="1" max="100" inputmode="none" data-kbd="num"
+                     aria-describedby="pd-modal-speed-hint pd-modal-speed-error">
+              <span class="pds-suffix">%</span>
+            </div>
+            <p class="pds-hint" id="pd-modal-speed-hint">Home, approach and stud-to-stud moves.</p>
+            <p class="pds-error" id="pd-modal-speed-error"></p>
+          </div>
+          <div class="pds-field">
+            <label for="pd-modal-dsc-enabled" class="pds-label">Dynamic Speed Compensation</label>
+            <label class="pds-switch">
+              <input type="checkbox" id="pd-modal-dsc-enabled" aria-describedby="pd-modal-dsc-enabled-hint">
+              <span class="pds-switch-track" aria-hidden="true"></span>
+              <span class="pds-switch-state" aria-hidden="true"></span>
+            </label>
+            <p class="pds-hint" id="pd-modal-dsc-enabled-hint">Times each stud-to-stud move so the next stud has reloaded on arrival.</p>
+          </div>
+        </div>
+        <div class="pds-row">
+          <!-- Sits under the DSC switch: the reload time only matters when it's on. -->
+          <div class="pds-field pds-sub">
+            <label for="pd-modal-stud-reload-ms" class="pds-label">Stud Reload Time</label>
+            <div class="pds-input-wrap">
+              <!-- min/max = lua_builder STUD_RELOAD_MS_MIN/MAX. -->
+              <input type="number" id="pd-modal-stud-reload-ms" class="pds-input" step="1" min="1" max="10000" inputmode="none" data-kbd="num"
+                     aria-describedby="pd-modal-stud-reload-ms-hint pd-modal-stud-reload-ms-error">
+              <span class="pds-suffix">ms</span>
+            </div>
+            <p class="pds-hint" id="pd-modal-stud-reload-ms-hint">Feeder time to present the next stud. Used only with DSC.</p>
+            <p class="pds-error" id="pd-modal-stud-reload-ms-error"></p>
+          </div>
+        </div>
+        {% if not dsc_calibrated() %}
+        <p class="pds-note is-warn" id="pds-dsc-cal-note" hidden>This machine isn't calibrated for DSC (WELDFLEX_DSC_CALIBRATED is not 1), so a part with DSC on will fail to load for a run.</p>
+        {% endif %}
+      </section>
+
+    </div>
+
+    <div class="pds-foot">
+      <p class="pds-foot-msg" id="pds-foot-msg" role="status"></p>
+      <div class="wf-modal-actions">
+        <button type="button" class="btn wf-cancel" onclick="pdCloseJobSettingsModal()">Cancel</button>
+        <button type="button" class="btn run" onclick="pdSaveJobSettingsModal()">Apply &amp; Save</button>
+      </div>
     </div>
   </div>
 </div>

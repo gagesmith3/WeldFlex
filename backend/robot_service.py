@@ -57,7 +57,7 @@ FORCE_FRESH_S = 0.5
 WELD_TELEMETRY_CALL_TIMEOUT_S = 3.0
 JOB_TELEMETRY_STUD_DI = 1
 JOB_TELEMETRY_READY_DI = 0
-JOB_TELEMETRY_SLOTS = (1, 2, 3, 4, 5, 6, 7, 8)
+JOB_TELEMETRY_SLOTS = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
 JOB_TELEMETRY_INTERVAL_S = 0.25
 
 _WELD_PHASES = {
@@ -135,12 +135,14 @@ class UniversalRobotState:
     weld_ready: int | None = None    # 1 = READY, 0 = CHARGING, None = unknown
     di_live: bool = False
 
-    # Controller System Variables (s_var_1 .. s_var_8)
+    # Controller System Variables (s_var_1 .. s_var_10)
     weld_phase_code: int | None = None
     weld_phase_label: str | None = None
     last_ft_return: int | None = None
     contact_z: float | None = None
     press_travel_mm: float | None = None
+    press_hold_travel_mm: float | None = None
+    weld_jolt_travel_mm: float | None = None
     collision_guard_code: int | None = None
     collision_guard_label: str | None = None
     collision_guard_applied: bool = False
@@ -360,6 +362,8 @@ class WeldFlexRobotService:
         sv_stud = telemetry.sysvar(6) if telemetry_current else None
         sv_ready = telemetry.sysvar(7) if telemetry_current else None
         sv_press_lbf = telemetry.sysvar(8) if telemetry_current else None
+        sv_hold_travel = telemetry.sysvar(9) if telemetry_current else None
+        sv_jolt_travel = telemetry.sysvar(10) if telemetry_current else None
 
         phase_code = None
         packed_di1 = None
@@ -438,6 +442,8 @@ class WeldFlexRobotService:
             last_ft_return=int(sv_ret) if sv_ret is not None else None,
             contact_z=sv_z0 if (sv_z0 is not None and sv_z0 != 0) else None,
             press_travel_mm=sv_travel if (sv_travel is not None and sv_travel != 0) else None,
+            press_hold_travel_mm=sv_hold_travel if (sv_hold_travel is not None and sv_hold_travel != 0) else None,
+            weld_jolt_travel_mm=sv_jolt_travel if (sv_jolt_travel is not None and sv_jolt_travel != 0) else None,
             collision_guard_code=guard_code,
             collision_guard_label=guard_label,
             collision_guard_applied=guard_applied,

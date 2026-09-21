@@ -79,6 +79,14 @@ only. Nothing in the Lua API returns force or torque. Consequences:
 The documented press-to-force composite is `FT_Control` + `FT_LinInsertion`
 (manual Code 3-53 lines 17-20), which is what `programs/weld.lua` now uses.
 
+Issue the insertion **once** per press. Re-running `FT_LinInsertion` through the
+hold to win back force that sagged after the threshold spike (four re-runs,
+2026-09-14) faulted the first dry run that tried it with a resettable
+"Cartesian space command speed exceeded limit". Without a force read, a re-run
+cannot know whether it starts past its threshold. Compare `FT_FindSurface`'s
+disMax abort, which also surfaces as a command-speed fault rather than as a
+force error.
+
 ### 3. Direction encodings differ between neighbouring instructions
 
 | Instruction | Param | Encoding |
@@ -188,10 +196,10 @@ asserts the ban against the **stripped** text for that reason.
   - **Watch DO across the pause.** `SetOutputResetCtlBoxDO(resetFlag, reloadFlag)`
     (`Robot.py:11828`, protocol §3.5.9) is a persistent controller setting for
     whether control-box DO is reset on stop/**pause** and reloaded on resume.
-    `weld_faceplate.lua` deliberately holds DO1 high through the gate for the
-    operator's manual feed, so a controller configured with `resetFlag=1` would
-    drop that signal the instant the program pauses. WeldFlex does not set this
-    either way; if the held output drops at the gate, that setting is why.
+    No WeldFlex program holds an output through the gate today (the faceplate
+    program that held DO1 there was removed 2026-09-14), but anything that does
+    will lose it at the pause on a controller configured with `resetFlag=1`.
+    WeldFlex does not set this either way.
 - `WaitDI(id, status, maxtime, opt)` — `opt` 0 **stops the program** on timeout.
   That skips any retract/disarm cleanup, which is why `weld.lua` polls `GetDI`
   in a loop instead of using it.

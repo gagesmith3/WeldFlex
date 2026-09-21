@@ -20,14 +20,15 @@ from markupsafe import Markup
 import frame_8083 as f8
 from job_manager import JobError, JobManager
 from lua_builder import (
+    ARM_MODES,
     GATE_MODES,
-    WELDER_PROFILES,
     IO_MONITOR_DEFAULT_MS,
     IO_MONITOR_PATH,
     IO_MONITOR_PROGRAM_NAME,
     WELD_PATH,
     WELD_PROGRAM_NAME,
     build_io_monitor_lua,
+    default_dsc_calibration,
     format_number,
     strip_lua_comments,
     _parse_pressure,
@@ -58,31 +59,7 @@ if GATE_MODE not in GATE_MODES:
     GATE_MODE = "pause"
 
 
-def _liberty_live_config():
-    """Return the explicitly configured Liberty trigger, or its enable error."""
-    if os.getenv("WELDFLEX_LIBERTY_LIVE_ENABLED", "0").strip() != "1":
-        return None, "Set WELDFLEX_LIBERTY_LIVE_ENABLED=1 to enable live Liberty firing."
-
-    values = {}
-    for key in ("WELDFLEX_LIBERTY_TRIGGER_DO", "WELDFLEX_LIBERTY_TRIGGER_PULSE_MS"):
-        raw = os.getenv(key)
-        if raw is None or not raw.strip():
-            return None, f"Set {key} before enabling live Liberty firing."
-        try:
-            values[key] = int(raw)
-        except ValueError:
-            return None, f"{key} must be an integer."
-
-    trigger_do = values["WELDFLEX_LIBERTY_TRIGGER_DO"]
-    pulse_ms = values["WELDFLEX_LIBERTY_TRIGGER_PULSE_MS"]
-    if not 0 <= trigger_do <= 15:
-        return None, "WELDFLEX_LIBERTY_TRIGGER_DO must be DO0 through DO15."
-    if not 1 <= pulse_ms <= 1_000:
-        return None, "WELDFLEX_LIBERTY_TRIGGER_PULSE_MS must be 1 through 1000 ms."
-    return {"trigger_do": trigger_do, "trigger_pulse_ms": pulse_ms}, None
-
-
-robot = WeldFlexRobotService(robot_ip=ROBOT_IP)
+robot =WeldFlexRobotService(robot_ip=ROBOT_IP)
 
 # Hold the connection from process start, independent of any browser. Before this the
 # page's 1s poll was the de-facto keepalive, so closing the last tab meant nothing ever
@@ -166,11 +143,25 @@ def _recipes_load():
     except (FileNotFoundError, json.JSONDecodeError):
         return []
     migrated = False
+    has_single_shot = any(r.get('system') == SINGLE_SHOT_SYSTEM for r in recipes)
     for r in recipes:
         if not r.get('id'):
             r['id'] = str(uuid.uuid4())
             migrated = True
-        if r.get('name') != FACEPLATE_RECIPE_NAME and 'retract_z' not in r:
+        # The Single Shot record used to be the Faceplate page's, found by name.
+        if not has_single_shot and r.get('name') == LEGACY_FACEPLATE_RECIPE_NAME:
+            r['system'] = SINGLE_SHOT_SYSTEM
+            has_single_shot = True
+            migrated = True
+        # Live/Dry is picked per run now, never saved on the part, and the welder
+        # profile became the DI check (Liberty ran with the DI checks bypassed).
+        if 'arm_mode' in r:
+            del r['arm_mode']
+            migrated = True
+        if 'welder_profile' in r:
+            r.setdefault('di_check', r.pop('welder_profile') != 'liberty')
+            migrated = True
+        if not r.get('system') and 'retract_z' not in r:
             try:
                 retract_z = float(r.get('safe_z', 10.0))
                 safe_z = retract_z + float(r.get('high_z_clearance', 50.0))
@@ -202,7 +193,7 @@ def _recipes_enrich(recipes):
     result = []
     for r in recipes:
         studs = r.get('studs', [])
-        is_faceplate = r.get('name') == FACEPLATE_RECIPE_NAME
+        is_single_shot = r.get('system') == SINGLE_SHOT_SYSTEM
         ts = r.get('updated_at') or r.get('created_at', '')
         try:
             label = datetime.fromisoformat(ts).strftime('%b %d, %Y')
@@ -212,44 +203,52 @@ def _recipes_enrich(recipes):
             **r,
             'studs_count': len(studs),
             'updated_label': label,
-            'safe_z': float(r.get('safe_z', 10.0 if is_faceplate else 60.0)),
+            'safe_z': float(r.get('safe_z', 10.0 if is_single_shot else 60.0)),
             'retract_z': float(r.get('retract_z', 10.0)),
             'part_z': float(r.get('part_z', 0.0)),
             'units': 'in' if r.get('units') == 'in' else 'mm',
             'stud_type': r.get('stud_type') or 'M4',
             'substrate': r.get('substrate') or 'Mild Steel',
             'pressure_setting': _parse_pressure(r.get('pressure_setting')),
-            'welder_profile': r.get('welder_profile') if r.get('welder_profile') in WELDER_PROFILES else 'atlas',
+            'di_check': bool(r.get('di_check', True)),
             'dsc_enabled': bool(r.get('dsc_enabled', False)),
             'stud_reload_ms': _parse_stud_reload_ms(r.get('stud_reload_ms')),
         })
     return result
 
-# The one recipe record that backs the Faceplate maintenance page instead of a
-# customer part. Kept in recipes.json (same schema, same _recipes_save/
-# _recipes_load/`/ui/recipes/save`) rather than a parallel settings store, but
-# filtered out of every normal-facing parts list — see _hide_faceplate_recipe
-# — so it can only be reached through /operator/faceplate, not run through the
-# ordinary WeldFlex.lua part pipeline.
-FACEPLATE_RECIPE_NAME = "faceplates"
+# The one recipe record that backs the Admin page's Single Shot tool instead of a
+# customer part: its target point, press settings and DI check. Kept in
+# recipes.json (same schema, same _recipes_save/_recipes_load/`/ui/recipes/save`)
+# rather than a parallel settings store, and marked `"system": "single_shot"` so
+# it is found by that flag, never by its name. Every normal-facing parts list
+# drops it (_hide_system_recipes) and /ui/job/load refuses it, so it only runs
+# through /ui/single-shot/fire.
+SINGLE_SHOT_SYSTEM = "single_shot"
+# The name the record had as the Faceplate page's; _recipes_load tags it once.
+LEGACY_FACEPLATE_RECIPE_NAME = "faceplates"
+# part_id a shot runs under. It matches no recipe, so shots never fold into
+# anyone's lifetime part stats.
+SINGLE_SHOT_PART_ID = "__single_shot__"
 
-def _faceplate_recipe():
-    """Find (or create) the faceplates recipe record. Never returns None."""
+def _single_shot_recipe():
+    """Find (or create) the Single Shot settings record. Never returns None."""
     with _rec_lock:
         recipes = _recipes_load()
-        existing = next((r for r in recipes if r.get('name') == FACEPLATE_RECIPE_NAME), None)
+        existing = next((r for r in recipes if r.get('system') == SINGLE_SHOT_SYSTEM), None)
         if existing:
             return existing
         now = datetime.now(timezone.utc).isoformat()
         created = {
             'id': str(uuid.uuid4()),
-            'name': FACEPLATE_RECIPE_NAME,
+            'name': 'Single Shot',
+            'system': SINGLE_SHOT_SYSTEM,
             'studs': [],
             'safe_z': 10.0,
             'part_z': 0.0,
             'stud_type': 'M4',
             'substrate': 'Mild Steel',
             'pressure_setting': 20.0,
+            'di_check': True,
             'created_at': now,
             'updated_at': now,
             'times_ran': 0,
@@ -261,16 +260,15 @@ def _faceplate_recipe():
         _recipes_save(recipes)
         return created
 
-def _hide_faceplate_recipe(recipes):
-    """Drop the faceplates record from a normal parts listing.
+def _hide_system_recipes(recipes):
+    """Drop tool-owned records (the Single Shot settings) from a parts listing.
 
-    It lives in the same recipes.json as customer parts (see
-    _faceplate_recipe), so anything that lists parts for the operator/manager
-    to pick and run needs this filter — otherwise it would be runnable through
-    the ordinary part pipeline (home moves, timed feed pulse) instead of the
-    faceplate-specific one.
+    They live in the same recipes.json as customer parts, so anything that lists
+    parts for the operator/manager to pick and run needs this filter — otherwise
+    the Single Shot target would be runnable through the ordinary part pipeline
+    (home moves and all).
     """
-    return [r for r in recipes if r.get('name') != FACEPLATE_RECIPE_NAME]
+    return [r for r in recipes if not r.get('system')]
 
 def _parse_studs(text):
     """Parse 'x,y\\nx,y' text → list of {x, y} dicts. Returns (list, error|None)."""
@@ -288,12 +286,36 @@ def _parse_studs(text):
             return [], f'Non-numeric value: {line!r}'
     return studs, None
 
+# The 30 in x 30 in bed, in mm: the X/Y range the part designer gives a stud
+# (BED in static/js/part_designer.js). A Single Shot target is held to it too,
+# so a shot can only be aimed where a part's stud could be.
+BED_MM = 762.0
+
+def _parse_target(x_raw, y_raw):
+    """Parse the Single Shot target's X and Y fields → ([{x, y}], error|None).
+
+    Both in mm from zerozero, the same frame a part's studs use.
+    """
+    point = {}
+    for axis, raw in (('x', x_raw), ('y', y_raw)):
+        label = f'Target {axis.upper()}'
+        text = (raw or '').strip()
+        if not text:
+            return [], f'{label} is required.'
+        try:
+            value = float(text)
+        except ValueError:
+            return [], f'{label} must be a number, got {text!r}.'
+        if not 0.0 <= value <= BED_MM:
+            return [], f'{label} must be 0 to {BED_MM:g} mm, got {text}.'
+        point[axis] = value
+    return [point], None
+
 def _preview_data(studs):
-    BED = 762.0  # 30in bed, in mm
     return {
         'graph_points': [
-            {'x_plot': round((BED - s['x']) / BED * 200, 2),
-             'y_plot': round((BED - s['y']) / BED * 200, 2),
+            {'x_plot': round((BED_MM - s['x']) / BED_MM * 200, 2),
+             'y_plot': round((BED_MM - s['y']) / BED_MM * 200, 2),
              'index': i + 1}
             for i, s in enumerate(studs)
         ]
@@ -379,6 +401,9 @@ def icon_safe(name, fallback="circle", width=14, height=14, class_=""):
     )
 
 app.jinja_env.globals["icon_safe"] = icon_safe
+# A call rather than a value, so the part designer reads the calibration at render
+# time, through the same check the DSC build makes (lua_builder.dynamic_stud_legs).
+app.jinja_env.globals["dsc_calibrated"] = lambda: default_dsc_calibration() is not None
 
 @app.route("/")
 def landing():
@@ -406,7 +431,6 @@ def manager_reports_page():
 
 @app.route("/operator/admin")
 def admin():
-    liberty_config, _ = _liberty_live_config()
     settings = {
         # The live target, not the last-saved .env value — these can differ.
         "robot_ip": robot.robot_ip,
@@ -415,10 +439,7 @@ def admin():
         "studs_data_path": os.getenv("WELDFLEX_STUDS_DATA_PATH", "/fruser/studs/"),
         "status_interval_ms": os.getenv("WELDFLEX_STATUS_INTERVAL_MS", "1000"),
     }
-    return render_template(
-        "admin.html", page_title="Admin", settings=settings,
-        liberty_live_enabled=liberty_config is not None,
-    )
+    return render_template("admin.html", page_title="Admin", settings=settings)
 
 @app.route("/ui/settings/save", methods=["POST"])
 def ui_settings_save():
@@ -472,7 +493,7 @@ def parts():
     recipe_name = request.args.get('recipe_name', None)
     with _rec_lock:
         all_recipes = _recipes_load()
-    enriched = _recipes_enrich(_hide_faceplate_recipe(all_recipes))
+    enriched = _recipes_enrich(_hide_system_recipes(all_recipes))
     studs_text = ''
     recipe = None
     if recipe_name is not None:
@@ -529,27 +550,38 @@ def ui_recipes_save():
         speed = None
     dsc_enabled = request.form.get('dsc_enabled') == '1'
     stud_reload_ms = _parse_stud_reload_ms(request.form.get('stud_reload_ms'))
-    welder_profile = (request.form.get('welder_profile') or '').strip().lower()
-    if welder_profile not in WELDER_PROFILES:
-        welder_profile = None
+    di_check_raw = request.form.get('di_check')
+    # A form without the field keeps the saved value instead of resetting it.
+    di_check = None if di_check_raw is None else di_check_raw.strip() != '0'
 
     studs_json = (request.form.get('studs_json') or '').strip()
     studs_text = (request.form.get('studs_text') or '').strip()
-    if studs_json:
+    studs_error = None
+    if 'target_x' in request.form or 'target_y' in request.form:
+        # The Single Shot settings form: its one point, as separate X and Y.
+        studs, studs_error = _parse_target(request.form.get('target_x'),
+                                           request.form.get('target_y'))
+    elif studs_json:
         try:
             studs = json.loads(studs_json)
         except (json.JSONDecodeError, ValueError):
             studs = []
     elif studs_text:
-        studs, _ = _parse_studs(studs_text)
+        studs, studs_error = _parse_studs(studs_text)
     else:
         studs = []
+    if studs_error:
+        # Refuse the save: storing an empty list here erased the saved studs.
+        return render_template('partials/command_result.html', ok=False,
+                               title='Save Recipe', payload={'error': studs_error})
     with _rec_lock:
         recipes = _recipes_load()
         if recipe_id:
             existing = next((r for r in recipes if r.get('id') == recipe_id), None)
         else:
-            existing = next((r for r in recipes if r['name'] == name), None)
+            # Never by name onto a tool-owned record: a part that shares the
+            # Single Shot record's name must not overwrite its settings.
+            existing = next((r for r in recipes if r['name'] == name and not r.get('system')), None)
         now = datetime.now(timezone.utc).isoformat()
         if existing:
             existing['name']             = name
@@ -562,8 +594,8 @@ def ui_recipes_save():
             existing['stud_type']        = stud_type
             existing['substrate']       = substrate
             existing['pressure_setting'] = pressure_setting
-            if welder_profile is not None:
-                existing['welder_profile'] = welder_profile
+            if di_check is not None:
+                existing['di_check']     = di_check
             existing['speed']            = speed
             existing['dsc_enabled']      = dsc_enabled
             existing['stud_reload_ms']   = stud_reload_ms
@@ -582,7 +614,7 @@ def ui_recipes_save():
                 'stud_type': stud_type,
                 'substrate': substrate,
                 'pressure_setting': pressure_setting,
-                'welder_profile': welder_profile or 'atlas',
+                'di_check': True if di_check is None else di_check,
                 'speed': speed,
                 'dsc_enabled': dsc_enabled,
                 'stud_reload_ms': stud_reload_ms,
@@ -609,10 +641,11 @@ def ui_parts_delete():
     with _rec_lock:
         recipes = _recipes_load()
         before = len(recipes)
+        # Tool-owned records (the Single Shot settings) are never deleted here.
         if recipe_id:
-            recipes = [r for r in recipes if r.get('id') != recipe_id]
+            recipes = [r for r in recipes if r.get('id') != recipe_id or r.get('system')]
         else:
-            recipes = [r for r in recipes if r['name'] != name]
+            recipes = [r for r in recipes if r['name'] != name or r.get('system')]
         _recipes_save(recipes)
     deleted = len(recipes) < before
     resp = make_response(render_template(
@@ -634,7 +667,7 @@ def ui_studs_preview():
 def ui_manager_parts_list():
     with _rec_lock:
         recipes = _recipes_load()
-    return jsonify(_recipes_enrich(_hide_faceplate_recipe(recipes)))
+    return jsonify(_recipes_enrich(_hide_system_recipes(recipes)))
 
 @app.route('/ui/manager/part-points')
 def ui_manager_part_points():
@@ -695,27 +728,27 @@ def _job_command(fn):
 
 @app.route("/ui/job/load", methods=["POST"])
 def ui_job_load():
-    """Queue a part from the parts page. JSON in/out — the caller redirects."""
+    """Queue a part from the parts page. JSON in/out — the caller redirects.
+
+    Live or Dry is the operator's choice for this run and has no default: a
+    request without one is refused, never guessed. The DI check comes from the
+    part itself.
+    """
     part_id = (request.form.get("recipe_id") or request.form.get("part_id") or "").strip()
     try:
         cycles = max(1, int(request.form.get("cycles", "1")))
     except ValueError:
         cycles = 1
+    arm_mode = (request.form.get("arm_mode") or "").strip().lower()
+    if arm_mode not in ARM_MODES:
+        return jsonify({"ok": False, "error": "Choose Live or Dry for this run."}), 400
     gate_mode = (request.form.get("gate_mode") or GATE_MODE).strip()
     with _rec_lock:
         recipes = _recipes_load()
-    enriched = _recipes_enrich(recipes)
+    enriched = _recipes_enrich(_hide_system_recipes(recipes))
     recipe = next((r for r in enriched if r.get("id") == part_id), None)
     if not recipe:
         return jsonify({"ok": False, "error": "Part not found"}), 404
-    welder_profile = recipe.get("welder_profile", "atlas")
-    if welder_profile not in WELDER_PROFILES:
-        welder_profile = "atlas"
-    arm_mode = (request.form.get("arm_mode") or recipe.get("arm_mode") or "live").strip().lower()
-    if welder_profile == "liberty":
-        arm_mode = "dry"
-    if arm_mode not in ("live", "dry"):
-        arm_mode = "live"
     speed_raw = (request.form.get("speed") or "").strip()
     try:
         speed = max(1, min(100, int(float(speed_raw)))) if speed_raw else recipe.get("speed")
@@ -727,9 +760,9 @@ def ui_job_load():
             recipe["name"],
             recipe.get("studs", []),
             cycles,
-            gate_mode=gate_mode,
             arm_mode=arm_mode,
-            welder_profile=welder_profile,
+            di_check=recipe["di_check"],
+            gate_mode=gate_mode,
             safe_z=recipe.get("safe_z", 60.0),
             retract_z=recipe.get("retract_z", 10.0),
             part_z=recipe.get("part_z", 0.0),
@@ -797,112 +830,25 @@ def job_history_page():
     return render_template("job_history.html", page_title="Run History")
 
 
-@app.route("/operator/liberty")
-def liberty_page():
-    config, config_error = _liberty_live_config()
-    with _rec_lock:
-        recipes = _recipes_load()
-    liberty_recipes = [
-        recipe for recipe in _recipes_enrich(_hide_faceplate_recipe(recipes))
-        if recipe.get("welder_profile") == "liberty" and recipe.get("studs")
-    ]
-    return render_template(
-        "liberty.html", page_title="Liberty Endurance Test",
-        config=config, config_error=config_error, recipes=liberty_recipes,
-    )
-
-
-@app.route("/ui/liberty/start", methods=["POST"])
-def ui_liberty_start():
-    config, config_error = _liberty_live_config()
-    title = "Liberty Endurance Test"
-    if config_error:
-        return render_template(
-            "partials/command_result.html", ok=False, title=title,
-            payload={"error": config_error},
-        )
-
-    confirmation = (request.form.get("confirmation") or "").strip().upper()
-    if confirmation != "FIRE LIBERTY":
-        return render_template(
-            "partials/command_result.html", ok=False, title=title,
-            payload={"error": "Type FIRE LIBERTY to start a live Liberty endurance test."},
-        )
-
-    recipe_id = (request.form.get("recipe_id") or "").strip()
-    try:
-        cycles = int(request.form.get("cycles") or "")
-    except ValueError:
-        cycles = 0
-    if cycles < 1:
-        return render_template(
-            "partials/command_result.html", ok=False, title=title,
-            payload={"error": "Cycle count must be at least 1."},
-        )
-
-    with _rec_lock:
-        recipes = _recipes_load()
-    recipe = next((recipe for recipe in _recipes_enrich(recipes) if recipe.get("id") == recipe_id), None)
-    if not recipe or recipe.get("welder_profile") != "liberty":
-        return render_template(
-            "partials/command_result.html", ok=False, title=title,
-            payload={"error": "Select a saved Liberty recipe."},
-        )
-    if not recipe.get("studs"):
-        return render_template(
-            "partials/command_result.html", ok=False, title=title,
-            payload={"error": "The selected Liberty recipe has no stud locations."},
-        )
-
-    try:
-        job.load(
-            recipe["id"], recipe["name"], recipe["studs"], cycles,
-            gate_mode="none", arm_mode="live", welder_profile="liberty",
-            liberty_commissioning=True,
-            weld_trigger_do=config["trigger_do"],
-            weld_trigger_pulse_ms=config["trigger_pulse_ms"],
-            safe_z=recipe.get("safe_z", 60.0),
-            retract_z=recipe.get("retract_z", 10.0),
-            part_z=recipe.get("part_z", 0.0),
-            pressure_setting=recipe.get("pressure_setting", "high"),
-            stud_type=recipe.get("stud_type", "M4"),
-            substrate=recipe.get("substrate", "Mild Steel"),
-            speed=recipe.get("speed"),
-            dsc_enabled=recipe.get("dsc_enabled", False),
-            stud_reload_ms=recipe.get("stud_reload_ms"),
-            kind="liberty_endurance",
-        )
-        job.start()
-        payload = {
-            "message": "Liberty endurance test launched.",
-            "studs_per_cycle": len(recipe["studs"]),
-            "cycles": cycles,
-            "trigger": f"DO{config['trigger_do']} for {config['trigger_pulse_ms']} ms",
-        }
-        ok = True
-    except JobError as exc:
-        ok, payload = False, {"error": str(exc)}
-    return render_template("partials/command_result.html", ok=ok, title=title, payload=payload)
-
-@app.route("/operator/faceplate")
-def faceplate_page():
-    recipe = _faceplate_recipe()
+@app.route("/operator/single-shot")
+def single_shot_page():
+    recipe = _recipes_enrich([_single_shot_recipe()])[0]
     studs = recipe.get('studs') or []
     target = studs[0] if studs else None
     return render_template(
-        "faceplate.html", page_title="Faceplate",
-        recipe=recipe, target=target,
+        "single_shot.html", page_title="Single Shot",
+        recipe=recipe, target=target, bed_mm=BED_MM,
     )
 
-@app.route("/ui/faceplate/move-position", methods=["POST"])
-def ui_faceplate_move_position():
-    """Move weld head to weld spot (X, Y) set in faceplate settings."""
+@app.route("/ui/single-shot/move-position", methods=["POST"])
+def ui_single_shot_move_position():
+    """Move the weld head to the Single Shot target (X, Y) at safe height."""
     if job.snapshot().active:
         return render_template(
             "partials/command_result.html", ok=False, title="Move to Position",
             payload={"error": "A job is running — stop the active job first."},
         )
-    recipe = _faceplate_recipe()
+    recipe = _single_shot_recipe()
     studs = recipe.get('studs') or []
     if not studs:
         return render_template(
@@ -921,10 +867,10 @@ def ui_faceplate_move_position():
         "blend = -1\n"
         "wobj = 4\n"
         "speed = 25\n"
-        f"faceplateX = {x_val}\n"
-        f"faceplateY = {y_val}\n"
+        f"targetX = {x_val}\n"
+        f"targetY = {y_val}\n"
         f"APPROACH_Z = {approach_z}\n"
-        "PointsOffsetEnable(0, faceplateX, faceplateY, APPROACH_Z, 0, 0, 0)\n"
+        "PointsOffsetEnable(0, targetX, targetY, APPROACH_Z, 0, 0, 0)\n"
         "PTP(zerozero, speed, -1, 0)\n"
         "PointsOffsetDisable()\n"
     )
@@ -945,52 +891,64 @@ def ui_faceplate_move_position():
     return render_template("partials/command_result.html", ok=ok, title="Move to Position", payload=payload)
 
 
-@app.route("/ui/faceplate/weld", methods=["POST"])
-@app.route("/ui/faceplate/load", methods=["POST"])
-def ui_faceplate_weld():
-    """Run weld_faceplate.lua on the controller."""
-    recipe = _faceplate_recipe()
+@app.route("/ui/single-shot/fire", methods=["POST"])
+def ui_single_shot_fire():
+    """Weld once at the saved target through JobManager (programs/single_shot.lua).
+
+    Live or Dry comes from the page's confirm modal for this shot and has no
+    default; the DI check comes from the Single Shot settings.
+    """
+    title = "Single Shot"
+    arm_mode = (request.form.get('arm_mode') or '').strip().lower()
+    if arm_mode not in ARM_MODES:
+        return render_template(
+            "partials/command_result.html", ok=False, title=title,
+            payload={"error": "Choose Live or Dry for this shot."},
+        )
+    recipe = _recipes_enrich([_single_shot_recipe()])[0]
     studs = recipe.get('studs') or []
     if not studs:
         return render_template(
-            "partials/command_result.html", ok=False, title="Weld Faceplate",
-            payload={"error": "No faceplate target set — save X/Y in Settings first."},
+            "partials/command_result.html", ok=False, title=title,
+            payload={"error": "No target set — save X/Y in Settings first."},
         )
     try:
-        cycles = int(request.form.get('cycles') or 1)
-    except ValueError:
-        cycles = 1
-    try:
         job.load(
-            "__faceplate__", "Faceplate", studs[:1], cycles,
-            gate_mode="none", kind="faceplate",
-            safe_z=recipe.get('safe_z', 10.0),
-            retract_z=recipe.get('retract_z', 10.0),
-            part_z=recipe.get('part_z', 0.0),
-            pressure_setting=recipe.get('pressure_setting', 20.0),
-            stud_type=recipe.get('stud_type', 'M4'),
-            substrate=recipe.get('substrate', 'Mild Steel'),
+            SINGLE_SHOT_PART_ID, "Single Shot", studs[:1], 1,
+            arm_mode=arm_mode,
+            di_check=recipe['di_check'],
+            kind="single_shot",
+            gate_mode="none",
+            safe_z=recipe['safe_z'],
+            retract_z=recipe['retract_z'],
+            part_z=recipe['part_z'],
+            pressure_setting=recipe['pressure_setting'],
+            stud_type=recipe['stud_type'],
+            substrate=recipe['substrate'],
             speed=recipe.get('speed'),
         )
         job.start()
-        ok, payload = True, {"message": f"Faceplate weld launched ({cycles} cycle{'s' if cycles > 1 else ''})"}
+        ok, payload = True, {
+            "message": f"{arm_mode.capitalize()} shot launched",
+            "di_check": "on" if recipe['di_check'] else "off",
+        }
     except JobError as exc:
         ok, payload = False, {"error": str(exc)}
     except Exception as e:
         ok, payload = False, {"error": str(e)}
 
-    return render_template("partials/command_result.html", ok=ok, title="Weld Faceplate", payload=payload)
+    return render_template("partials/command_result.html", ok=ok, title=title, payload=payload)
 
 
-@app.route("/ui/faceplate/move-home", methods=["POST"])
-def ui_faceplate_move_home():
+@app.route("/ui/single-shot/move-home", methods=["POST"])
+def ui_single_shot_move_home():
     """Move robot to home position (PTP homewf)."""
     if job.snapshot().active:
         return render_template(
             "partials/command_result.html", ok=False, title="Move Home",
             payload={"error": "A job is running — stop the active job first."},
         )
-    recipe = _faceplate_recipe()
+    recipe = _single_shot_recipe()
     safe_z = float(recipe.get('safe_z', 10.0))
     part_z = float(recipe.get('part_z', 0.0))
     approach_z = part_z + safe_z
@@ -1079,8 +1037,8 @@ def ui_parts_goto():
     return render_template("partials/command_result.html", ok=ok, title="Goto", payload=payload)
 
 
-@app.route("/ui/faceplate/feed", methods=["POST"])
-def ui_faceplate_feed():
+@app.route("/ui/single-shot/feed", methods=["POST"])
+def ui_single_shot_feed():
     """Manually advance the stud feeder — DO1 high for FEED_PULSE_S, then low.
 
     Refused while a job is active, because DO1 belongs to the running program.
@@ -1200,7 +1158,7 @@ def ui_tcp_calibrate_record_point():
 @app.route("/ui/tcp-calibrate/apply", methods=["POST"])
 def ui_tcp_calibrate_apply():
     try:
-        # tool slot 10 — the id every production Lua program (WeldFlex.lua, weld_faceplate.lua) reads.
+        # tool slot 10 — the id every production Lua program (WeldFlex.lua, single_shot.lua) reads.
         tcp_offset = robot.tcp_compute_and_apply(tool_id=10)
         with _tcp_lock:
             _tcp_calib["applied"] = True
@@ -1345,7 +1303,7 @@ WELD_READY_DI = int(os.getenv("WELDFLEX_WELD_READY_DI", "0"))
 # DO1 — stud feeder advance. Same language-boundary problem as the two DIs above:
 # this is a third copy of a number weld.lua owns as DO_FEED, so the same test
 # asserts they agree. The pulse width is deliberately *not* weld.lua's 1 s feed
-# pulse — this is the operator's manual nudge from /operator/faceplate, not the
+# pulse — this is the operator's manual nudge from /operator/single-shot, not the
 # program's feed cycle.
 FEED_DO = int(os.getenv("WELDFLEX_FEED_DO", "1"))
 FEED_PULSE_S = float(os.getenv("WELDFLEX_FEED_PULSE_S", "0.25"))

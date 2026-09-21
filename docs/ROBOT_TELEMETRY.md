@@ -75,7 +75,7 @@ live feed never overrides it.
 | Controller fault | 8083 `main_errcode` / `sub_errcode` (412/416) | The frame reports `0` for "no fault"; `ConnSnapshot` uses `None`. Do not conflate — `get_universal_state()` normalises `0` to `None`. |
 | Connection liveness | `GetCurrentLine()` raw XML-RPC | The heartbeat's single mandatory round trip — see "The heartbeat proves XML-RPC" below. A failed transport is an XML-RPC failure, not necessarily a robot failure. Check `feed_streaming` before calling it offline. |
 | Force/torque | 8083 `FT_data[0..5]` (offset 179) | Primary source for `ft_read()` and the F/T page. The push survives controller-side force operations. CNDE `FtSensorData` is the compatibility fallback. **`ft_read()` reads no further than those two caches** — its old raw `FT_GetForceTorqueRCS(0)` fallback was removed, so a stale cache is now reported as no reading rather than answered with an RPC that returns code `14` for the whole of a force move. |
-| Lua phase/return values | `GetSysVarValue()` XML-RPC | 8083 carries no system variables, so slots 1–5/8 stay on XML-RPC permanently. The Job Manager starts the detailed sampler while a weld program runs; these values are the only window into the controller-applied press target and other Lua state. `weld_probe` issues **one bounded call per slot** rather than one batched dispatch — see "Sampling is interruptible" below. |
+| Lua phase/return values | `GetSysVarValue()` XML-RPC | 8083 carries no system variables, so slots 1–5 and 8–10 stay on XML-RPC permanently. The Job Manager starts the detailed sampler while a weld program runs; these values are the only window into the controller-applied press target and other Lua state. `weld_probe` issues **one bounded call per slot** rather than one batched dispatch — see "Sampling is interruptible" below. |
 | DI0/DI1 display | 8083 DI bitmap (176/177) via `FeedSnapshot.di(n)` | **Feed-first as of this revision.** `get_universal_state()` overrides the sysvar levels with `feed.di()` whenever the frame is fresher than `FORCE_FRESH_S`, and `weld_probe` answers sysvar slots 6/7 from the frame without issuing their RPC reads at all. The controller-side `GetDI()` → sysvars 6/7 relay remains underneath as the fallback when no fresh frame is available. |
 
 **Telemetry is observe-only.** It does not establish a safety interlock and does
@@ -201,8 +201,8 @@ anything is or is not still on XML-RPC.
 
 **Lua system variables stay on XML-RPC permanently.** 8083 carries no sysvars,
 so the phase code, the last `FT_*` return and the press diagnostics (slots 1–5
-and 8) have nowhere else to come from. Only the two DI slots (6/7) have a feed
-equivalent, and they now use it.
+and 8–10) have nowhere else to come from. Only the two DI slots (6/7) have a
+feed equivalent, and they now use it.
 
 **DI display has moved.** `get_universal_state()` prefers `FeedSnapshot.di()`
 over the sysvar levels, and `weld_probe` answers slots 6/7 from the frame

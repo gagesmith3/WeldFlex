@@ -37,17 +37,22 @@ from typing import Any, Callable, Sequence
 
 from lua_builder import (
     ARM_MODES,
-    WELDER_PROFILES,
     GATE_MODES,
     PROGRAM_NAME,
     WELD_PATH,
     WELD_PROGRAM_NAME,
-    build_weld_faceplate_lua,
+    RunMode,
+    build_single_shot_lua,
     build_weldflex_lua,
     strip_lua_comments,
 )
 
 log = logging.getLogger("weldflex.job")
+
+# "part" builds WeldFlex.lua from a recipe's stud list; "single_shot" builds
+# single_shot.lua for the Admin page's one-stud tool. Everything after the build
+# is shared.
+JOB_KINDS = ("part", "single_shot")
 
 MONITOR_INTERVAL_S = 0.25
 # A program can still read "stopped" for a moment after ProgramRun returns, so
@@ -131,7 +136,7 @@ class CycleTracker:
     only advances when the reported line actually changes.
 
     **`program_max_line` guards against `NewDofile` line aliasing.** Per stud,
-    `WeldFlex.lua`/`weld_faceplate.lua` call `NewDofile("/fruser/weld.lua", 1, 1)`,
+    `WeldFlex.lua`/`single_shot.lua` call `NewDofile("/fruser/weld.lua", 1, 1)`,
     and `GetCurrentLine` reports *weld.lua's own* line numbers for the whole time
     that sub-file is executing (weld.lua is ~500 lines; the caller program is
     ~100-115). Those numbers are almost always >= `cycle_marker_line`, so without
@@ -211,8 +216,8 @@ class JobSnapshot:
     part_name: str | None = None
     program: str = PROGRAM_NAME
     gate_mode: str = "pause"
-    arm_mode: str = "live"
-    welder_profile: str = "atlas"
+    arm_mode: str = "dry"
+    di_check: bool = True
     stud_count: int = 0
     cycles_target: int = 0
     cycles_done: int = 0
@@ -260,17 +265,14 @@ class _Session:
 
     run_id: str
     state: str = JobState.QUEUED.value
-    kind: str = "part"  # "part" -> build_weldflex_lua, "faceplate" -> build_weld_faceplate_lua
+    kind: str = "part"  # one of JOB_KINDS
     part_id: str | None = None
     part_name: str | None = None
     studs: list = field(default_factory=list)
     program: str = PROGRAM_NAME
     gate_mode: str = "pause"
-    arm_mode: str = "live"
-    welder_profile: str = "atlas"
-    liberty_commissioning: bool = False
-    weld_trigger_do: int = 0
-    weld_trigger_pulse_ms: int = 250
+    arm_mode: str = "dry"
+    di_check: bool = True
     cycles_target: int = 0
     safe_z: float = 60.0
     retract_z: float = 10.0
@@ -341,12 +343,11 @@ class JobManager:
         part_name: str,
         studs: Sequence[dict],
         cycles: int,
+        *,
+        arm_mode: str,
+        di_check: bool = True,
+        kind: str = "part",
         gate_mode: str = "pause",
-        arm_mode: str = "live",
-        welder_profile: str = "atlas",
-        liberty_commissioning: bool = False,
-        weld_trigger_do: int = 0,
-        weld_trigger_pulse_ms: int = 250,
         safe_z: float = 60.0,
         retract_z: float = 10.0,
         part_z: float = 0.0,
@@ -356,37 +357,33 @@ class JobManager:
         speed: float | int | None = None,
         dsc_enabled: bool = False,
         stud_reload_ms: int | None = None,
-        kind: str = "part",
     ) -> JobSnapshot:
-        """Queue a part (or a faceplate maintenance run) for running.
+        """Queue a part (or a single shot) for running.
+
+        What the caller passes, grouped by where it comes from:
+
+        * **This run** — `cycles` and `arm_mode` ("live" or "dry"). `arm_mode`
+          has no default: the operator picks it every run, and a caller that
+          forgets gets a TypeError rather than a guess.
+        * **The recipe** — `di_check` (False skips the DI0/DI1 checks, live
+          runs included), plus the geometry and press settings from `safe_z`
+          on down.
+        * **The entry point** — `kind` picks the builder (`JOB_KINDS`), and
+          `gate_mode` what happens between cycles. "single_shot" jobs pass a
+          one-point `studs` list (`[{"x":..., "y":...}]`).
 
         Rejected while a job is still active. A terminal job is replaced rather
         than blocking the load — `clear()` is for dismissing the result
-        deliberately, not a precondition for the next job. `kind` selects which
-        builder `_launch` uses; "faceplate" jobs pass a single-point `studs`
-        list (`[{"x":..., "y":...}]`) rather than a full stud list.
+        deliberately, not a precondition for the next job.
         """
+        if kind not in JOB_KINDS:
+            raise JobError(f"Unknown job kind {kind!r}")
         if gate_mode not in GATE_MODES:
             raise JobError(f"Unknown gate mode {gate_mode!r}")
         if arm_mode not in ARM_MODES:
-            raise JobError(f"Unknown arm mode {arm_mode!r}")
-        if welder_profile not in WELDER_PROFILES:
-            raise JobError(f"Unknown welder profile {welder_profile!r}")
-        if liberty_commissioning and (welder_profile != "liberty" or arm_mode != "live"):
-            raise JobError("Liberty commissioning requires the live Liberty profile")
-        if welder_profile == "liberty" and arm_mode != "dry" and not liberty_commissioning:
-            raise JobError(
-                "The LYNX Liberty profile is dry-run only until its live weld interlocks are commissioned"
-            )
-        try:
-            weld_trigger_do = int(weld_trigger_do)
-            weld_trigger_pulse_ms = int(weld_trigger_pulse_ms)
-        except (TypeError, ValueError):
-            raise JobError("Liberty trigger output and pulse duration must be integers") from None
-        if not 0 <= weld_trigger_do <= 15:
-            raise JobError("Liberty trigger output must be DO0 through DO15")
-        if not 1 <= weld_trigger_pulse_ms <= 1_000:
-            raise JobError("Liberty trigger pulse duration must be 1 through 1000 ms")
+            raise JobError(f"Unknown arm mode {arm_mode!r}; every run must be live or dry")
+        if not isinstance(di_check, bool):
+            raise JobError(f"DI check must be true or false, got {di_check!r}")
         cycles = max(1, int(cycles))
         with self._lock:
             state = self._state_locked()
@@ -402,10 +399,7 @@ class JobManager:
                 studs=list(studs),
                 gate_mode=gate_mode,
                 arm_mode=arm_mode,
-                welder_profile=welder_profile,
-                liberty_commissioning=bool(liberty_commissioning),
-                weld_trigger_do=weld_trigger_do,
-                weld_trigger_pulse_ms=weld_trigger_pulse_ms,
+                di_check=di_check,
                 cycles_target=cycles,
                 safe_z=float(safe_z),
                 retract_z=float(retract_z),
@@ -418,16 +412,12 @@ class JobManager:
                 stud_reload_ms=stud_reload_ms,
             )
             snap = self._snapshot_locked()
-        log.info("job loaded run_id=%s part=%r cycles=%d gate=%s arm=%s welder=%s commissioning=%s studs=%d",
-                 run_id, part_name, cycles, gate_mode, arm_mode, welder_profile,
-                 liberty_commissioning, len(studs))
+        log.info("job loaded run_id=%s kind=%s part=%r cycles=%d gate=%s arm=%s di_check=%s studs=%d",
+                 run_id, kind, part_name, cycles, gate_mode, arm_mode, di_check, len(studs))
         self._event(run_id, "load", {"part_id": part_id, "part_name": part_name,
-                                     "cycles": cycles, "gate_mode": gate_mode,
-                         "arm_mode": arm_mode, "welder_profile": welder_profile,
-                                     "liberty_commissioning": bool(liberty_commissioning),
-                                     "weld_trigger_do": weld_trigger_do,
-                                     "weld_trigger_pulse_ms": weld_trigger_pulse_ms,
-                         "studs": len(studs)})
+                                     "kind": kind, "cycles": cycles, "gate_mode": gate_mode,
+                                     "arm_mode": arm_mode, "di_check": di_check,
+                                     "studs": len(studs)})
         return snap
 
     def start(self) -> JobSnapshot:
@@ -624,7 +614,7 @@ class JobManager:
             program=sess.program,
             gate_mode=sess.gate_mode,
             arm_mode=sess.arm_mode,
-            welder_profile=sess.welder_profile,
+            di_check=sess.di_check,
             stud_count=len(sess.studs),
             cycles_target=sess.cycles_target,
             cycles_done=sess.cycles_done,
@@ -655,11 +645,7 @@ class JobManager:
                 studs = list(sess.studs)
                 cycles = sess.cycles_target
                 gate_mode = sess.gate_mode
-                arm_mode = sess.arm_mode
-                welder_profile = sess.welder_profile
-                liberty_commissioning = sess.liberty_commissioning
-                weld_trigger_do = sess.weld_trigger_do
-                weld_trigger_pulse_ms = sess.weld_trigger_pulse_ms
+                run_mode = RunMode(sess.arm_mode, di_check=sess.di_check)
                 safe_z = sess.safe_z
                 retract_z = sess.retract_z
                 part_z = sess.part_z
@@ -681,15 +667,15 @@ class JobManager:
                     f"Force sensor reported an invalid controller number: {ft_sensor_num!r}"
                 )
 
-            if kind == "faceplate":
+            if kind == "single_shot":
                 if not studs:
-                    raise JobError("Faceplate job has no target point set")
-                built = build_weld_faceplate_lua(
+                    raise JobError("Single shot has no target point set")
+                built = build_single_shot_lua(
                     studs[0]["x"],
                     studs[0]["y"],
                     cycles,
+                    run_mode=run_mode,
                     gate_mode=gate_mode,
-                    arm_mode=arm_mode,
                     safe_z=safe_z,
                     part_z=part_z,
                     pressure_setting=pressure_setting,
@@ -702,12 +688,8 @@ class JobManager:
                 built = build_weldflex_lua(
                     studs,
                     cycles,
+                    run_mode=run_mode,
                     gate_mode=gate_mode,
-                    arm_mode=arm_mode,
-                    welder_profile=welder_profile,
-                    liberty_commissioning=liberty_commissioning,
-                    weld_trigger_do=weld_trigger_do,
-                    weld_trigger_pulse_ms=weld_trigger_pulse_ms,
                     safe_z=safe_z,
                     retract_z=retract_z,
                     part_z=part_z,
@@ -1007,10 +989,7 @@ class JobManager:
                 "kind": sess.kind,
                 "gate_mode": sess.gate_mode,
                 "arm_mode": sess.arm_mode,
-                "welder_profile": sess.welder_profile,
-                "liberty_commissioning": sess.liberty_commissioning,
-                "weld_trigger_do": sess.weld_trigger_do,
-                "weld_trigger_pulse_ms": sess.weld_trigger_pulse_ms,
+                "di_check": sess.di_check,
                 "stud_count": len(sess.studs),
                 "cycles_target": sess.cycles_target,
                 "cycles_done": sess.cycles_done,

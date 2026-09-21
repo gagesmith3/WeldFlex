@@ -3303,6 +3303,70 @@ pre {
   letter-spacing: 0.05em;
 }
 
+/* Live/Dry picker in the run modal and the Single Shot confirm. Neither option
+   starts selected: the operator's tap is the arming choice. */
+.arm-mode-seg {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.btn.arm-mode-btn {
+  flex: 1;
+  justify-content: center;
+  min-height: 44px;
+  background: #dce8f3;
+  color: #24455f;
+  font-weight: 700;
+  border-radius: 8px;
+}
+
+.btn.arm-mode-btn.active[data-arm-mode="live"] {
+  background: var(--stop);
+  color: #fff;
+}
+
+.btn.arm-mode-btn.active[data-arm-mode="dry"] {
+  background: #1d5f9a;
+  color: #fff;
+}
+
+.arm-mode-di-note {
+  margin: 0 0 10px;
+  padding: 6px 10px;
+  border: 1px solid #e2c07a;
+  border-radius: 8px;
+  background: #fdf6e6;
+  color: #6b4a00;
+  font-size: 0.78rem;
+  text-align: left;
+}
+
+/* LIVE / DRY / DI OFF tags under the job panel's part name. */
+.run-mode-tag {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  font-weight: 700;
+}
+
+.run-mode-tag.is-live {
+  background: var(--stop);
+  color: #fff;
+}
+
+.run-mode-tag.is-dry {
+  background: #1d5f9a;
+  color: #fff;
+}
+
+.run-mode-tag.is-warn {
+  background: #fdf6e6;
+  color: #6b4a00;
+  border: 1px solid #e2c07a;
+}
+
 /* Nav panel stretches to fill the right column */
 .operator-links-panel {
   height: 100%;
@@ -4612,131 +4676,548 @@ body.kiosk .pd-part-delete-btn { opacity: 1; }
   box-shadow: 0 0 0 2px rgba(39, 95, 132, 0.12);
 }
 
-/* Part Designer Job Parameters styling */
-.pd-settings-body {
-  padding: 10px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  background: var(--panel);
-  border-bottom: 1px solid var(--line);
+/* ── Part Settings modal (manager part designer) ──
+   Three tabs over one form. The panels share one grid cell, so the modal is as
+   tall as its tallest tab and doesn't jump when switching; only the panel area
+   scrolls when the window is shorter than that. */
+.wf-modal.pds-modal {
+  width: min(660px, calc(100vw - 32px));
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 32px);
+  padding: 18px 22px;
+  gap: 12px;
+  text-align: left;
 }
 
-.pd-param-group {
+.pds-head {
   display: flex;
-  flex-direction: column;
-  gap: 3px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
-.pd-param-label {
-  font-size: 0.7rem;
-  font-weight: 600;
+.pds-head-text {
+  min-width: 0;
+}
+
+.pds-title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.pds-subtitle {
+  margin: 2px 0 0;
+  max-width: 40ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.8rem;
   color: var(--muted);
 }
 
-.pd-param-input,
-.pd-param-select {
-  height: 32px;
-  padding: 4px 8px;
-  background: var(--panel);
+.pds-units {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pds-units-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.pds-seg {
+  display: inline-flex;
+  padding: 3px;
+  background: var(--bg-bottom);
   border: 1px solid var(--line);
+  border-radius: 9px;
+}
+
+.pds-seg-btn {
+  min-width: 48px;
+  height: 34px;
+  border: 0;
   border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.pds-seg-btn.active {
+  background: var(--panel);
   color: var(--ink);
-  font-size: 0.82rem;
+  box-shadow: 0 1px 3px rgba(15, 42, 63, 0.18);
+}
+
+.pds-seg-btn:focus-visible {
+  outline: 2px solid var(--header-end);
+  outline-offset: 1px;
+}
+
+.pds-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  border-bottom: 1px solid var(--line);
+}
+
+.pds-tab {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+  min-height: 52px;
+  margin-bottom: -1px;
+  padding: 8px 12px 9px;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  border-radius: 8px 8px 0 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.pds-tab.active {
+  background: var(--bg-bottom);
+  border-bottom-color: var(--header-end);
+  color: var(--ink);
+}
+
+:where(body:not(.kiosk)) .pds-tab:not(.active):hover {
+  background: var(--bg-bottom);
+  color: var(--ink);
+}
+
+.pds-tab:focus-visible {
+  outline: 2px solid var(--header-end);
+  outline-offset: -2px;
+}
+
+.pds-tab-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+/* Amber: a setting on this tab needs a second look. Red: it won't save. */
+.pds-tab-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.pds-tab[data-state="warn"] .pds-tab-dot {
+  background: var(--pause);
+}
+
+.pds-tab[data-state="error"] .pds-tab-dot {
+  background: var(--stop);
+}
+
+.pds-tab-summary {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.74rem;
   font-weight: 500;
-  font-family: inherit;
-  transition: border-color 0.12s, box-shadow 0.12s;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+.pds-panels {
+  display: grid;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 2px 2px;
+}
+
+.pds-panel {
+  grid-area: 1 / 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  visibility: hidden;
+}
+
+.pds-panel.active {
+  visibility: visible;
+}
+
+.pds-heights {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 210px;
+  gap: 20px;
+  align-items: start;
+}
+
+.pds-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.pds-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.pds-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.pds-label {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.pds-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.pds-input,
+.pds-select {
   box-sizing: border-box;
   width: 100%;
+  height: 44px;
+  padding: 0 10px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.92rem;
+  font-weight: 600;
+  transition: border-color 0.12s, box-shadow 0.12s;
 }
 
-.pd-param-input:focus,
-.pd-param-select:focus {
+.pds-input {
+  padding-right: 44px;
+  font-variant-numeric: tabular-nums;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.pds-input::-webkit-outer-spin-button,
+.pds-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.pds-input:focus,
+.pds-select:focus {
   border-color: var(--header-end);
   outline: none;
-  box-shadow: 0 0 0 2px rgba(39, 95, 132, 0.12);
+  box-shadow: 0 0 0 3px rgba(39, 95, 132, 0.15);
 }
 
-.pd-param-input:disabled {
+.pds-input.is-invalid {
+  border-color: var(--stop);
+  box-shadow: 0 0 0 3px rgba(180, 35, 47, 0.12);
+}
+
+.pds-input:disabled {
+  background: var(--bg-bottom);
   cursor: not-allowed;
   opacity: 0.55;
 }
 
-.pd-toggle {
-  align-items: center;
-  cursor: pointer;
-  display: flex;
-  gap: 8px;
-  height: 32px;
+.pds-suffix {
+  position: absolute;
+  right: 10px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--muted);
+  pointer-events: none;
 }
 
-.pd-toggle input {
-  height: 1px;
-  opacity: 0;
+.pds-hint {
+  margin: 0;
+  font-size: 0.74rem;
+  line-height: 1.35;
+  color: var(--muted);
+}
+
+.pds-error {
+  margin: 0;
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: var(--stop);
+}
+
+.pds-error:empty {
+  display: none;
+}
+
+/* A switch the height of an input, so it sits in a row beside one. */
+.pds-switch {
+  position: relative;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 44px;
+  padding: 0 10px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.pds-switch input {
   position: absolute;
   width: 1px;
+  height: 1px;
+  opacity: 0;
 }
 
-.pd-toggle-track {
-  background: var(--line);
-  border-radius: 10px;
-  height: 20px;
+/* The word beside the track, drawn by CSS so it always matches the checkbox. */
+.pds-switch-state::after {
+  content: "Off";
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.pds-switch input:checked ~ .pds-switch-state::after {
+  content: "On";
+  color: var(--ink);
+}
+
+.pds-switch-track {
   position: relative;
+  flex-shrink: 0;
+  width: 46px;
+  height: 26px;
+  border-radius: 13px;
+  background: var(--line);
   transition: background 0.12s;
-  width: 36px;
 }
 
-.pd-toggle-track::after {
-  background: var(--panel);
-  border-radius: 50%;
+.pds-switch-track::after {
   content: "";
-  height: 16px;
-  left: 2px;
   position: absolute;
-  top: 2px;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--panel);
+  box-shadow: 0 1px 2px rgba(15, 42, 63, 0.25);
   transition: transform 0.12s;
-  width: 16px;
 }
 
-.pd-toggle input:checked + .pd-toggle-track {
+.pds-switch input:checked + .pds-switch-track {
   background: var(--header-end);
 }
 
-.pd-toggle input:checked + .pd-toggle-track::after {
-  transform: translateX(16px);
+.pds-switch input:checked + .pds-switch-track::after {
+  transform: translateX(20px);
 }
 
-.pd-toggle input:focus-visible + .pd-toggle-track {
+.pds-switch input:focus-visible + .pds-switch-track {
   outline: 2px solid var(--header-end);
   outline-offset: 2px;
 }
 
-.pd-toggle-value {
-  color: var(--ink);
-  font-size: 0.82rem;
-  font-weight: 500;
+.pds-note {
+  margin: 0;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: var(--bg-bottom);
+  font-size: 0.76rem;
+  line-height: 1.4;
+  color: var(--muted);
 }
 
-.pd-param-select option {
-  background: var(--panel);
-  color: var(--ink);
+/* Same amber as the run modal's DI-off note. */
+.pds-note.is-warn {
+  border: 1px solid #e2c07a;
+  background: #fdf6e6;
+  color: #6b4a00;
 }
 
-.pd-border-top {
+/* A field that only matters when the switch above it is on. */
+.pds-sub {
+  margin-left: 14px;
+  padding-left: 12px;
+  border-left: 2px solid var(--line);
+}
+
+.pds-zdiag {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.pds-zd-plane {
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+}
+
+.pds-zd-plane.is-safe {
+  stroke: var(--header-end);
+}
+
+.pds-zd-plane.is-goto {
+  stroke: #7c95a8;
+}
+
+.pds-zd-rise {
+  stroke: #b0c8dc;
+  stroke-width: 1.5;
+}
+
+.pds-zd-arrowhead {
+  fill: #b0c8dc;
+}
+
+.pds-zd-name {
+  font-size: 11px;
+  font-weight: 700;
+  fill: var(--ink);
+}
+
+.pds-zd-val {
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  fill: var(--muted);
+}
+
+.pds-zd-part {
+  fill: #dce8f3;
+  stroke: #b0c8dc;
+}
+
+.pds-zd-part-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  fill: #5c7fa0;
+}
+
+.pds-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding-top: 12px;
   border-top: 1px solid var(--line);
 }
 
-/* Job Settings & Reports Modals */
-.pd-modal-wide {
-  width: min(520px, calc(100vw - 32px));
+.pds-foot-msg {
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--stop);
 }
 
-.pd-modal-form-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 12px;
-  margin: 16px 0;
-  text-align: left;
+.pds-foot .wf-modal-actions {
+  margin-left: auto;
+}
+
+.pds-foot .btn {
+  min-height: 44px;
+  padding-inline: 18px;
+}
+
+@media (max-width: 600px) {
+  .pds-heights,
+  .pds-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .pds-zdiag,
+  .pds-tab-summary {
+    display: none;
+  }
+}
+
+/* 800×480: every tab fits without scrolling, so the DI check switch never sits
+   below the fold. The part name moves beside the title, summaries go and the
+   vertical rhythm tightens; touch targets keep their 44px. */
+@media (max-height: 520px) {
+  .wf-modal.pds-modal {
+    max-height: calc(100vh - 16px);
+    padding: 10px 16px;
+    gap: 8px;
+  }
+
+  .pds-head-text {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+
+  .pds-subtitle {
+    margin: 0;
+  }
+
+  .pds-tab {
+    min-height: 44px;
+    padding-block: 6px;
+  }
+
+  .pds-tab-summary {
+    display: none;
+  }
+
+  .pds-panel,
+  .pds-fields,
+  .pds-row {
+    gap: 8px;
+  }
+
+  .pds-switch {
+    min-height: 48px;
+    padding-block: 6px;
+  }
+
+  .pds-note:not(.is-warn) {
+    padding: 0;
+    background: none;
+  }
+
+  .pds-note.is-warn {
+    padding-block: 5px;
+  }
+
+  .pds-foot {
+    padding-top: 8px;
+  }
+}
+
+/* Job Reports modal */
+.pd-modal-wide {
+  width: min(520px, calc(100vw - 32px));
 }
 
 .pd-report-grid {

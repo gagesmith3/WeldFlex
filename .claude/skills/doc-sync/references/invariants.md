@@ -59,22 +59,29 @@ rather than "fixing" the doc.
 
 ---
 
-## 3. `WELD_ARMED` and the dry-run path
+## 3. The run mode: `WELD_ARMED`, `WELD_DI_CHECK` and the dry-run path
 
-**Claim as of this writing:** live jobs set `WELD_ARMED = 1`, dry jobs set `0`
-and run the full search/press/hold/retract/feed sequence without pulsing the
-weld trigger.
+**Claim as of 2026-09-14:** a run's mode is exactly two switches, resolved once
+by `lua_builder.RunMode` and published verbatim by both callers through their
+`--{{RUN_MODE}}` marker. `WELD_ARMED` comes from the Live/Dry choice made for
+every run (no default anywhere); dry runs the full
+search/press/hold/retract/feed sequence without pulsing the weld trigger.
+`WELD_DI_CHECK` comes from the recipe's `di_check`; `0` skips the DI0 wait and
+both DI1 checks, live runs included.
 
 ```bash
-grep -n 'WELD_ARMED' programs/weld.lua programs/WeldFlex.lua
-grep -n 'ARM_MODES\|arm_mode' backend/lua_builder.py | head
+grep -n 'WELD_ARMED\|WELD_DI_CHECK' programs/weld.lua programs/WeldFlex.lua programs/single_shot.lua
+grep -n 'class RunMode\|ARM_MODES' backend/lua_builder.py
+grep -n 'arm_mode\|di_check' backend/job_manager.py | head
 ```
 
-Any doc or skill still saying `weld.lua` ignores `WELD_ARMED`, or that there is
-no dry path, is stale — that was true before `6722285` (2026-09-02) and is the
-worked example in `SKILL.md`. The **separate** open gap is that there is no
-explicit *arming confirmation step* between loading a live job and starting it;
-don't conflate the two and don't mark that one closed.
+Stale if any doc or skill still says: `weld.lua` ignores `WELD_ARMED`, or there
+is no dry path (stale since `6722285`, 2026-09-02); a recipe has a
+`welder_profile`, Liberty is dry-run only, or live runs require DI checks
+(stale since 2026-09-14); or the Lua templates derive the mode themselves. The
+**separate** open gap is that nothing confirms arming at the moment Run is
+pressed on a loaded live job; picking Live in the run modal happens at load.
+Don't conflate the two and don't mark that gap closed.
 
 ---
 
@@ -85,13 +92,14 @@ reach the Lua template through `--{{MARKER}}` substitution.
 
 ```bash
 grep -oE '\-\-\{\{[A-Z_]+\}\}' programs/WeldFlex.lua | sort -u
-grep -oE '\-\-\{\{[A-Z_]+\}\}' programs/weld_faceplate.lua | sort -u
+grep -oE '\-\-\{\{[A-Z_]+\}\}' programs/single_shot.lua | sort -u
 ```
 
 Compare against what the doc enumerates. New markers appear whenever a recipe
-field starts reaching the program — at the time of writing, `WELDER_PROFILE`,
-`LIBERTY_COMMISSIONING`, `STUD_TYPE`, `SUBSTRATE`, `WELD_TRIGGER_DO` and
-`WELD_TRIGGER_PULSE_MS` were all live in the template and absent from every doc.
+field starts reaching the program. At one point `WELDER_PROFILE`,
+`LIBERTY_COMMISSIONING`, `WELD_TRIGGER_DO` and `WELD_TRIGGER_PULSE_MS` were live
+in the template and absent from every doc; all four were removed 2026-09-14 in
+favor of the single `RUN_MODE` marker.
 
 Also re-confirm the two standing rules in that section: deleting a marker raises
 at build time, and the checked-in template is valid standalone Lua (a zero-stud,

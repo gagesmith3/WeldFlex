@@ -17,8 +17,9 @@ at the repo root; that file is the spec, this one maps it onto the code.
 
 > **A live run welds for real.** As of the 2026-08-03 rewrite (commits
 > `11aff8c`/`e55a18b`) the generated program calls `programs/weld.lua` per
-> stud, which fires the arc once its two DI checks pass. A dry run follows the
-> same search, press, hold, retract, and feeder sequence, but sets
+> stud, which fires the arc once its two DI checks pass, or without them when
+> the recipe's DI check is off. Live or Dry is picked for every run. A dry run
+> follows the same search, press, hold, retract, and feeder sequence, but sets
 > `WELD_ARMED = 0` so it never pulses the weld trigger output.
 
 ## The four layers
@@ -38,8 +39,9 @@ directly, and no run state lives in `app.py`.
 
 1. **Operator selects a part** — `/operator/parts` renders the library from
    `recipes.json`.
-2. **Prompted for cycle count** — the `#run-modal` block in
-   [`parts.html`](../backend/templates/parts.html).
+2. **Prompted for cycle count and Live or Dry** — the `#run-modal` block in
+   [`parts.html`](../backend/templates/parts.html). Neither mode is
+   preselected; Run stays disabled until one is tapped.
 3. **Job is loaded into the Job Manager** — `POST /ui/job/load` in
    [`app.py`](../backend/app.py) calls `JobManager.load()`, which queues the
    part and redirects the browser to `/operator`.
@@ -90,17 +92,20 @@ Consequences worth knowing:
   The pendant's Auto Speed is a global multiplier/cap over those percentages;
   set it to 100% before calibrating or running DSC, or even a generated 100%
   leg will be limited below its intended speed.
-- **The welder profile is emitted the same way.** A recipe carries a
-  `welder_profile` — `atlas` (default) or `liberty` — and the builder emits
-  `WELDER_PROFILE`, `LIBERTY_COMMISSIONING`, `WELD_TRIGGER_DO` and
-  `WELD_TRIGGER_PULSE_MS` alongside the geometry, so the weld trigger output is
-  no longer hardwired to DO0. **Liberty is dry-run only** unless
-  `liberty_commissioning` is set: `lua_builder._validate_welder_profile` and
-  `JobManager.load()` each raise on a live Liberty job, and the check is
-  duplicated on purpose so neither entry point can bypass the other. A Liberty
-  dry or commissioning build sets `WELD_SKIP_INTERLOCKS = 1` in the program, and
-  `weld.lua` refuses to fire an arc with interlocks bypassed unless the run is
-  specifically a commissioning run.
+- **The run mode is emitted the same way, through one marker.** A run's mode is
+  two switches, resolved once by `lua_builder.RunMode`: `arm_mode` (Live or
+  Dry, chosen for every run, with no default at any layer) and `di_check`
+  (saved on the recipe, default on). `--{{RUN_MODE}}` expands to `WELD_ARMED`
+  and `WELD_DI_CHECK` above the cycle loop, and neither caller template derives
+  or changes them. DI check off skips the DI0 welder-ready wait and both DI1
+  stud-on-work checks, **live runs included**. That was the owner's decision on
+  2026-09-14, which also removed the `atlas`/`liberty` welder profile, its
+  dry-only guards, and the configurable trigger output (now fixed in `weld.lua`
+  at DO0 for 250 ms).
+- **Single Shot uses the same machinery.** `JobManager.load(kind="single_shot")`
+  builds `programs/single_shot.lua` with `build_single_shot_lua`: one cycle,
+  one target from the `"system": "single_shot"` record in `recipes.json`, no
+  home moves, and the same `RUN_MODE` marker. `weld.lua` feeds after the shot.
 - `WeldFlex.lua` applies each stud position through
   `PointsOffsetEnable(0, ...)`, so percentage-mode `Lin` calls must use
   `Lin(point, speed, -1, 0, 0)`. Its final `0` means no *inline* offset; it is
@@ -136,7 +141,7 @@ assume they work.
 
 | # | Gap | Detail | Owner |
 |---|---|---|---|
-| 1 | **No explicit live-run arming confirmation** | Live jobs set `WELD_ARMED = 1` automatically; dry jobs set it to `0` and run the same motion/process sequence without pulsing the weld trigger output. There is no separate arm/disarm confirmation between loading a live job and starting it. | Unassigned |
+| 1 | **Arming is chosen at load, not confirmed at Run** | The run modal and the Single Shot confirm require a tap on Live or Dry for every run, and the job panel shows LIVE/DRY and DI OFF for the whole job. Pressing Run on the operator page still starts a loaded live job with no further confirmation. Dry sets `WELD_ARMED = 0` and runs the same motion/process sequence without pulsing the weld trigger output. | Unassigned |
 | 2 | **User-entered waits are a dead field** | Every recipe carries a `pause_points: []` — written in two places in [`app.py`](../backend/app.py), read nowhere — not `lua_builder.py`, not the part designer. `lua_builder._stud_rows` consumes only `x` and `y`. The per-cycle `gate_mode` is a *different* feature and does not cover this. | Deferred — wait system to be refactored later |
 | 3 | **The telemetry cutover is essentially done** | Program state, current line, fault codes, force, cycle counting **and now the DI and TCP-pose displays** come from the port-8083 push; CNDE survives only as a force fallback, so a dead CNDE port no longer means dead force. The heartbeat is down to one round trip while a frame is fresh. What is left is structural, not a migration: Lua system variables (the phase code and press diagnostics) have no feed equivalent and stay on XML-RPC permanently. | Gage — see `docs/ROBOT_TELEMETRY.md` |
 

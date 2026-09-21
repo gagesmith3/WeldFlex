@@ -1,7 +1,8 @@
 -- =========================================
 -- weld.lua — Weld sub-process for one stud
 --
--- Executed per stud by WeldFlex.lua with torch at safe Z clearance.
+-- Executed per stud by WeldFlex.lua (and once by single_shot.lua) with the
+-- torch at safe Z clearance.
 -- Sequence: SEARCH -> PRESS -> WELD -> HOLD -> RETRACT -> FEED
 -- See docs/weldNotes.md for full technical documentation & bring-up notes.
 -- =========================================
@@ -10,16 +11,12 @@
 local DI_STUD_ON_WORK = 1  -- Continuity circuit (stud seated on work)
 local DI_WELD_READY   = 0  -- Welder ready signal (capacitor charge)
 
-local DO_WELD    = (type(WELD_TRIGGER_DO) == "number"
-    and WELD_TRIGGER_DO >= 0
-    and WELD_TRIGGER_DO <= 15) and WELD_TRIGGER_DO or 0
+local DO_WELD    = 0       -- Weld trigger output
 local DO_FEED    = 1       -- Stud feeder advance output
 
 
 -- ===== Timing (ms) =====
-local WELD_PULSE_MS     = (type(WELD_TRIGGER_PULSE_MS) == "number"
-    and WELD_TRIGGER_PULSE_MS >= 1
-    and WELD_TRIGGER_PULSE_MS <= 1000) and WELD_TRIGGER_PULSE_MS or 250
+local WELD_PULSE_MS     = 250
 local POST_WELD_HOLD_MS = 500
 local FEED_PULSE_MS = (type(WELD_FEED_PULSE_MS) == "number"
     and WELD_FEED_PULSE_MS >= 1
@@ -55,6 +52,14 @@ local FORCE_CEILING_N   = FORCE_CEILING_LBF * N_PER_LBF
 local USE_FT_GUARD  = 0
 local FT_GUARD_TOOL = 10
 
+-- FT_LinInsertion ends on the first reading at or past its threshold, and seating
+-- the stud can spike the reading past it for an instant before it sags well under
+-- target (live 2026-09-14: a press that stopped on a momentary 19 lbf barely
+-- touched, while a jog held at a steady 19 lbf welds right). Do not answer that by
+-- re-running FT_LinInsertion during the hold. Lua cannot read force, so a re-run
+-- cannot know whether it starts past its threshold, and the one dry run that tried
+-- it (four re-runs, same day) ended in a resettable "Cartesian space command speed
+-- exceeded limit" fault. Live shots on this passive hold held pressure accurately.
 local PRESS_HOLD_MS = 1000
 
 -- ===== FT_Control & Motion Parameters =====
@@ -77,8 +82,11 @@ local FIND_ACC  = 0.0
 
 local PRESS_DIR = 0     -- 0 = negative (FT_LinInsertion encoding; flipped with TCP Z, 2026-09-01)
 
--- Above FAIRINO's 3 mm/s default, but still gentle for first contact;
--- constant-force insertion begins only after this completes.
+-- The commissioned speeds, restored 2026-09-14. Raising them the same day (search
+-- at 10 mm/s with the press at 1.0, then 0.5) left the press stuck well short of
+-- force both times, while 5 and 0.25 held pressure accurately. Both stop on force,
+-- but the press ends on its first reading past threshold, and arriving faster
+-- stopped it short. Shorten a shot some other way: a lower Safe Z shortens the search.
 local SEARCH_SPEED_MMS = 5.0
 local PRESS_SPEED_MMS  = 0.25
 
@@ -132,6 +140,8 @@ local SV_PRESS_GUARD  = 5
 local SV_STUD_ON_WORK = 6
 local SV_WELD_READY   = 7
 local SV_PRESS_LBF    = 8
+local SV_PRESS_HOLD_TRAVEL = 9
+local SV_WELD_JOLT_TRAVEL  = 10
 
 local GUARD_RELEASED   = 0
 local GUARD_CUSTOM     = 1
@@ -190,21 +200,17 @@ local function ftRefused(ret)
     return ret < 0 or ret >= 3
 end
 
-local function interlocksRequired()
-    return WELD_SKIP_INTERLOCKS ~= 1
+-- The recipe's DI check, published by the caller as WELD_DI_CHECK. Only an
+-- explicit 0 turns the DI0/DI1 checks off; a caller that never publishes it
+-- gets them.
+local function diCheckEnabled()
+    return WELD_DI_CHECK ~= 0
 end
 
 
 -- =========================================
 -- Helper Functions
 -- =========================================
-
-local function moveToZ(zOffset, vel)
-    -- flag=0: workpiece frame, matching WeldFlex.lua (see its comment).
-    PointsOffsetEnable(0, weldX, weldY, zOffset, 0, 0, 0)
-    PTP(zerozero, vel, -1, 0)
-    PointsOffsetDisable()
-end
 
 local function readDI(id)
     local ret1, ret2 = GetDI(id, 0)
@@ -238,68 +244,28 @@ local function readToolZ()
 end
 
 -- ===== Departure Along The Approach Axis =====
--- FT_FindSurface and FT_LinInsertion both work in the tool frame (FIND_RCS = 0),
--- so the stud is driven into the plate along tool Z. moveToZ lifts along the
--- workpiece Z instead, and those two axes differ by however far the head sits
--- out of square with the bed. Over the whole lift that difference is a lateral
--- drag across the stud, applied while the collet still surrounds it: 25 mm of
--- retract at 2 deg is ~0.9 mm sideways, far past collet clearance. The gun's
--- own length then turns a light catch into a moment the sensor cannot take --
--- 5 N.m full scale over a ~0.25 m TCP offset is only ~20 N of side load, so the
--- moment range is reached while Fz is still nowhere near its 200 N range. That
--- is the resettable "force sensor range reached" seen on retract.
+-- The caller parks the torch at zerozero + (weldX, weldY, PART_Z + SAFE_Z) in the
+-- workpiece frame, and FT_FindSurface and FT_LinInsertion then drive the stud
+-- straight down tool Z from there (FIND_RCS = 0) without turning it. So the
+-- pressed pose lies on a straight tool-Z line from the park pose, however far the
+-- head sits out of square with the bed, and a Lin back to the park pose retraces
+-- that line exactly.
 --
--- Returning to the pose the tool descended from puts both ends of the lift on
--- the tool's own approach axis, so the skew cancels instead of accumulating.
--- MoveCart interpolates in joint space, so the middle of the path still bows
--- slightly, but that deviation is zero at both endpoints -- smallest exactly
--- where the collet is still on the stud. The endpoint is unchanged: the pose is
--- captured at the caller's safe plane, which is PART_Z + SAFE_Z.
-local departPose = nil
-local departTool = 0
-local departWobj = 0
-
-local function frameNum(getter, fallback)
-    if type(getter) ~= "function" then return fallback end
-    local num = getter(0)
-    if type(num) ~= "number" then return fallback end
-    return num
-end
-
-local function captureApproachPose()
-    departPose = nil
-    if type(GetActualTCPPose) ~= "function" then return end
-    if type(MoveCart) ~= "function" then return end
-
-    local pose = GetActualTCPPose()
-    if type(pose) ~= "table" then return end
-    if type(pose[1]) ~= "number" or type(pose[2]) ~= "number"
-       or type(pose[3]) ~= "number" or type(pose[4]) ~= "number"
-       or type(pose[5]) ~= "number" or type(pose[6]) ~= "number" then
-        print("[WELD] Approach pose unreadable; retract falls back to workpiece Z.")
-        return
-    end
-
-    -- Captured and replayed under one frame configuration, so whichever frame
-    -- GetActualTCPPose reports in is the frame MoveCart is handed back.
-    departTool = frameNum(GetActualTCPNum, (type(tool) == "number") and tool or 0)
-    departWobj = frameNum(GetActualWObjNum, (type(wobj) == "number") and wobj or 0)
-    departPose = pose
-end
-
-local function retractToApproachPose()
-    if departPose == nil then return false end
-    -- vel/acc full, ovl carries the speed scale, blocking, IK solved from the
-    -- current joint position -- the FR Lua manual's own MoveCart argument order.
-    MoveCart(departPose, departTool, departWobj, 100, 100, RETRACT_SPEED, -1, -1)
-    return true
-end
-
+-- PTP and MoveCart reach the same endpoint but interpolate in joint space, which
+-- bows the path off that line while the collet is still on the stud.
+--
+-- Straightening the lift did not stop the resettable "Force sensor range
+-- threshold reached" fault at retract. It tripped on this Lin (live Single Shots,
+-- 2026-09-15) as it had before, so its cause is not the lift path. See
+-- docs/weldNotes.md.
+--
 -- Every departure from a stud goes through here, faults included: a fault
 -- during press leaves the collet on the stud exactly like a good weld does.
 local function departFromStud()
-    if retractToApproachPose() then return end
-    moveToZ(Z_CLEARANCE, RETRACT_SPEED)
+    -- flag=0: workpiece frame, matching WeldFlex.lua's traverse (see its comment).
+    PointsOffsetEnable(0, weldX, weldY, Z_CLEARANCE, 0, 0, 0)
+    Lin(zerozero, RETRACT_SPEED, -1, 0, 0)
+    PointsOffsetDisable()
 end
 
 local FAULT_BEACON_MS = 3000
@@ -413,8 +379,8 @@ local function fault(msg, site)
 end
 
 local function waitForWeldReady()
-    if not interlocksRequired() then
-        print("[WELD] Dry-run: skipping Atlas welder-ready input check.")
+    if not diCheckEnabled() then
+        print("[WELD] DI check off: skipping the DI0 welder-ready wait.")
         return
     end
 
@@ -447,6 +413,7 @@ end
 -- =========================================
 
 local pressZ0 = nil
+local weldZ0  = nil
 
 local function searchForStud()
     pub(SV_PHASE, PH_SEARCH)
@@ -465,8 +432,8 @@ local function searchForStud()
         pub(SV_PRESS_Z0, pressZ0)
     end
 
-    if not interlocksRequired() then
-        print("[WELD] Dry-run: skipping Atlas stud-on-work input check.")
+    if not diCheckEnabled() then
+        print("[WELD] DI check off: skipping the DI1 stud-on-work check.")
         return
     end
 
@@ -502,6 +469,7 @@ local function pressToForce()
         return fault(string.format("FT_Control refused to start (code %s)", tostring(ret)), 9)
     end
 
+    -- The only insertion in a press; see PRESS_HOLD_MS for why it is not re-run.
     pub(SV_PHASE, PH_PRESS_INSERT)
     ret = ftCall(FT_LinInsertion, FIND_RCS, PRESS_INSERT_THRESHOLD_N,
                  PRESS_SPEED_MMS, 0.0, PRESS_MAX_MM, PRESS_DIR)
@@ -521,24 +489,46 @@ local function pressToForce()
     WaitMs(holdMs)
     pub(SV_PHASE, PH_PRESS_HELD)
 
+    -- Lua still cannot read force, but it can read Z again now that the hold is
+    -- over. FT_Control keeps regulating through the hold at FTC_GAIN_P — slow on
+    -- purpose (see its declaration) — so if insertion stopped short on a
+    -- momentary spike (see PRESS_HOLD_MS above), any further advance during the
+    -- passive wait is the regulator closing that gap on its own. A reading near
+    -- zero either means it was already at target when insertion stopped, or that
+    -- the gain is too slow to close a real gap within holdMs; those look
+    -- identical from here and still need a live force reading (pendant/FT setup
+    -- page) to tell apart.
+    local zAfterHold = readToolZ()
+    if zNow ~= nil and zAfterHold ~= nil then
+        local holdTravel = zNow - zAfterHold
+        pub(SV_PRESS_HOLD_TRAVEL, holdTravel)
+        print(string.format("[WELD] FT_Control advanced %.3f mm further during the %d ms hold.",
+            holdTravel, holdMs))
+    end
+
     print(string.format("[WELD] Force target %.1f lbf held for %d ms; maintaining force for weld.", PRESS_TARGET_LBF, holdMs))
 end
 
 local function fireWeld()
     pub(SV_PHASE, PH_WELD)
 
+    -- FT_Control is still running here — nothing has turned it off since
+    -- pressToForce() started it, and nothing turns it off until retract()
+    -- below. The stud's tip flashes off in milliseconds once the arc strikes,
+    -- and the F/T sensor's RS-485 link sits right next to that current pulse,
+    -- so a real force-loss step and an EMI-glitched sample look the same from
+    -- here: either one hands the still-active regulator a force error to
+    -- react to. This is the "before" mark for SV_WELD_JOLT_TRAVEL in
+    -- holdAfterWeld() below — diagnostic only, changes nothing about how the
+    -- pulse fires.
+    weldZ0 = readToolZ()
+
     if WELD_ARMED ~= 1 then
         print("[WELD] Dry-run: WELD_ARMED is not 1; skipping arc pulse.")
         return
     end
 
-    if not interlocksRequired() and WELD_LIBERTY_COMMISSIONING ~= 1 then
-        return fault("interlock bypass is only permitted for Liberty commissioning", 11)
-    end
-
-    if WELD_LIBERTY_COMMISSIONING == 1 then
-        print("[WELD] Liberty commissioning: bypassing Atlas pre-fire inputs.")
-    else
+    if diCheckEnabled() then
         local d1 = readDI(DI_STUD_ON_WORK)
         local d0 = readDI(DI_WELD_READY)
         print(string.format("[WELD] Pre-fire check: DI%d (stud_on_work)=%d, DI%d (weld_ready)=%d",
@@ -551,6 +541,8 @@ local function fireWeld()
         if d0 ~= 1 then
             return fault(string.format("DI%d (weld ready) dropped before the weld pulse", DI_WELD_READY), 11)
         end
+    else
+        print("[WELD] DI check off: firing without the DI0/DI1 pre-fire check.")
     end
 
     print(string.format("[WELD] FIRING ARC: DO%d output set HIGH for %d ms", DO_WELD, WELD_PULSE_MS))
@@ -562,6 +554,19 @@ end
 
 local function holdAfterWeld()
     WaitMs(POST_WELD_HOLD_MS)
+
+    -- Diagnostic only, same idea as SV_PRESS_HOLD_TRAVEL: how far the tool
+    -- moved from just before the arc to the end of this hold, while
+    -- FT_Control was regulating force the whole time. A dry run never fires,
+    -- so its number is the sensor's own noise floor to compare a live shot
+    -- against.
+    local zAfterHold = readToolZ()
+    if weldZ0 ~= nil and zAfterHold ~= nil then
+        local joltTravel = weldZ0 - zAfterHold
+        pub(SV_WELD_JOLT_TRAVEL, joltTravel)
+        print(string.format("[WELD] Tool moved %.3f mm from just before the arc to the end of the post-weld hold.",
+            joltTravel))
+    end
 end
 
 local function retract()
@@ -592,16 +597,14 @@ local function weldOneStud()
     pressZ0 = nil
     pub(SV_PRESS_Z0, 0)
     pub(SV_PRESS_TRAVEL, 0)
+    pub(SV_PRESS_HOLD_TRAVEL, 0)
+    pub(SV_WELD_JOLT_TRAVEL, 0)
     pub(SV_PRESS_GUARD, GUARD_RELEASED)
     pub(SV_STUD_ON_WORK, -1)
     pub(SV_WELD_READY, -1)
     pub(SV_PRESS_LBF, PRESS_TARGET_LBF)
 
     writeDO(DO_WELD, 0)
-
-    -- Before any motion: WeldFlex.lua has parked the torch at safe height over
-    -- this stud. The force-guided descent and return share its tool axis.
-    captureApproachPose()
 
     waitForWeldReady()
     if WELD_FAULT == 1 or faulting then return end
@@ -618,9 +621,7 @@ local function weldOneStud()
 
     holdAfterWeld()
     retract()
-    if WELD_SKIP_FEED ~= 1 then
-        feedNextStud()
-    end
+    feedNextStud()
     pub(SV_PHASE, PH_DONE)
 end
 

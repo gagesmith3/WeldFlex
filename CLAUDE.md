@@ -44,16 +44,22 @@ DI checks pass. A home approach/return also now exists at both ends of a run.
 Do not describe either of these as unbuilt — that claim is stale and no longer
 true against the committed code.
 
-A recipe also carries a **welder profile** — `atlas` (default) or `liberty`.
-**Liberty is dry-run only** until its live weld interlocks are commissioned;
-`lua_builder` and `job_manager` both refuse to build a live Liberty job, and
-`weld.lua` refuses to fire an arc with interlocks bypassed outside a
-commissioning run. Don't relax any of those three checks.
+**A run's mode is two switches, and nothing else** (2026-09-14). **Live or
+Dry** is picked for every run: the parts run modal and the Single Shot confirm
+have no default, and neither does `JobManager.load()`. **DI check** is saved on
+the recipe, on by default; off skips the DI0 welder-ready wait and both DI1
+stud-on-work checks, **live runs included**. That replaced the welder profile
+(`atlas`/`liberty`) and the Liberty "dry-run only" guards, which the owner
+removed deliberately on 2026-09-14. `lua_builder.RunMode` resolves both once and
+`WeldFlex.lua`/`single_shot.lua` publish them verbatim. Don't reintroduce mode
+logic in Lua, a mode saved on a recipe, or behavior keyed on a recipe's name.
 
 What is still missing:
 
-1. **No explicit live-run arming confirmation.** Live jobs automatically set
-  `WELD_ARMED = 1`; dry jobs set it to `0`, completing search, press, hold,
+1. **Arming is chosen at load, not confirmed at Run.** The operator must tap
+  Live or Dry for every run, and the job panel shows LIVE/DRY and DI OFF, but
+  pressing Run on the operator page starts a loaded live job with no further
+  confirmation. Dry sets `WELD_ARMED = 0` and completes search, press, hold,
   retract, and feeder advance without pulsing the weld trigger output.
 2. **`pause_points` is a dead field.** Every recipe carries it; nothing reads it.
    Per-stud operator waits do not exist. The per-cycle `gate_mode` is a different

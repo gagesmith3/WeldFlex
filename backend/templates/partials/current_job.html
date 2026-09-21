@@ -73,6 +73,13 @@
       <div class="metric-icon">{{ icon_safe('clipboard', fallback='circle', width=14, height=14) }}</div>
       <span class="metric-label">Part Name</span>
       <strong class="metric-value">{{ job.part_name or '—' }}</strong>
+      {% if job.run_id %}
+      {# The run mode stays on screen for the whole job, not just the modal it was picked in. #}
+      <span class="metric-label">
+        <span class="run-mode-tag {{ 'is-live' if job.arm_mode == 'live' else 'is-dry' }}">{{ job.arm_mode }}</span>
+        {%- if not job.di_check %} <span class="run-mode-tag is-warn">DI off</span>{% endif %}
+      </span>
+      {% endif %}
     </div>
     <div class="metric-card">
       <div class="metric-icon">{{ icon_safe('repeat', fallback='circle', width=14, height=14) }}</div>

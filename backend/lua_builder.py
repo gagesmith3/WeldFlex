@@ -22,11 +22,11 @@ TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "programs" / PROGRAM_NAME
 WELD_PROGRAM_NAME = "weld.lua"
 WELD_PATH = TEMPLATE_PATH.parent / WELD_PROGRAM_NAME
 
-# Single-point maintenance weld for shop fixture faceplates — see
-# build_weld_faceplate_lua() below. Same template-with-markers shape as
-# WeldFlex.lua, just one fixed target instead of a stud list.
-FACEPLATE_PROGRAM_NAME = "weld_faceplate.lua"
-FACEPLATE_TEMPLATE_PATH = TEMPLATE_PATH.parent / FACEPLATE_PROGRAM_NAME
+# One weld at a fixed target, fired from the Admin page's Single Shot tool — see
+# build_single_shot_lua() below. Same template-with-markers shape as
+# WeldFlex.lua, just one target instead of a stud list and no home moves.
+SINGLE_SHOT_PROGRAM_NAME = "single_shot.lua"
+SINGLE_SHOT_TEMPLATE_PATH = TEMPLATE_PATH.parent / SINGLE_SHOT_PROGRAM_NAME
 
 # The no-motion DI monitor and its harness. Same two-file shape as weld.lua: the
 # monitor is upload-gated so the controller's post-upload check (which executes
@@ -52,7 +52,6 @@ PRESS_LBF_MAX = 22.0
 
 GATE_MODES = ("none", "pause", "di")
 ARM_MODES = ("live", "dry")
-WELDER_PROFILES = ("atlas", "liberty")
 
 # Dynamic speed compensation stays opt-in until measurements from the actual
 # controller motion path have established a conservative timing model. The
@@ -93,8 +92,8 @@ PAUSE_GATE_CODE = 0
 # The cycle loop's variable and bound, identical in both templates. The pause gate
 # is emitted as `if <var> < <count> then` so the last cycle does *not* hold — there
 # is no next part to swap in, and a pause nothing releases would strand the run.
-# (weld_faceplate.lua still has its home return to do after the last cycle;
-# WeldFlex.lua now homes every cycle, including the last, before this gate runs.)
+# (WeldFlex.lua homes every cycle, including the last, before this gate runs;
+# single_shot.lua runs one cycle and never homes.)
 # tests/test_lua_builder.py pins both names.
 GATE_LOOP_VAR = "cycleIndex"
 GATE_COUNT_VAR = "cycleCount"
@@ -364,30 +363,48 @@ def _parse_pressure(val: float | int | str | None) -> float:
         return PRESSURE_LBF_MAP.get(str(val).lower().strip(), 20.0)
 
 
-def _validate_welder_profile(
-    welder_profile: str, arm_mode: str, liberty_commissioning: bool
-) -> None:
-    if welder_profile not in WELDER_PROFILES:
-        raise ValueError(
-            f"Unknown welder_profile {welder_profile!r}; expected one of {WELDER_PROFILES}"
-        )
-    if liberty_commissioning and (welder_profile != "liberty" or arm_mode != "live"):
-        raise ValueError("Liberty commissioning requires the live Liberty profile")
-    if welder_profile == "liberty" and arm_mode != "dry" and not liberty_commissioning:
-        raise ValueError(
-            "The LYNX Liberty profile is dry-run only until its live weld interlocks are commissioned"
-        )
+@dataclass(frozen=True)
+class RunMode:
+    """The weld switches for one run, decided once, here, and nowhere else.
+
+    Both caller templates publish these through their one `--{{RUN_MODE}}`
+    marker and never derive or change them in Lua, so what was picked for the
+    run is exactly what `weld.lua` reads:
+
+    * `arm_mode` — chosen for every run, "live" or "dry", with no default. Dry
+      runs the whole sequence, feeder advance included, without the arc pulse.
+    * `di_check` — the recipe's DI check. False skips the DI0 welder-ready wait
+      and both DI1 stud-on-work checks, live runs included. It replaced the
+      Liberty welder profile and its dry-only guard (owner decision, 2026-09-14).
+    """
+
+    arm_mode: str
+    di_check: bool = True
+
+    def __post_init__(self) -> None:
+        if self.arm_mode not in ARM_MODES:
+            raise ValueError(f"Unknown arm_mode {self.arm_mode!r}; expected one of {ARM_MODES}")
+        if not isinstance(self.di_check, bool):
+            raise ValueError(f"di_check must be True or False, got {self.di_check!r}")
+
+    @property
+    def armed(self) -> bool:
+        return self.arm_mode == "live"
+
+    def lua_rows(self, indent: str = "") -> list[str]:
+        """The globals weld.lua reads, as the caller program publishes them."""
+        return [
+            f"{indent}WELD_ARMED = {1 if self.armed else 0}",
+            f"{indent}WELD_DI_CHECK = {1 if self.di_check else 0}",
+        ]
 
 
 def build_weldflex_lua(
     studs: Sequence[dict],
     cycles: int,
+    *,
+    run_mode: RunMode,
     gate_mode: str = "pause",
-    arm_mode: str = "live",
-    welder_profile: str = "atlas",
-    liberty_commissioning: bool = False,
-    weld_trigger_do: int = 0,
-    weld_trigger_pulse_ms: int = 250,
     template_path: str | os.PathLike | None = None,
     gate_di: int | None = None,
     gate_timeout_ms: int | None = None,
@@ -403,12 +420,14 @@ def build_weldflex_lua(
     dsc_enabled: bool = False,
     stud_reload_ms: int | float | None = None,
 ) -> BuiltProgram:
-    """Substitute the template's markers and report the generated line numbers."""
+    """Substitute the template's markers and report the generated line numbers.
+
+    `run_mode` has no default on purpose: every caller states live or dry.
+    """
+    if not isinstance(run_mode, RunMode):
+        raise TypeError(f"run_mode must be a RunMode, got {run_mode!r}")
     if gate_mode not in GATE_MODES:
         raise ValueError(f"Unknown gate_mode {gate_mode!r}; expected one of {GATE_MODES}")
-    if arm_mode not in ARM_MODES:
-        raise ValueError(f"Unknown arm_mode {arm_mode!r}; expected one of {ARM_MODES}")
-    _validate_welder_profile(welder_profile, arm_mode, liberty_commissioning)
     cycles = int(cycles)
     if cycles < 1:
         raise ValueError(f"cycles must be >= 1, got {cycles}")
@@ -428,18 +447,9 @@ def build_weldflex_lua(
         raise ValueError(f"ft_sensor_num must be in [1, 255], got {ft_sensor_num!r}")
     stud_type_val = stud_type or "M4"
     substrate_val = substrate or "Mild Steel"
-    weld_trigger_do_val = int(weld_trigger_do)
-    if not 0 <= weld_trigger_do_val <= 15:
-        raise ValueError(f"weld_trigger_do must be in [0, 15], got {weld_trigger_do!r}")
-    weld_trigger_pulse_ms_val = int(weld_trigger_pulse_ms)
-    if not 1 <= weld_trigger_pulse_ms_val <= 1_000:
-        raise ValueError(
-            "weld_trigger_pulse_ms must be in [1, 1000], "
-            f"got {weld_trigger_pulse_ms!r}"
-        )
     # Dry runs are for watching travel safely, not production cadence — default
     # them much slower unless the caller asks for a specific speed.
-    speed_val = max(1, min(100, int(speed))) if speed is not None else (10 if arm_mode == "dry" else 25)
+    speed_val = max(1, min(100, int(speed))) if speed is not None else (25 if run_mode.armed else 10)
     feed_pulse_ms = default_feed_pulse_ms()
     dynamic_legs = (
         dynamic_stud_legs(studs, stud_reload_ms, feed_pulse_ms)
@@ -451,6 +461,7 @@ def build_weldflex_lua(
     loop_start_line = cycle_marker_line = gate_line = 0
     boundary_seen = False
     feed_pulse_seen = False
+    run_mode_seen = False
 
     for line in template_lines:
         indent = _indent_of(line)
@@ -461,16 +472,9 @@ def build_weldflex_lua(
         elif "--{{BOUNDARY_MS}}" in line:
             out.append(f"{indent}BOUNDARY_MS = {dwell_ms}")
             boundary_seen = True
-        elif "--{{ARM_MODE}}" in line:
-            out.append(f"{indent}ARM_MODE = {format_lua_string(arm_mode)}")
-        elif "--{{WELDER_PROFILE}}" in line:
-            out.append(f"{indent}WELDER_PROFILE = {format_lua_string(welder_profile)}")
-        elif "--{{LIBERTY_COMMISSIONING}}" in line:
-            out.append(f"{indent}LIBERTY_COMMISSIONING = {1 if liberty_commissioning else 0}")
-        elif "--{{WELD_TRIGGER_DO}}" in line:
-            out.append(f"{indent}WELD_TRIGGER_DO = {weld_trigger_do_val}")
-        elif "--{{WELD_TRIGGER_PULSE_MS}}" in line:
-            out.append(f"{indent}WELD_TRIGGER_PULSE_MS = {weld_trigger_pulse_ms_val}")
+        elif "--{{RUN_MODE}}" in line:
+            out.extend(run_mode.lua_rows(indent))
+            run_mode_seen = True
         elif "--{{SPEED}}" in line:
             out.append(f"{indent}speed = {speed_val}")
         elif "--{{FEED_PULSE_MS}}" in line:
@@ -519,6 +523,7 @@ def build_weldflex_lua(
             ("--{{GATE}}", gate_line),
             ("--{{BOUNDARY_MS}}", boundary_seen),
             ("--{{FEED_PULSE_MS}}", feed_pulse_seen),
+            ("--{{RUN_MODE}}", run_mode_seen),
         )
         if not value
     ]
@@ -543,12 +548,13 @@ def build_weldflex_lua(
     )
 
 
-def build_weld_faceplate_lua(
+def build_single_shot_lua(
     x: float | int,
     y: float | int,
-    cycles: int,
-    gate_mode: str = "pause",
-    arm_mode: str = "live",
+    cycles: int = 1,
+    *,
+    run_mode: RunMode,
+    gate_mode: str = "none",
     template_path: str | os.PathLike | None = None,
     gate_di: int | None = None,
     gate_timeout_ms: int | None = None,
@@ -561,23 +567,24 @@ def build_weld_faceplate_lua(
     substrate: str | None = None,
     speed: float | int | None = None,
 ) -> BuiltProgram:
-    """Substitute programs/weld_faceplate.lua's markers.
+    """Substitute programs/single_shot.lua's markers.
 
     Same template-with-markers/line-tracking contract as build_weldflex_lua —
     see that function's docstring and this module's docstring for why the
-    line numbers matter. The differences are the single fixed target (two
-    scalar markers instead of a stud list) and no HIGH_Z marker, since a
-    single-point program has no stud-to-stud travel to clear.
+    line numbers matter. The differences are the single target (two scalar
+    markers instead of a stud list) and no home moves. The Single Shot page
+    always asks for one cycle; the loop stays so the job manager's cycle
+    tracking needs no special case.
     """
+    if not isinstance(run_mode, RunMode):
+        raise TypeError(f"run_mode must be a RunMode, got {run_mode!r}")
     if gate_mode not in GATE_MODES:
         raise ValueError(f"Unknown gate_mode {gate_mode!r}; expected one of {GATE_MODES}")
-    if arm_mode not in ARM_MODES:
-        raise ValueError(f"Unknown arm_mode {arm_mode!r}; expected one of {ARM_MODES}")
     cycles = int(cycles)
     if cycles < 1:
         raise ValueError(f"cycles must be >= 1, got {cycles}")
 
-    path = Path(template_path) if template_path else FACEPLATE_TEMPLATE_PATH
+    path = Path(template_path) if template_path else SINGLE_SHOT_TEMPLATE_PATH
     if not path.is_file():
         raise FileNotFoundError(f"Lua template not found: {path}")
     template_lines = path.read_text(encoding="utf-8").splitlines()
@@ -591,29 +598,36 @@ def build_weld_faceplate_lua(
         raise ValueError(f"ft_sensor_num must be in [1, 255], got {ft_sensor_num!r}")
     stud_type_val = stud_type or "M4"
     substrate_val = substrate or "Mild Steel"
-    speed_val = max(1, min(100, int(speed))) if speed is not None else (10 if arm_mode == "dry" else 25)
+    speed_val = max(1, min(100, int(speed))) if speed is not None else (25 if run_mode.armed else 10)
+    feed_pulse_ms = default_feed_pulse_ms()
     x_val = float(x)
     y_val = float(y)
 
     out: list[str] = []
     loop_start_line = cycle_marker_line = gate_line = 0
     boundary_seen = False
+    feed_pulse_seen = False
+    run_mode_seen = False
 
     for line in template_lines:
         indent = _indent_of(line)
-        if "--{{FACEPLATE_X}}" in line:
-            out.append(f"{indent}faceplateX = {format_number(x_val)}")
-        elif "--{{FACEPLATE_Y}}" in line:
-            out.append(f"{indent}faceplateY = {format_number(y_val)}")
+        if "--{{TARGET_X}}" in line:
+            out.append(f"{indent}targetX = {format_number(x_val)}")
+        elif "--{{TARGET_Y}}" in line:
+            out.append(f"{indent}targetY = {format_number(y_val)}")
         elif "--{{CYCLE_COUNT}}" in line:
             out.append(f"{indent}cycleCount = {cycles}")
         elif "--{{BOUNDARY_MS}}" in line:
             out.append(f"{indent}BOUNDARY_MS = {dwell_ms}")
             boundary_seen = True
-        elif "--{{ARM_MODE}}" in line:
-            out.append(f"{indent}ARM_MODE = {format_lua_string(arm_mode)}")
+        elif "--{{RUN_MODE}}" in line:
+            out.extend(run_mode.lua_rows(indent))
+            run_mode_seen = True
         elif "--{{SPEED}}" in line:
             out.append(f"{indent}speed = {speed_val}")
+        elif "--{{FEED_PULSE_MS}}" in line:
+            out.append(f"{indent}FEED_PULSE_MS = {feed_pulse_ms}")
+            feed_pulse_seen = True
         elif "--{{SAFE_Z}}" in line:
             out.append(f"{indent}SAFE_Z = {format_number(safe_z_val)}")
         elif "--{{PART_Z}}" in line:
@@ -652,6 +666,8 @@ def build_weld_faceplate_lua(
             ("--{{CYCLE_MARKER}}", cycle_marker_line),
             ("--{{GATE}}", gate_line),
             ("--{{BOUNDARY_MS}}", boundary_seen),
+            ("--{{FEED_PULSE_MS}}", feed_pulse_seen),
+            ("--{{RUN_MODE}}", run_mode_seen),
         )
         if not value
     ]
@@ -673,7 +689,7 @@ def build_weld_faceplate_lua(
         gate_mode=gate_mode,
         program_line_count=len(out),
         boundary_ms=dwell_ms,
-        program_name=FACEPLATE_PROGRAM_NAME,
+        program_name=SINGLE_SHOT_PROGRAM_NAME,
     )
 
 

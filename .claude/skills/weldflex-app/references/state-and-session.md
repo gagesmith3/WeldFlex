@@ -225,10 +225,11 @@ Two things to know before touching it:
 - The resolution lives in `_tick_locked`, not in a wait loop. `_gate` used to
   block the monitor thread; it must not — the 250 ms tick is also what watches
   for faults and lost links.
-- `weld_faceplate.lua` holds **DO1 high through the gate** for the operator's
-  manual feed. Whether a paused program keeps its outputs is a persistent
-  controller setting (`SetOutputResetCtlBoxDO`) WeldFlex does not touch — see the
-  `fairino-sdk` skill's `controller-lua-api.md`.
+- No program holds an output through the gate any more. The old faceplate
+  program's DO1 hold went away with it (2026-09-14). Whether a paused program
+  keeps its outputs is still a persistent controller setting
+  (`SetOutputResetCtlBoxDO`) WeldFlex does not touch — see the `fairino-sdk`
+  skill's `controller-lua-api.md`.
 
 Testing: `tests/test_cycle_tracker.py` drives the detector directly, and
 `tools/stub_robot.py --cycle LOOP_START:MARKER:CYCLES` scripts a `GetCurrentLine`

@@ -1,0 +1,215 @@
+{% extends "base.html" %}
+{% from "components/ui.html" import action_button with context %}
+
+{% block body %}
+<div class="page-body fp-dashboard">
+  <!-- Single Shot header -->
+  <div class="fp-header-card">
+    <div class="fp-header-main">
+      <div class="fp-header-title">
+        <p class="fp-subtitle">
+          {% if target %}
+            Target: <strong>X = {{ '%.1f' % target.x }} mm, Y = {{ '%.1f' % target.y }} mm</strong> &nbsp;|&nbsp; {{ recipe.stud_type }} / {{ recipe.substrate }} &nbsp;|&nbsp; {{ recipe.pressure_setting }} lbf &nbsp;|&nbsp; DI check {{ 'on' if recipe.di_check else 'off' }}
+          {% else %}
+            <span class="fp-text-warn">No Target Point Set — Click Settings to set X/Y</span>
+          {% endif %}
+        </p>
+      </div>
+      <!-- Right-clamped Settings Action Button -->
+      <div class="fp-header-right">
+        <button type="button" class="btn icon-btn-labeled fp-settings-btn"
+                onclick="openSingleShotModal('ss-settings-modal')"
+                title="Configure Target X/Y & Parameters">
+          {{ icon_safe('settings', fallback='circle', width=20, height=20) }}
+          <span>Settings</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Simple Menu Actions Grid -->
+  <div class="fp-menu-grid">
+    <!-- 1. Move to Position Button -->
+    <button type="button" class="fp-menu-btn fp-btn-position"
+            hx-post="/ui/single-shot/move-position" hx-target="#toast-rack" hx-swap="innerHTML"
+            hx-disabled-elt="this">
+      <div class="fp-menu-btn-icon">
+        {{ icon_safe('target', fallback='circle', width=32, height=32) }}
+      </div>
+      <div class="fp-menu-btn-content">
+        <strong class="fp-menu-btn-title">Move to Position</strong>
+        <span class="fp-menu-btn-desc">Drive weld head to target X/Y spot</span>
+      </div>
+    </button>
+
+    <!-- 2. Fire Button — Live or Dry is picked in the confirm modal, every shot -->
+    <button type="button" class="fp-menu-btn fp-btn-weld" onclick="openShotModal()">
+      <div class="fp-menu-btn-icon">
+        {{ icon_safe('zap', fallback='circle', width=32, height=32) }}
+      </div>
+      <div class="fp-menu-btn-content">
+        <strong class="fp-menu-btn-title">Fire Shot</strong>
+        <span class="fp-menu-btn-desc">Weld once at the target, then feed</span>
+      </div>
+    </button>
+
+    <!-- 3. Feed Button -->
+    <button type="button" class="fp-menu-btn fp-btn-feed"
+            hx-post="/ui/single-shot/feed" hx-target="#toast-rack" hx-swap="innerHTML"
+            hx-disabled-elt="this">
+      <div class="fp-menu-btn-icon">
+        {{ icon_safe('arrow_down_to_line', fallback='circle', width=32, height=32) }}
+      </div>
+      <div class="fp-menu-btn-content">
+        <strong class="fp-menu-btn-title">Feed</strong>
+        <span class="fp-menu-btn-desc">Pulse DO1 stud feeder advance</span>
+      </div>
+    </button>
+
+    <!-- 4. Move Home Button -->
+    <button type="button" class="fp-menu-btn fp-btn-home"
+            hx-post="/ui/single-shot/move-home" hx-target="#toast-rack" hx-swap="innerHTML"
+            hx-disabled-elt="this">
+      <div class="fp-menu-btn-icon">
+        {{ icon_safe('home', fallback='circle', width=32, height=32) }}
+      </div>
+      <div class="fp-menu-btn-content">
+        <strong class="fp-menu-btn-title">Move Home</strong>
+        <span class="fp-menu-btn-desc">PTP move robot to homewf</span>
+      </div>
+    </button>
+  </div>
+</div>
+
+<!-- Shot confirm modal -->
+<div id="ss-shot-modal" class="wf-modal-overlay" hidden onclick="if (event.target === this) closeSingleShotModal('ss-shot-modal')">
+  <div class="wf-modal">
+    <p class="wf-modal-msg">Fire one shot</p>
+    <span class="run-modal-label">Weld mode</span>
+    <div class="arm-mode-seg" role="group" aria-label="Weld mode">
+      <button type="button" class="btn arm-mode-btn" data-arm-mode="live" aria-pressed="false"
+              onclick="pickShotArm('live')">Live</button>
+      <button type="button" class="btn arm-mode-btn" data-arm-mode="dry" aria-pressed="false"
+              onclick="pickShotArm('dry')">Dry</button>
+    </div>
+    {% if not recipe.di_check %}
+    <p class="arm-mode-di-note">DI check is off: DI0 welder ready and DI1 stud on work are not checked.</p>
+    {% endif %}
+    <form hx-post="/ui/single-shot/fire" hx-target="#toast-rack" hx-swap="innerHTML"
+          hx-disabled-elt="#ss-fire-btn"
+          hx-on::after-request="closeSingleShotModal('ss-shot-modal')">
+      <input type="hidden" id="ss-arm-mode" name="arm_mode" value="">
+      <div class="wf-modal-actions">
+        <button type="button" class="btn wf-cancel" onclick="closeSingleShotModal('ss-shot-modal')">Cancel</button>
+        <button type="submit" class="btn run" id="ss-fire-btn" disabled>Fire</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Single Shot settings modal -->
+<div id="ss-settings-modal" class="wf-modal-overlay" hidden onclick="if (event.target === this) closeSingleShotModal('ss-settings-modal')">
+  <div class="wf-modal wf-modal-wide">
+    <p class="wf-modal-msg">Single Shot Settings</p>
+    <p class="panel-note">Target point and weld settings for single shots.</p>
+    <form class="settings-grid" hx-post="/ui/recipes/save" hx-target="#toast-rack" hx-swap="innerHTML"
+          hx-on::after-request="afterSettingsSave(event)">
+      <input type="hidden" name="recipe_id" value="{{ recipe.id }}">
+      <input type="hidden" name="recipe_name" value="{{ recipe.name }}">
+      {# X and Y are separate because the on-screen number pad has no comma key.
+         Plain text inputs like the rest of this form: the pad writes .value, which a
+         number input empties mid-decimal ("254."). The save route holds both to the bed. #}
+      <div>
+        <label for="ss_target_x">Target X (mm, 0–{{ '%g' % bed_mm }})</label>
+        <input id="ss_target_x" name="target_x" type="text" inputmode="none" data-kbd="num"
+               value="{{ target.x if target else '' }}" required>
+      </div>
+      <div>
+        <label for="ss_target_y">Target Y (mm, 0–{{ '%g' % bed_mm }})</label>
+        <input id="ss_target_y" name="target_y" type="text" inputmode="none" data-kbd="num"
+               value="{{ target.y if target else '' }}" required>
+      </div>
+      <div>
+        <label for="ss_safe_z">Safe Z Level (mm)</label>
+        <input id="ss_safe_z" name="safe_z" type="text" inputmode="none" data-kbd="num"
+               value="{{ recipe.safe_z }}" required>
+      </div>
+      <div>
+        <label for="ss_part_z">Work Object Z Level (mm)</label>
+        <input id="ss_part_z" name="part_z" type="text" inputmode="none" data-kbd="num"
+               value="{{ recipe.part_z }}" required>
+      </div>
+      <div>
+        <label for="ss_stud_type">Stud Selector</label>
+        <select id="ss_stud_type" name="stud_type">
+          {% for opt in ['M2', 'M2.5', 'M3', 'M4', 'M5', 'M6', 'M8', 'M10', 'M12', '1/8"', '3/16"', '1/4"', '5/16"', '3/8"', '1/2"'] %}
+          <option value="{{ opt }}" {% if recipe.stud_type == opt %}selected{% endif %}>{{ opt }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label for="ss_substrate">Substrate Material</label>
+        <select id="ss_substrate" name="substrate">
+          {% for opt in ['Mild Steel', 'Stainless Steel', 'Aluminum', 'Galvanized'] %}
+          <option value="{{ opt }}" {% if recipe.substrate == opt %}selected{% endif %}>{{ opt }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label for="ss_pressure">Target Pressure (lbf)</label>
+        <input id="ss_pressure" name="pressure_setting" type="text" inputmode="none" data-kbd="num"
+               value="{{ recipe.pressure_setting }}" required>
+      </div>
+      <div>
+        <label for="ss_di_check">DI Check (DI0 ready / DI1 stud)</label>
+        <select id="ss_di_check" name="di_check">
+          <option value="1" {% if recipe.di_check %}selected{% endif %}>On</option>
+          <option value="0" {% if not recipe.di_check %}selected{% endif %}>Off</option>
+        </select>
+      </div>
+      <div class="settings-actions wf-modal-actions">
+        <button type="button" class="btn wf-cancel" onclick="closeSingleShotModal('ss-settings-modal')">Cancel</button>
+        {{ action_button('Save Settings', variant='run', icon='save', button_type='submit') }}
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function openSingleShotModal(id) {
+  document.getElementById(id).removeAttribute('hidden');
+}
+function closeSingleShotModal(id) {
+  document.getElementById(id).setAttribute('hidden', '');
+}
+// The save route sets X-Recipe-Id only when it saved. Reload then, for the
+// server-rendered header and DI note; a refused target keeps the modal open
+// behind its error toast.
+function afterSettingsSave(event) {
+  if (!event.detail.xhr.getResponseHeader('X-Recipe-Id')) return;
+  closeSingleShotModal('ss-settings-modal');
+  window.location.reload();
+}
+// Live or Dry is picked for every shot; opening the modal clears the last choice.
+function openShotModal() {
+  pickShotArm('');
+  openSingleShotModal('ss-shot-modal');
+}
+function pickShotArm(mode) {
+  document.getElementById('ss-arm-mode').value = mode;
+  document.querySelectorAll('#ss-shot-modal [data-arm-mode]').forEach(function (b) {
+    var on = b.dataset.armMode === mode;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
+  document.getElementById('ss-fire-btn').disabled = !mode;
+}
+document.addEventListener('keydown', function (e) {
+  if (e.key !== 'Escape') return;
+  closeSingleShotModal('ss-shot-modal');
+  closeSingleShotModal('ss-settings-modal');
+});
+</script>
+{% endblock %}

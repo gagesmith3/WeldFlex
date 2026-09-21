@@ -9,24 +9,20 @@ Page routes (`app.py`) — verified against the code 2026-09-09:
 /operator/admin                     admin.html   (hidden — 700ms long-press on header home button, see admin.js)
 /operator/parts                     parts.html
 /operator/job-history               job_history.html
-/operator/faceplate                 faceplate.html   (maintenance weld page — see the `faceplate` section below)
+/operator/single-shot               single_shot.html   (Admin tool, one weld at a saved target — see the `single-shot` section below)
 /operator/calibration               calibration.html   (menu page)
 /operator/jog                       jog.html
 /operator/calibration/force-sensor  force_sensor.html
 /operator/tcp-calibrate             tcp_calibrate.html
 /operator/robot-diagnostics         robot_diagnostics.html
 /operator/settings                  settings.html
-/operator/liberty                   liberty.html   (endurance test — .env-gated, see below)
 /manager                            manager.html   (standalone shell — does not extend base.html)
 ```
 
-**`/operator/liberty` and `liberty.html` exist again** — not the old removed
-experiment, but the Liberty endurance page built on the `welder_profile`
-discriminator, paired with `POST /ui/liberty/start`. It runs a saved
-Liberty-profile recipe and is disabled unless `WELDFLEX_LIBERTY_LIVE_ENABLED`,
-`WELDFLEX_LIBERTY_TRIGGER_DO` and `WELDFLEX_LIBERTY_TRIGGER_PULSE_MS` are all
-set in `.env`. Earlier revisions of this file said no such route or template
-existed; that is no longer true. There is still no `/operator/calibrate`;
+**`/operator/liberty`, `liberty.html` and `/operator/faceplate` are gone**
+(2026-09-14). The Liberty endurance page went with the `welder_profile` recipe
+field and its `WELDFLEX_LIBERTY_*` settings; a recipe's DI check replaced both.
+The Faceplate page became Single Shot. There is still no `/operator/calibrate`;
 `calibrate.html` is orphaned (see below).
 
 **`/operator/weld-test` is gone** — deleted in commit `11aff8c` (2026-08-03)
@@ -37,15 +33,15 @@ along with `weld_test.html`, `lua_builder.build_weld_test_lua`, and its
 against. **`robot_service.weld_probe()` is not among them**: the Job Manager's
 telemetry sampler calls it every `JOB_TELEMETRY_INTERVAL_S` during a run, so it
 is live production code. Earlier revisions of this file listed it as dead. If you need "one special Lua run with its own controls" again, the
-`faceplate` feature below is the current pattern: it reuses `JobManager` and
-`partials/current_job.html` rather than a standalone runner.
+`single-shot` feature below is the current pattern: it reuses `JobManager`
+rather than a standalone runner.
 
 `/ui/*` endpoints follow `/ui/<feature>/<action>` (e.g.
 `/ui/tcp-calibrate/enable-drag`, `/ui/job/start`, `/ui/jog/move`).
 Multi-word features are hyphenated (`tcp-calibrate`, `studs-preview`), never
 nested further (never `/ui/tcp/calibrate`). Live features: `connection`,
-`diagnostics`, `faceplate`, `ft`, `job`, `jog`, `manager`, `parts`, `recipes`,
-`settings`, `tcp-calibrate`.
+`diagnostics`, `ft`, `job`, `jog`, `manager`, `parts`, `recipes`, `settings`,
+`single-shot`, `tcp-calibrate`.
 
 `ft` is `/ui/ft/{reading,stream,inspect,setup,zero,deactivate}`. `setup` and
 `zero` are wired to `force_sensor.html`'s Initialize/Zero buttons (toast
@@ -72,46 +68,44 @@ anything behind `/ui/ft/reading` ever issues an RPC again, 10 Hz becomes 10
 robot round trips a second per viewer. See `docs/ROBOT_TELEMETRY.md`,
 "Host-side discipline".
 
-`faceplate` is `POST /ui/faceplate/load` — queues a maintenance weld run for
-shop fixture faceplates through the same `JobManager` real part jobs use.
-Things about it that are load-bearing:
+`single-shot` is the Admin page's one-stud tool (replaced `faceplate`
+2026-09-14): `POST /ui/single-shot/{fire,move-position,move-home,feed}` behind
+`/operator/single-shot`. `fire` welds once at a saved target through the same
+`JobManager` real part jobs use. Things about it that are load-bearing:
 
-- **It is not a separate job runner.** `JobManager.load()`/`_launch()` gained a
-  `kind` discriminator (`"part"` default, `"faceplate"`); a faceplate job routes
-  `_launch` to `lua_builder.build_weld_faceplate_lua` instead of
-  `build_weldflex_lua`, but reuses every downstream piece as-is — monitor
-  thread, `CycleTracker`, gate handling, run history, and
-  `partials/current_job.html`'s Run/Pause/Resume/Continue/Stop buttons. The
-  page embeds that partial via `htmx_mount('operator-current-job-mount', ...)`
-  — the **same hardcoded mount id** `operator.html` uses, which is what makes
-  the shared control panel work with zero changes to the partial. Consequence:
-  a loaded faceplate job *is* the current job system-wide (visible on the
-  operator home page too), and a part job and a faceplate job can't run
-  concurrently — same physical robot, same singleton run-slot.
-- **Its config lives in `recipes.json`, not a separate settings store.** A
-  reserved recipe record named `faceplates` (found/created by
-  `app._faceplate_recipe()`) carries the single target point plus
-  `safe_z`/`part_z`/`stud_type`/`substrate`/`pressure_setting` — the same
-  fields a part recipe has — and is edited through the existing
-  `/ui/recipes/save` endpoint, `faceplate.html`'s own form. It is filtered out
-  of every normal-facing parts listing (`app._hide_faceplate_recipe()`, applied
-  in `parts()` and `/ui/manager/parts-list`) so it can only be reached through
-  `/operator/faceplate`, not run through the ordinary part pipeline.
-- **`weld_faceplate.lua`** (`programs/weld_faceplate.lua` +
-  `lua_builder.build_weld_faceplate_lua`) is structurally parallel to
-  `WeldFlex.lua` but targets one fixed point. It never approaches `homewf`
-  before the loop starts — it goes straight to the target and stays there for
-  every cycle — but it does return home once, after the loop closes
-  (including a fault-break), same edge-only shape as `WeldFlex.lua`'s home
-  handling just without the starting approach. It also holds DO1 high through
-  the inter-cycle gate instead of
-  `weld.lua`'s normal 1 s pulse — the operator manually feeds the next
-  faceplate while the program is paused (`gate_mode="pause"`, the only mode
-  this path uses), then presses Continue, and the next cycle clears DO1 before
-  moving. `weld.lua`'s own built-in feed pulse is suppressed via a new
-  `WELD_SKIP_FEED = 1` sentinel the faceplate program publishes — `WeldFlex.lua`
-  never sets it, so real part runs are unaffected (pinned by
-  `tests/test_lua_builder.py`).
+- **It is not a separate job runner.** `JobManager.load()`/`_launch()` take a
+  `kind` (`"part"` default, `"single_shot"`); a shot routes `_launch` to
+  `lua_builder.build_single_shot_lua` instead of `build_weldflex_lua`, but
+  reuses every downstream piece as-is — monitor thread, `CycleTracker`, run
+  history, and `partials/current_job.html`. A loaded shot *is* the current job
+  system-wide, and a part job and a shot can't run concurrently — same
+  physical robot, same singleton run-slot.
+- **Live or Dry is picked for every shot** in the page's confirm modal, with
+  no default; `/ui/single-shot/fire` returns an error toast without one.
+- **Its config lives in `recipes.json`, not a separate settings store.** The
+  record marked `"system": "single_shot"` (found or created by
+  `app._single_shot_recipe()`, never looked up by name) carries the target
+  point plus `safe_z`/`part_z`/`stud_type`/`substrate`/`pressure_setting`/
+  `di_check`, edited through `/ui/recipes/save` from the page's Settings
+  modal. `_recipes_load` tags the old name-keyed `faceplates` record on first
+  load. `app._hide_system_recipes()` drops it from every parts listing,
+  `/ui/job/load` refuses it, and a save or delete by name skips it.
+- **The target is entered as separate `target_x`/`target_y` fields**, in mm
+  from `zerozero` like a part's studs: the on-screen number pad has no comma
+  key, so a single `"X, Y"` box cannot be filled in on the kiosk.
+  `/ui/recipes/save` holds both to `app.BED_MM` (0–762 mm, the part designer's
+  `BED`) and refuses a bad target with an error toast instead of saving no
+  target; an unparseable `studs_text` from the parts page is refused the same
+  way. The modal only closes and reloads when the response carries
+  `X-Recipe-Id`. `tests/test_lua_builder.py` resolves both programs' approach
+  offsets to check a shot and a part stud at the same X/Y park in the same
+  place.
+- **`single_shot.lua`** is structurally parallel to `WeldFlex.lua` but targets
+  one point: PTP straight to the target at safe height, `weld.lua` once
+  (feeding afterwards like any stud), then it stays parked. It never moves to
+  `homewf`; the page's Move Home button does. The job runs under part_id
+  `__single_shot__`, which matches no recipe, so shots never fold into part
+  stats.
 
 **Flat exceptions** — only two remain: `/ui/connection` and `/ui/studs-preview`.
 The old flat run verbs (`/ui/run`, `/ui/pause`, `/ui/resume`, `/ui/stop`) and
@@ -141,8 +135,8 @@ still in the code (see the audit log).
 | `/operator/calibrate` + `/ui/calibrate/status\|enable-drag\|record-pin\|goto-clearance\|apply\|reset` | Linked from `calibration.html`; `calibrate.html`/`partials/calibrate_steps.html` exist and target all 6 endpoints — **none of these routes exist in `app.py` yet.** | This is the next planned feature — see `state-and-session.md` and the `fairino-sdk` skill's `coordinate-calibration.md` |
 
 `home.html` and `partials/home_current_run.html` have since been deleted —
-earlier revisions of this file listed them as orphans. (`liberty.html` was
-deleted too, but a new one now backs `/operator/liberty` — see above.) The
+earlier revisions of this file listed them as orphans. (`liberty.html` and
+`faceplate.html` are gone too, as of 2026-09-14 — see above.) The
 current job panel is `partials/current_job.html`, mounted from
 `operator.html:10` via `htmx_mount(..., '/ui/job/status', 'load', 'innerHTML')`;
 the partial then carries its own adaptive poll trigger, so that mount only fires

@@ -32,24 +32,21 @@ Robot connection ownership, telemetry sources, freshness, and recovery:
 
 ```
 cd venv/Scripts && activate.bat
-cd 
+cd ..
+cd .. 
 python backend\app.py
 ```
 
-## Liberty Endurance Test
+## Run modes
 
-Admin's Liberty Endurance page runs a saved Liberty plate recipe live, bypassing
-the Atlas DI1 stud-on-work and DI0 welder-ready checks. It is disabled unless
-all three machine-specific settings are present in `.env`:
+Every run is **Live** or **Dry**, picked in the run modal each time; there is no
+default. Dry runs the full search, press, retract and feed sequence without
+pulsing the weld output. Each part also saves a **DI check** setting, on by
+default. With it off, the DI0 welder-ready and DI1 stud-on-work checks are
+skipped, on live runs too, and the job panel shows **DI OFF**.
 
-```
-WELDFLEX_LIBERTY_LIVE_ENABLED=1
-WELDFLEX_LIBERTY_TRIGGER_DO=<controller output number>
-WELDFLEX_LIBERTY_TRIGGER_PULSE_MS=<pulse duration in ms>
-```
-
-Restart the backend after changing these settings. The page requires `FIRE LIBERTY`
-before it starts and advances the feeder after every stud.
+Admin's **Single Shot** tool welds one stud at a saved target point, with the
+same Live/Dry choice, then feeds the next stud and stays over the target.
 
 ## Install RPI Kiosk
 

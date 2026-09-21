@@ -19,7 +19,7 @@ from job_manager import (
     JobManager,
     JobState,
 )
-from lua_builder import build_weldflex_lua
+from lua_builder import RunMode, build_weldflex_lua
 
 STATE_MAP = {-1: "offline", 0: "stopped", 1: "stopped", 2: "running", 3: "paused"}
 
@@ -27,7 +27,7 @@ STATE_MAP = {-1: "offline", 0: "stopped", 1: "stopped", 2: "running", 3: "paused
 # the manager itself measures at start(). BODY is a line inside the loop body; the
 # loop head is never used, because the controller never reports it — assuming it
 # did is how the counter came to latch after cycle 1 and the gate stopped re-arming.
-_BUILT = build_weldflex_lua([{"x": 1, "y": 1}], cycles=2, gate_mode="none")
+_BUILT = build_weldflex_lua([{"x": 1, "y": 1}], cycles=2, run_mode=RunMode("dry"), gate_mode="none")
 BODY = _BUILT.loop_start_line + 1        # inside the loop, below the boundary dwell
 PAST_MARKER = _BUILT.cycle_marker_line   # the boundary dwell itself
 
@@ -145,7 +145,7 @@ def test_starts_idle(tmp_path):
 def test_load_then_start_reaches_running(tmp_path):
     robot = FakeRobot()
     mgr = make_manager(tmp_path, robot)
-    snap = mgr.load("p1", "Bracket", [{"x": 1, "y": 2}], cycles=3, gate_mode="none")
+    snap = mgr.load("p1", "Bracket", [{"x": 1, "y": 2}], cycles=3, arm_mode="dry", gate_mode="none")
     assert snap.state == JobState.QUEUED.value
     assert snap.part_name == "Bracket"
     assert snap.cycles_target == 3
@@ -166,7 +166,7 @@ def test_monitor_uses_8083_first_observation_during_force_operations(tmp_path):
     robot.snapshot = lambda: rpc_snapshot
     robot.get_universal_state = lambda: feed_snapshot
     mgr = make_manager(tmp_path, robot)
-    mgr.load("p1", "Bracket", [{"x": 1, "y": 2}], cycles=1, gate_mode="none")
+    mgr.load("p1", "Bracket", [{"x": 1, "y": 2}], cycles=1, arm_mode="dry", gate_mode="none")
     mgr.start()
 
     assert wait_for(lambda: mgr._session is not None and mgr._session.seen_running)
@@ -174,80 +174,52 @@ def test_monitor_uses_8083_first_observation_during_force_operations(tmp_path):
     mgr.shutdown()
 
 
-def test_faceplate_kind_builds_with_the_faceplate_lua_builder(tmp_path, monkeypatch):
-    """load(..., kind="faceplate") must route _launch to build_weld_faceplate_lua,
+def test_single_shot_kind_builds_with_the_single_shot_lua_builder(tmp_path, monkeypatch):
+    """load(..., kind="single_shot") must route _launch to build_single_shot_lua,
     not build_weldflex_lua — the two produce very different programs and a
     misrouted kind would silently run the wrong one."""
     import job_manager as jm
 
     calls = []
-    real_build = jm.build_weld_faceplate_lua
+    real_build = jm.build_single_shot_lua
 
     def spy(x, y, *args, **kwargs):
-        calls.append((x, y))
+        calls.append((x, y, kwargs["run_mode"]))
         return real_build(x, y, *args, **kwargs)
 
-    monkeypatch.setattr(jm, "build_weld_faceplate_lua", spy)
+    monkeypatch.setattr(jm, "build_single_shot_lua", spy)
 
     robot = FakeRobot()
     mgr = make_manager(tmp_path, robot)
-    mgr.load("__faceplate__", "Faceplate", [{"x": 12, "y": 34}], cycles=1,
-             gate_mode="pause", kind="faceplate")
+    mgr.load("__single_shot__", "Single Shot", [{"x": 12, "y": 34}], cycles=1,
+             arm_mode="live", di_check=False, gate_mode="none", kind="single_shot")
     mgr.start()
     wait_state(mgr, JobState.RUNNING.value)
-    assert calls == [(12, 34)]
+    assert calls == [(12, 34, RunMode("live", di_check=False))]
     mgr.shutdown()
 
 
-def test_faceplate_load_without_a_target_point_fails_at_launch(tmp_path):
+def test_single_shot_load_without_a_target_point_fails_at_launch(tmp_path):
     robot = FakeRobot()
     mgr = make_manager(tmp_path, robot)
-    mgr.load("__faceplate__", "Faceplate", [], cycles=1, gate_mode="pause", kind="faceplate")
+    mgr.load("__single_shot__", "Single Shot", [], cycles=1, arm_mode="dry",
+             gate_mode="none", kind="single_shot")
     mgr.start()
     wait_state(mgr, JobState.ERROR.value)
     assert "target point" in (mgr.snapshot().error or "")
     mgr.shutdown()
 
 
-def test_load_accepts_arm_mode_and_passes_it_to_generated_program(tmp_path, monkeypatch):
+def test_load_passes_the_run_mode_and_recipe_settings_to_the_builder(tmp_path, monkeypatch):
     import job_manager as jm
 
     monkeypatch.setenv("WELDFLEX_DSC_CALIBRATED", "1")
     real_build = jm.build_weldflex_lua
     seen = []
 
-    def spy(studs, cycles, gate_mode="pause", arm_mode="live", **kwargs):
-        seen.append((arm_mode, kwargs.get("welder_profile"), kwargs.get("speed"),
-                     kwargs.get("dsc_enabled"), kwargs.get("stud_reload_ms")))
-        return real_build(studs, cycles, gate_mode=gate_mode, arm_mode=arm_mode, **kwargs)
-
-    monkeypatch.setattr(jm, "build_weldflex_lua", spy)
-
-    robot = FakeRobot()
-    mgr = make_manager(tmp_path, robot)
-    mgr.load(
-        "p1", "Bracket", [{"x": 1, "y": 2}], cycles=1,
-        gate_mode="none", arm_mode="dry", welder_profile="liberty", speed=42,
-        dsc_enabled=True, stud_reload_ms=600,
-    )
-    mgr.start()
-    wait_state(mgr, JobState.RUNNING.value)
-    assert seen == [("dry", "liberty", 42, True, 600)]
-    mgr.shutdown()
-
-
-def test_live_liberty_commissioning_passes_the_trigger_to_the_builder(tmp_path, monkeypatch):
-    import job_manager as jm
-
-    real_build = jm.build_weldflex_lua
-    seen = []
-
     def spy(studs, cycles, **kwargs):
-        seen.append((
-            kwargs["liberty_commissioning"],
-            kwargs["weld_trigger_do"],
-            kwargs["weld_trigger_pulse_ms"],
-        ))
+        seen.append((kwargs["run_mode"], kwargs.get("speed"),
+                     kwargs.get("dsc_enabled"), kwargs.get("stud_reload_ms")))
         return real_build(studs, cycles, **kwargs)
 
     monkeypatch.setattr(jm, "build_weldflex_lua", spy)
@@ -255,28 +227,61 @@ def test_live_liberty_commissioning_passes_the_trigger_to_the_builder(tmp_path, 
     robot = FakeRobot()
     mgr = make_manager(tmp_path, robot)
     mgr.load(
-        "liberty-plate", "Liberty Plate", [{"x": 1, "y": 2}], cycles=3,
-        gate_mode="none", arm_mode="live", welder_profile="liberty",
-        liberty_commissioning=True, weld_trigger_do=4, weld_trigger_pulse_ms=120,
+        "p1", "Bracket", [{"x": 1, "y": 2}], cycles=1,
+        arm_mode="dry", di_check=False, gate_mode="none", speed=42,
+        dsc_enabled=True, stud_reload_ms=600,
     )
     mgr.start()
     wait_state(mgr, JobState.RUNNING.value)
+    assert seen == [(RunMode("dry", di_check=False), 42, True, 600)]
+    mgr.shutdown()
 
-    assert seen == [(True, 4, 120)]
+
+def test_run_mode_is_on_the_snapshot_the_history_and_the_load_event(tmp_path):
+    robot = FakeRobot()
+    mgr = make_manager(tmp_path, robot)
+    snap = mgr.load("p1", "Bracket", [{"x": 1, "y": 2}], cycles=3,
+                    arm_mode="live", di_check=False, gate_mode="none")
+    assert (snap.arm_mode, snap.di_check) == ("live", False)
+
+    mgr.start()
+    wait_state(mgr, JobState.RUNNING.value)
     mgr.stop()
+
     record = json.loads((tmp_path / "run_history.jsonl").read_text(encoding="utf-8"))
-    assert record["liberty_commissioning"] is True
-    assert record["weld_trigger_do"] == 4
-    assert record["weld_trigger_pulse_ms"] == 120
+    assert record["kind"] == "part"
+    assert record["arm_mode"] == "live"
+    assert record["di_check"] is False
+    for retired in ("welder_profile", "liberty_commissioning", "weld_trigger_do", "weld_trigger_pulse_ms"):
+        assert retired not in record
     events = [
         json.loads(line)
         for line in (tmp_path / "run_events.jsonl").read_text(encoding="utf-8").splitlines()
     ]
     load_event = next(event for event in events if event["event"] == "load")
-    assert load_event["detail"]["liberty_commissioning"] is True
-    assert load_event["detail"]["weld_trigger_do"] == 4
-    assert load_event["detail"]["weld_trigger_pulse_ms"] == 120
+    assert load_event["detail"]["arm_mode"] == "live"
+    assert load_event["detail"]["di_check"] is False
     mgr.shutdown()
+
+
+def test_load_has_no_default_arm_mode(tmp_path):
+    """Live or Dry is picked for every run. A default of "live" is how the old
+    faceplate page loaded live jobs nobody had chosen."""
+    mgr = make_manager(tmp_path)
+    with pytest.raises(TypeError):
+        mgr.load("p1", "Bracket", [], cycles=1, gate_mode="none")
+    with pytest.raises(JobError, match="live or dry"):
+        mgr.load("p1", "Bracket", [], cycles=1, arm_mode="armed", gate_mode="none")
+    assert mgr.snapshot().state == JobState.IDLE.value
+
+
+def test_load_rejects_an_unknown_kind_or_a_non_boolean_di_check(tmp_path):
+    mgr = make_manager(tmp_path)
+    with pytest.raises(JobError, match="kind"):
+        mgr.load("p1", "Bracket", [], cycles=1, arm_mode="dry", kind="liberty_endurance")
+    with pytest.raises(JobError, match="DI check"):
+        mgr.load("p1", "Bracket", [], cycles=1, arm_mode="dry", di_check="0")
+    assert mgr.snapshot().state == JobState.IDLE.value
 
 
 def test_launch_uses_the_controller_assigned_force_sensor_number(tmp_path, monkeypatch):
@@ -293,7 +298,7 @@ def test_launch_uses_the_controller_assigned_force_sensor_number(tmp_path, monke
 
     robot = FakeRobot()
     mgr = make_manager(tmp_path, robot)
-    mgr.load("p1", "Bracket", [{"x": 1, "y": 2}], cycles=1, gate_mode="none")
+    mgr.load("p1", "Bracket", [{"x": 1, "y": 2}], cycles=1, arm_mode="dry", gate_mode="none")
     mgr.start()
     wait_state(mgr, JobState.RUNNING.value)
 
@@ -319,7 +324,7 @@ ILLEGAL = [
 def test_illegal_transitions_are_rejected_not_silently_applied(tmp_path, command, state):
     mgr = make_manager(tmp_path)
     if state == JobState.QUEUED.value:
-        mgr.load("p1", "Bracket", [], cycles=1, gate_mode="none")
+        mgr.load("p1", "Bracket", [], cycles=1, arm_mode="dry", gate_mode="none")
     with pytest.raises(JobError):
         getattr(mgr, command)()
 
@@ -327,7 +332,7 @@ def test_illegal_transitions_are_rejected_not_silently_applied(tmp_path, command
 def test_pause_resume_stop_round_trip(tmp_path):
     robot = FakeRobot()
     mgr = make_manager(tmp_path, robot)
-    mgr.load("p1", "Bracket", [], cycles=5, gate_mode="none")
+    mgr.load("p1", "Bracket", [], cycles=5, arm_mode="dry", gate_mode="none")
     mgr.start()
     wait_state(mgr, JobState.RUNNING.value)
 
@@ -347,7 +352,7 @@ def test_clear_hands_the_cell_back_to_manual_mode(tmp_path):
     """A run leaves the controller in auto; clearing is where the operator gets it back."""
     robot = FakeRobot()
     mgr = make_manager(tmp_path, robot)
-    mgr.load("p1", "Bracket", [], cycles=1, gate_mode="none")
+    mgr.load("p1", "Bracket", [], cycles=1, arm_mode="dry", gate_mode="none")
     mgr.start()
     wait_state(mgr, JobState.RUNNING.value)
     mgr.stop()
@@ -361,7 +366,7 @@ def test_clear_hands_the_cell_back_to_manual_mode(tmp_path):
 def test_a_failed_manual_handoff_still_clears_but_says_so(tmp_path):
     robot = FakeRobot(fail={"set_manual_mode"})
     mgr = make_manager(tmp_path, robot)
-    mgr.load("p1", "Bracket", [], cycles=1, gate_mode="none")
+    mgr.load("p1", "Bracket", [], cycles=1, arm_mode="dry", gate_mode="none")
     mgr.start()
     wait_state(mgr, JobState.RUNNING.value)
     mgr.stop()
@@ -380,7 +385,7 @@ def test_a_failed_manual_handoff_still_clears_but_says_so(tmp_path):
 def test_failed_command_lands_on_the_session_error_not_an_exception(tmp_path):
     robot = FakeRobot(fail={"pause_program"})
     mgr = make_manager(tmp_path, robot)
-    mgr.load("p1", "Bracket", [], cycles=2, gate_mode="none")
+    mgr.load("p1", "Bracket", [], cycles=2, arm_mode="dry", gate_mode="none")
     mgr.start()
     wait_state(mgr, JobState.RUNNING.value)
 
@@ -393,7 +398,7 @@ def test_failed_command_lands_on_the_session_error_not_an_exception(tmp_path):
 def test_start_failure_ends_the_job_with_a_visible_reason(tmp_path):
     robot = FakeRobot(fail={"run_program"})
     mgr = make_manager(tmp_path, robot)
-    mgr.load("p1", "Bracket", [], cycles=1, gate_mode="none")
+    mgr.load("p1", "Bracket", [], cycles=1, arm_mode="dry", gate_mode="none")
     mgr.start()
     wait_state(mgr, JobState.ERROR.value)
     assert "run_program failed" in mgr.snapshot().error
@@ -404,13 +409,13 @@ def test_start_failure_ends_the_job_with_a_visible_reason(tmp_path):
 
 def test_load_is_refused_while_a_job_is_active(tmp_path):
     mgr = make_manager(tmp_path)
-    mgr.load("p1", "A", [], cycles=2, gate_mode="none")
+    mgr.load("p1", "A", [], cycles=2, arm_mode="dry", gate_mode="none")
     mgr.start()
     wait_state(mgr, JobState.RUNNING.value)
     with pytest.raises(JobError, match="stop it before loading another"):
-        mgr.load("p2", "B", [], cycles=1, gate_mode="none")
+        mgr.load("p2", "B", [], cycles=1, arm_mode="dry", gate_mode="none")
     mgr.stop()
-    mgr.load("p2", "B", [], cycles=1, gate_mode="none")   # allowed once terminal
+    mgr.load("p2", "B", [], cycles=1, arm_mode="dry", gate_mode="none")   # allowed once terminal
 
 
 # ---------------- cycle counting end to end ----------------
@@ -430,7 +435,7 @@ def test_cycles_advance_with_nothing_polling(tmp_path):
     """The headline fix: progress is driven by the monitor thread, not the browser."""
     robot = FakeRobot()
     mgr = make_manager(tmp_path, robot)
-    mgr.load("p1", "Bracket", [{"x": 1, "y": 1}], cycles=2, gate_mode="none")
+    mgr.load("p1", "Bracket", [{"x": 1, "y": 1}], cycles=2, arm_mode="dry", gate_mode="none")
     mgr.start()
     wait_state(mgr, JobState.RUNNING.value)
 
@@ -448,7 +453,7 @@ def test_cycles_advance_with_nothing_polling(tmp_path):
 def test_lost_link_mid_run_is_interrupted_not_running(tmp_path):
     robot = FakeRobot()
     mgr = make_manager(tmp_path, robot)
-    mgr.load("p1", "Bracket", [], cycles=5, gate_mode="none")
+    mgr.load("p1", "Bracket", [], cycles=5, arm_mode="dry", gate_mode="none")
     mgr.start()
     wait_state(mgr, JobState.RUNNING.value)
     robot.snap.state = "faulted"
@@ -481,7 +486,7 @@ def test_gate_pause_re_arms_on_every_cycle(tmp_path):
     """
     robot = FakeRobot()
     mgr = make_manager(tmp_path, robot)
-    mgr.load("p1", "Bracket", [{"x": 1, "y": 1}], cycles=3, gate_mode="pause")
+    mgr.load("p1", "Bracket", [{"x": 1, "y": 1}], cycles=3, arm_mode="dry", gate_mode="pause")
     mgr.start()
     wait_state(mgr, JobState.RUNNING.value)
 
@@ -517,7 +522,7 @@ def test_newdofile_aliased_line_does_not_bank_or_gate_early(tmp_path):
     """
     robot = FakeRobot()
     mgr = make_manager(tmp_path, robot)
-    mgr.load("p1", "Bracket", [{"x": 1, "y": 1}], cycles=2, gate_mode="pause")
+    mgr.load("p1", "Bracket", [{"x": 1, "y": 1}], cycles=2, arm_mode="dry", gate_mode="pause")
     mgr.start()
     wait_state(mgr, JobState.RUNNING.value)
 
@@ -548,7 +553,7 @@ def test_the_gate_waits_for_the_programs_own_pause(tmp_path):
     """
     robot = FakeRobot()
     mgr = make_manager(tmp_path, robot)
-    mgr.load("p1", "Bracket", [{"x": 1, "y": 1}], cycles=3, gate_mode="pause")
+    mgr.load("p1", "Bracket", [{"x": 1, "y": 1}], cycles=3, arm_mode="dry", gate_mode="pause")
     mgr.start()
     wait_state(mgr, JobState.RUNNING.value)
 
@@ -577,7 +582,7 @@ def test_a_gate_that_cannot_hold_stops_the_job(tmp_path, monkeypatch):
     monkeypatch.setenv("WELDFLEX_BOUNDARY_PAUSE_MS", "50")
     robot = FakeRobot(fail={"pause_program"})
     mgr = make_manager(tmp_path, robot)
-    mgr.load("p1", "Bracket", [{"x": 1, "y": 1}], cycles=3, gate_mode="pause")
+    mgr.load("p1", "Bracket", [{"x": 1, "y": 1}], cycles=3, arm_mode="dry", gate_mode="pause")
     mgr.start()
     wait_state(mgr, JobState.RUNNING.value)
 
@@ -595,7 +600,7 @@ def test_a_gate_that_cannot_hold_stops_the_job(tmp_path, monkeypatch):
 def test_program_ending_early_is_stopped_with_a_partial_count(tmp_path):
     robot = FakeRobot()
     mgr = make_manager(tmp_path, robot)
-    mgr.load("p1", "Bracket", [], cycles=10, gate_mode="none")
+    mgr.load("p1", "Bracket", [], cycles=10, arm_mode="dry", gate_mode="none")
     mgr.start()
     wait_state(mgr, JobState.RUNNING.value)
     robot.feed(BODY)
@@ -612,7 +617,7 @@ def test_program_ending_early_is_stopped_with_a_partial_count(tmp_path):
 def test_history_and_events_are_written_as_jsonl(tmp_path):
     finished = []
     mgr = make_manager(tmp_path, on_finish=finished.append)
-    mgr.load("p1", "Bracket", [{"x": 1, "y": 2}], cycles=2, gate_mode="none")
+    mgr.load("p1", "Bracket", [{"x": 1, "y": 2}], cycles=2, arm_mode="dry", gate_mode="none")
     mgr.start()
     wait_state(mgr, JobState.RUNNING.value)
     mgr.stop()
@@ -670,7 +675,7 @@ def test_history_is_newest_first(tmp_path):
 
 def test_shutdown_records_an_in_flight_job_as_interrupted(tmp_path):
     mgr = make_manager(tmp_path)
-    mgr.load("p1", "Bracket", [], cycles=9, gate_mode="none")
+    mgr.load("p1", "Bracket", [], cycles=9, arm_mode="dry", gate_mode="none")
     mgr.start()
     wait_state(mgr, JobState.RUNNING.value)
     mgr.shutdown()
@@ -684,7 +689,7 @@ def test_shutdown_records_an_in_flight_job_as_interrupted(tmp_path):
 
 def test_snapshot_is_immutable_and_json_ready(tmp_path):
     mgr = make_manager(tmp_path)
-    mgr.load("p1", "Bracket", [{"x": 1, "y": 2}], cycles=4, gate_mode="none")
+    mgr.load("p1", "Bracket", [{"x": 1, "y": 2}], cycles=4, arm_mode="dry", gate_mode="none")
     snap = mgr.snapshot()
     with pytest.raises(Exception):
         snap.state = "running"          # frozen dataclass
@@ -706,7 +711,7 @@ def test_direct_controller_paused_state_gates_job(tmp_path):
     to GATED and bank the cycle without depending on line-number polling."""
     robot = FakeRobot()
     mgr = make_manager(tmp_path, robot)
-    mgr.load("p1", "Bracket", [{"x": 10, "y": 20}], cycles=2, gate_mode="pause")
+    mgr.load("p1", "Bracket", [{"x": 10, "y": 20}], cycles=2, arm_mode="dry", gate_mode="pause")
     mgr.start()
     wait_state(mgr, JobState.RUNNING.value)
 

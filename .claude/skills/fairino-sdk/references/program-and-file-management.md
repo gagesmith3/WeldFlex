@@ -40,7 +40,7 @@ though it's not SDK-mandated.
   of the documented three.
 - **`GetCurrentLine(self)`** — `Robot.py:7050`. Real RPC call. Returns
   `(0, line_num)` / `(err, None)`. Used for line-based progress tracking (see
-  the `weldflex-app` skill's liberty-test completion-detection pattern).
+  the `weldflex-app` skill's `state-and-session.md`, cycle tracking).
   **Inside a `NewDofile`'d chunk it reports the *sub-file's* line numbers**
   (observed live 2026-07-28: line 262 = `weld.lua`'s `searchForStud` while the
   weld-test harness was the loaded program), with nothing in the value saying

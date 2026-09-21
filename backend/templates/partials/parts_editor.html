@@ -66,11 +66,11 @@
                    class="parts-setting-input">
           </div>
           <div class="parts-field-group">
-            <label for="welder_profile" class="parts-field-label">Power Source</label>
-            <select id="welder_profile" name="welder_profile" class="parts-setting-select">
-              {% set welder_profile = recipe.welder_profile if recipe else 'atlas' %}
-              <option value="atlas" {% if welder_profile == 'atlas' %}selected{% endif %}>LYNX Atlas</option>
-              <option value="liberty" {% if welder_profile == 'liberty' %}selected{% endif %}>LYNX Liberty (dry only)</option>
+            <label for="di_check" class="parts-field-label">DI Check (DI0 ready / DI1 stud)</label>
+            <select id="di_check" name="di_check" class="parts-setting-select">
+              {% set di_check = recipe.di_check if recipe else true %}
+              <option value="1" {% if di_check %}selected{% endif %}>On</option>
+              <option value="0" {% if not di_check %}selected{% endif %}>Off</option>
             </select>
           </div>
           <div class="parts-field-group">
@@ -92,7 +92,7 @@
         <div class="parts-run-right">
           {{ action_button('Save', variant='recipe-save', icon='save',
                hx_post='/ui/recipes/save',
-            hx_include='#recipe_name, #studs_text, #coord-table-body input, #part_z, #retract_z, #safe_z, #stud_type, #substrate, #pressure_setting, #welder_profile, #speed',
+            hx_include='#recipe_name, #studs_text, #coord-table-body input, #part_z, #retract_z, #safe_z, #stud_type, #substrate, #pressure_setting, #di_check, #speed',
                hx_target='#toast-rack',
                hx_on_after_request="if(event.detail.successful){syncPartsEditorUrl()}") }}
           {{ action_button('Run', variant='run', icon='play',

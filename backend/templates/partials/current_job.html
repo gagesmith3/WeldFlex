@@ -70,8 +70,10 @@
 
   <div class="current-job-grid">
     <div class="metric-card">
-      <div class="metric-icon">{{ icon_safe('clipboard', fallback='circle', width=14, height=14) }}</div>
-      <span class="metric-label">Part Name</span>
+      <div class="metric-head">
+        <div class="metric-icon">{{ icon_safe('clipboard', fallback='circle', width=14, height=14) }}</div>
+        <span class="metric-label">Part Name</span>
+      </div>
       <strong class="metric-value">{{ job.part_name or '—' }}</strong>
       {% if job.run_id %}
       {# The run mode stays on screen for the whole job, not just the modal it was picked in. #}
@@ -82,23 +84,29 @@
       {% endif %}
     </div>
     <div class="metric-card">
-      <div class="metric-icon">{{ icon_safe('repeat', fallback='circle', width=14, height=14) }}</div>
-      <span class="metric-label">Cycles</span>
+      <div class="metric-head">
+        <div class="metric-icon">{{ icon_safe('repeat', fallback='circle', width=14, height=14) }}</div>
+        <span class="metric-label">Cycles</span>
+      </div>
       <strong class="metric-value">
         {{ (job.cycles_done ~ ' / ' ~ job.cycles_target) if job.cycles_target else '— / —' }}
       </strong>
     </div>
     <div class="metric-card">
-      <div class="metric-icon">{{ icon_safe('zap', fallback='circle', width=14, height=14) }}</div>
-      <span class="metric-label">Press Target</span>
+      <div class="metric-head">
+        <div class="metric-icon">{{ icon_safe('zap', fallback='circle', width=14, height=14) }}</div>
+        <span class="metric-label">Press Target</span>
+      </div>
       <strong class="metric-value">
         {% if conn.target_press_lbf is not none %}{{ '%.1f'|format(conn.target_press_lbf) }} lbf{% else %}—{% endif %}
       </strong>
       <span class="metric-label">Recipe {{ job.pressure_setting or '—' }} lbf</span>
     </div>
     <div class="metric-card">
-      <div class="metric-icon">{{ icon_safe('activity', fallback='circle', width=14, height=14) }}</div>
-      <span class="metric-label">Live Fz</span>
+      <div class="metric-head">
+        <div class="metric-icon">{{ icon_safe('activity', fallback='circle', width=14, height=14) }}</div>
+        <span class="metric-label">Live Fz</span>
+      </div>
       <strong class="metric-value">
         {% if conn.force_lbf is not none %}{{ '%+.1f'|format(conn.force_lbf) }} lbf{% else %}—{% endif %}
       </strong>

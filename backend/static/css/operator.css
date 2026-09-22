@@ -3418,6 +3418,101 @@ pre {
   display: none;
 }
 
+/* The operator page fits the viewport by construction rather than by hand-sized
+   heights: Current Job takes what its content needs, and the Control Panel takes
+   whatever is left, with the run buttons stretching to fill it. Fixed button
+   heights (120px) plus a 2x2 metric grid overflowed 800x500 by ~120px and put a
+   scrollbar on the home page. A job hint, an error line or the progress bar now
+   shrink the buttons instead of pushing Current Job off the bottom. */
+/* No min-height: 0 here on purpose — the panel must never shrink below its
+   buttons' floor, or they spill out of it instead of the page scrolling. */
+.operator-control-panel {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.operator-control-panel .hero-main-controls {
+  flex: 1;
+  min-height: 0;
+}
+
+.operator-current-job {
+  flex: none;
+}
+
+/* Icon beside the label instead of above it — one row less per card. */
+.metric-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.metric-head .metric-icon {
+  margin-bottom: 0;
+  flex-shrink: 0;
+}
+
+.operator-current-job .metric-card {
+  min-width: 0;
+}
+
+.operator-current-job .metric-value {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 820px), (max-height: 520px) {
+  /* Four metrics in one row: the 2x2 grid alone cost a card's height. */
+  .operator-current-job .current-job-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+    margin-top: 0;
+  }
+
+  .operator-control-panel .hero-main-controls {
+    margin: 0;
+  }
+
+  /* The floor when a hint, an error and the progress bar are all showing.
+     Normally the buttons stretch well past this. */
+  .operator-control-panel .hero-main-controls .btn {
+    min-height: 56px;
+    padding: 8px;
+  }
+
+  .operator-current-job .current-job-note,
+  .operator-current-job .current-job-ready-hint,
+  .operator-current-job .current-job-gate-hint,
+  .operator-current-job .current-job-error {
+    margin-bottom: 6px;
+    font-size: 0.78rem;
+  }
+
+  .operator-current-job .current-job-error {
+    padding: 4px 8px;
+  }
+
+  /* Label and bar share one row — a whole text line back. */
+  .operator-current-job .current-job-progress {
+    margin-top: 8px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .operator-current-job .current-job-progress-meta {
+    margin-bottom: 0;
+    flex: none;
+  }
+
+  .operator-current-job .current-job-progress-track {
+    flex: 1;
+    min-width: 0;
+  }
+}
+
 @media (max-width: 540px) {
   .operator-main-body {
     grid-template-columns: 1fr;

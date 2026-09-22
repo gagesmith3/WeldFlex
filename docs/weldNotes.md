@@ -79,7 +79,9 @@ After a fault, the program parks ~3s on a unique `WaitMs` line site (`1`, `4`, `
 ## 3. Input Contract & Globals
 
 ### Required Globals (Set by `WeldFlex.lua` and `single_shot.lua`):
-- `weldX`, `weldY`: Stud X/Y offsets from `zerozero` point.
+- `weldX`, `weldY`: Stud X/Y offsets from `zerozero` point. `lua_builder` has
+  already resolved them from the part's origin corner (`backend/part_origin.py`),
+  so for any corner but front-left they are not the numbers the part stores.
 - `Z_CLEARANCE`: Safe Z clearance offset in work-object frame. The parent
   program derives it from `PART_Z + SAFE_Z`; `RETRACT_Z` remains recipe data
   but is not used by the current safe-plane force-motion path.

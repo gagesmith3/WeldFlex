@@ -237,6 +237,50 @@ def test_load_passes_the_run_mode_and_recipe_settings_to_the_builder(tmp_path, m
     mgr.shutdown()
 
 
+def test_load_passes_the_origin_corner_to_the_builder_and_the_load_event(tmp_path, monkeypatch):
+    import job_manager as jm
+
+    real_build = jm.build_weldflex_lua
+    seen = []
+
+    def spy(studs, cycles, **kwargs):
+        seen.append((studs, kwargs.get("origin_corner")))
+        return real_build(studs, cycles, **kwargs)
+
+    monkeypatch.setattr(jm, "build_weldflex_lua", spy)
+
+    mgr = make_manager(tmp_path, FakeRobot())
+    mgr.load("p1", "Bracket", [{"x": 1, "y": 2}], cycles=1,
+             arm_mode="dry", gate_mode="none", origin_corner="back_left")
+    mgr.start()
+    wait_state(mgr, JobState.RUNNING.value)
+    # The builder gets the part's own numbers; resolving them is its job.
+    assert seen == [([{"x": 1, "y": 2}], "back_left")]
+    events = [
+        json.loads(line)
+        for line in (tmp_path / "run_events.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    load_event = next(event for event in events if event["event"] == "load")
+    assert load_event["detail"]["origin_corner"] == "back_left"
+    mgr.shutdown()
+
+
+@pytest.mark.parametrize("corner, studs, error", [
+    ("top_right", [{"x": 1, "y": 2}], "Unknown origin corner"),
+    ("front_right", [{"x": 1, "y": 2}, {"x": 900, "y": 2}], "Stud 2"),
+])
+def test_load_refuses_a_bad_corner_or_a_stud_that_would_flip_across_the_bed(
+    tmp_path, monkeypatch, corner, studs, error
+):
+    """At load, not when Run is pressed: the builder only runs at start()."""
+    monkeypatch.delenv("WELDFLEX_BED_X_MM", raising=False)
+    mgr = make_manager(tmp_path, FakeRobot())
+    with pytest.raises(JobError, match=error):
+        mgr.load("p1", "Bracket", studs, cycles=1, arm_mode="dry",
+                 gate_mode="none", origin_corner=corner)
+    mgr.shutdown()
+
+
 def test_run_mode_is_on_the_snapshot_the_history_and_the_load_event(tmp_path):
     robot = FakeRobot()
     mgr = make_manager(tmp_path, robot)

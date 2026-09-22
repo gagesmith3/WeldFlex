@@ -5,24 +5,24 @@
       <svg class="plot-svg" viewBox="0 0 240 240" role="img" aria-label="Top-down weld location map">
         <rect x="20" y="20" width="200" height="200" class="plot-boundary"></rect>
 
-        <line x1="20" y1="20" x2="20" y2="220" class="plot-grid-line"></line>
-        <line x1="120" y1="20" x2="120" y2="220" class="plot-grid-line"></line>
-        <line x1="220" y1="20" x2="220" y2="220" class="plot-grid-line plot-axis"></line>
-        <line x1="20" y1="20" x2="220" y2="20" class="plot-grid-line"></line>
-        <line x1="20" y1="120" x2="220" y2="120" class="plot-grid-line"></line>
-        <line x1="20" y1="220" x2="220" y2="220" class="plot-grid-line plot-axis"></line>
+        {# The two edges through the part's 0,0 corner are its axes. #}
+        {% for at in (20, 120, 220) %}
+        <line x1="{{ at }}" y1="20" x2="{{ at }}" y2="220" class="plot-grid-line{% if at == preview.origin.cx %} plot-axis{% endif %}"></line>
+        <line x1="20" y1="{{ at }}" x2="220" y2="{{ at }}" class="plot-grid-line{% if at == preview.origin.cy %} plot-axis{% endif %}"></line>
+        {% endfor %}
 
         {% for point in preview.graph_points %}
         <circle cx="{{ 20 + point.x_plot }}" cy="{{ 20 + point.y_plot }}" r="5" class="plot-point"></circle>
         <text x="{{ 28 + point.x_plot }}" y="{{ 16 + point.y_plot }}" class="plot-point-label">{{ point.index }}</text>
         {% endfor %}
 
-        <circle cx="220" cy="220" r="5" class="plot-origin"></circle>
-        <text x="20"  y="234" class="plot-axis-label" text-anchor="middle">762</text>
-        <text x="120" y="234" class="plot-axis-label" text-anchor="middle">381</text>
-        <text x="220" y="234" class="plot-axis-label" text-anchor="middle">0,0</text>
-        <text x="228" y="20"  class="plot-axis-label">762</text>
-        <text x="228" y="120" class="plot-axis-label">381</text>
+        <circle cx="{{ preview.origin.cx }}" cy="{{ preview.origin.cy }}" r="5" class="plot-origin"></circle>
+        {% for label in preview.x_labels %}
+        <text x="{{ label.pos }}" y="234" class="plot-axis-label" text-anchor="middle">{{ label.text }}</text>
+        {% endfor %}
+        {% for label in preview.y_labels %}
+        <text x="228" y="{{ label.pos }}" class="plot-axis-label">{{ label.text }}</text>
+        {% endfor %}
       </svg>
     </div>
 

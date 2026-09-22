@@ -30,6 +30,9 @@ class RecordingJob:
     def start(self):
         self.starts += 1
 
+    def snapshot(self):
+        return SimpleNamespace(active=False)
+
 
 def _recipe(**overrides):
     recipe = {
@@ -140,6 +143,97 @@ def test_recipe_save_sets_di_check_and_keeps_it_when_the_form_omits_it(run_app):
     # field; a missing di_check must not quietly turn the checks back on.
     run_app.client.post("/ui/recipes/save", data=form)
     assert run_app.read()[0]["di_check"] is False
+
+
+def test_recipe_save_sets_the_origin_corner_and_keeps_it_when_the_form_omits_it(run_app):
+    run_app.write([_recipe()])
+    form = {"recipe_id": "part-1", "recipe_name": "Bracket", "studs_text": "10,20"}
+    run_app.client.post("/ui/recipes/save", data={**form, "origin_corner": "back_right"})
+    assert run_app.read()[0]["origin_corner"] == "back_right"
+
+    # Only the part designer sends it. The operator Parts editor's save must not
+    # quietly move the part's studs back to front-left.
+    run_app.client.post("/ui/recipes/save", data=form)
+    assert run_app.read()[0]["origin_corner"] == "back_right"
+
+
+def test_recipe_save_refuses_an_unknown_origin_corner(run_app):
+    run_app.write([_recipe(origin_corner="back_left")])
+    response = run_app.client.post("/ui/recipes/save", data={
+        "recipe_id": "part-1", "recipe_name": "Bracket", "studs_text": "10,20",
+        "origin_corner": "top_right",
+    })
+    assert "Unknown origin corner" in response.get_data(as_text=True)
+    assert "X-Recipe-Id" not in response.headers
+    assert run_app.read()[0]["origin_corner"] == "back_left"
+
+
+def test_new_and_legacy_parts_are_measured_from_zerozero(run_app):
+    run_app.write([_recipe()])
+    run_app.client.post("/ui/recipes/save", data={"recipe_name": "New", "studs_text": "1,2"})
+    assert next(r for r in run_app.read() if r["name"] == "New")["origin_corner"] == "front_left"
+    with run_app.module._rec_lock:
+        enriched = run_app.module._recipes_enrich(run_app.module._recipes_load())
+    assert next(r for r in enriched if r["id"] == "part-1")["origin_corner"] == "front_left"
+
+
+def test_job_load_takes_the_origin_corner_from_the_part(run_app):
+    run_app.write([_recipe(origin_corner="front_right")])
+    run_app.client.post("/ui/job/load", data={"recipe_id": "part-1", "arm_mode": "dry"})
+    (_, kwargs), = run_app.job.loads
+    assert kwargs["origin_corner"] == "front_right"
+
+
+@pytest.fixture
+def goto(run_app, monkeypatch):
+    """Posts to the designer's Goto and returns the Lua it would upload."""
+    monkeypatch.delenv("WELDFLEX_BED_X_MM", raising=False)
+    monkeypatch.delenv("WELDFLEX_BED_Y_MM", raising=False)
+    uploaded = []
+    monkeypatch.setattr(run_app.module.robot, "upload_and_run",
+                        lambda path: uploaded.append(Path(path).read_text(encoding="utf-8")))
+
+    def post(**form):
+        response = run_app.client.post("/ui/parts/goto", data={"retract_z": "10", "part_z": "0", **form})
+        return response.get_data(as_text=True), uploaded
+
+    return post
+
+
+def test_goto_moves_to_the_stud_measured_from_the_parts_corner(goto):
+    _, uploaded = goto(x="100", y="50", origin_corner="back_right")
+    (program,) = uploaded
+    assert "PointsOffsetEnable(0, 662.0, 712.0, APPROACH_Z, 0, 0, 0)" in program
+    assert "PTP(zerozero, speed, -1, 0)" in program
+
+
+def test_goto_without_a_corner_is_front_left(goto):
+    _, uploaded = goto(x="100", y="50")
+    assert "PointsOffsetEnable(0, 100.0, 50.0, APPROACH_Z, 0, 0, 0)" in uploaded[0]
+
+
+def test_goto_refuses_a_stud_that_would_flip_across_the_bed(goto):
+    html, uploaded = goto(x="800", y="50", origin_corner="front_right")
+    assert "along X" in html
+    assert uploaded == []
+
+
+@pytest.mark.parametrize("corner, origin", [
+    ("front_left", (20, 220)),
+    ("front_right", (220, 220)),
+    ("back_left", (20, 20)),
+    ("back_right", (220, 20)),
+])
+def test_the_parts_page_preview_puts_0_0_on_the_parts_corner(run_app, corner, origin):
+    """It used to put 0,0 bottom-right with +X running left — the part designer
+    draws zerozero bottom-left. Both now draw the bed as the operator faces it."""
+    html = run_app.client.get(
+        "/ui/studs-preview", query_string={"studs_text": "0,0", "origin_corner": corner}
+    ).get_data(as_text=True)
+    cx, cy = origin
+    assert f'<circle cx="{cx}" cy="{cy}" r="5" class="plot-origin">' in html
+    # A stud at the part's 0,0 sits on that dot.
+    assert f'<circle cx="{cx}.0" cy="{cy}.0" r="5" class="plot-point">' in html
 
 
 def test_saving_a_part_by_name_never_overwrites_the_single_shot_record(run_app):

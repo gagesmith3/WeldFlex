@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
 
+from part_origin import DEFAULT_CORNER, BedSpan, resolve_studs
+
 PROGRAM_NAME = "WeldFlex.lua"
 TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "programs" / PROGRAM_NAME
 
@@ -419,10 +421,17 @@ def build_weldflex_lua(
     speed: float | int | None = None,
     dsc_enabled: bool = False,
     stud_reload_ms: int | float | None = None,
+    origin_corner: str = DEFAULT_CORNER,
+    bed_span: BedSpan | None = None,
 ) -> BuiltProgram:
     """Substitute the template's markers and report the generated line numbers.
 
     `run_mode` has no default on purpose: every caller states live or dry.
+
+    `studs` are as the part stores them, measured inward from `origin_corner`.
+    They are resolved to offsets from zerozero here, once, so the program's
+    `weldX`/`weldY` (and weld.lua's retract, which reuses them) are already
+    bed coordinates. `bed_span` defaults to the measured stops in .env.
     """
     if not isinstance(run_mode, RunMode):
         raise TypeError(f"run_mode must be a RunMode, got {run_mode!r}")
@@ -431,6 +440,7 @@ def build_weldflex_lua(
     cycles = int(cycles)
     if cycles < 1:
         raise ValueError(f"cycles must be >= 1, got {cycles}")
+    studs = resolve_studs(studs, origin_corner, bed_span)
 
     path = Path(template_path) if template_path else TEMPLATE_PATH
     if not path.is_file():

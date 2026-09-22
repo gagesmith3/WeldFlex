@@ -106,11 +106,14 @@
 
   <div class="parts-preview-column">
     <section class="panel parts-preview-panel">
+      {# Set in the part designer; this page only reads it, so Save leaves it out. #}
+      <input type="hidden" id="origin_corner" name="origin_corner"
+             value="{{ recipe.origin_corner if recipe else 'front_left' }}">
       <div id="studs-preview"
            hx-get="/ui/studs-preview"
            hx-trigger="load, studs-changed from:body"
            hx-swap="innerHTML"
-           hx-include="#studs_text, #coord-table-body input">
+           hx-include="#studs_text, #coord-table-body input, #origin_corner">
       </div>
     </section>
   </div>

@@ -47,7 +47,7 @@
         <g id="pd-points"></g>
       </svg>
     </div>
-    <div class="pd-canvas-coords" id="pd-coords">zerozero reference · 762 × 762 mm bed</div>
+    <div class="pd-canvas-coords" id="pd-coords">0,0 = front-left corner · 762 × 762 mm bed</div>
   </div>
 
   <!-- ── Right: stud list ─────────────────────────────────────── -->
@@ -125,9 +125,9 @@
   </div>
 </div>
 
-<!-- Part Settings modal. Three tabs over one form: nothing reaches the part until
+<!-- Part Settings modal. Four tabs over one form: nothing reaches the part until
      Apply & Save, so Cancel, Esc and a backdrop tap discard every edit, the units
-     switch included. The min/max typed on these inputs are the limits the weld
+     switch and the origin corner included. The min/max typed on these inputs are the limits the weld
      code enforces; tests/test_manager_part_settings.py holds them together. -->
 <div id="pd-settings-modal" class="wf-modal-overlay" hidden>
   <div class="wf-modal pds-modal" role="dialog" aria-modal="true" aria-labelledby="pds-title">
@@ -160,6 +160,11 @@
               aria-controls="pds-panel-motion" aria-selected="false" onclick="pdsSelectTab('motion')">
         <span class="pds-tab-name">{{ icon_safe('activity', width=14, height=14) }}Motion<span class="pds-tab-dot" aria-hidden="true"></span></span>
         <span class="pds-tab-summary" id="pds-sum-motion"></span>
+      </button>
+      <button type="button" class="pds-tab" role="tab" id="pds-tab-origin" data-tab="origin" tabindex="-1"
+              aria-controls="pds-panel-origin" aria-selected="false" onclick="pdsSelectTab('origin')">
+        <span class="pds-tab-name">{{ icon_safe('crosshair', width=14, height=14) }}Origin<span class="pds-tab-dot" aria-hidden="true"></span></span>
+        <span class="pds-tab-summary" id="pds-sum-origin"></span>
       </button>
     </div>
 
@@ -315,6 +320,43 @@
         {% if not dsc_calibrated() %}
         <p class="pds-note is-warn" id="pds-dsc-cal-note" hidden>This machine isn't calibrated for DSC (WELDFLEX_DSC_CALIBRATED is not 1), so a part with DSC on will fail to load for a run.</p>
         {% endif %}
+      </section>
+
+      <!-- Origin: the bed corner the part is tooled against. Stud X/Y are measured
+           inward from it; part_origin.py turns them into offsets from zerozero. -->
+      <section class="pds-panel" role="tabpanel" id="pds-panel-origin" data-tab="origin" aria-labelledby="pds-tab-origin">
+        <div class="pds-origin">
+          <div class="pds-field">
+            <span class="pds-label" id="pds-origin-label">Origin Corner</span>
+            <!-- Laid out as the operator faces the bed. Keys = part_origin.CORNERS. -->
+            <div class="pds-corner-grid" role="group" aria-labelledby="pds-origin-label" aria-describedby="pds-origin-hint">
+              <span class="pds-corner-edge">Back</span>
+              <button type="button" class="pds-corner-btn" data-corner="back_left" aria-pressed="false" onclick="pdsSetCorner('back_left')">Back-left</button>
+              <button type="button" class="pds-corner-btn" data-corner="back_right" aria-pressed="false" onclick="pdsSetCorner('back_right')">Back-right</button>
+              <button type="button" class="pds-corner-btn" data-corner="front_left" aria-pressed="false" onclick="pdsSetCorner('front_left')">Front-left</button>
+              <button type="button" class="pds-corner-btn" data-corner="front_right" aria-pressed="false" onclick="pdsSetCorner('front_right')">Front-right</button>
+              <span class="pds-corner-edge">Front · operator side</span>
+            </div>
+            <p class="pds-hint" id="pds-origin-hint">The corner this part is tooled against. Stud X and Y are measured inward from it, so they are never negative. Front-left is the taught zerozero point.</p>
+          </div>
+          <svg class="pds-zdiag" viewBox="0 0 210 172" role="img" aria-label="Stud X and Y run inward from the origin corner">
+            <defs>
+              <marker id="pds-od-arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path class="pds-od-arrowhead" d="M0 0 10 5 0 10z"/>
+              </marker>
+            </defs>
+            <text class="pds-od-edge" x="105" y="12" text-anchor="middle">BACK</text>
+            <rect class="pds-od-bed" x="40" y="20" width="130" height="130" rx="3"/>
+            <line class="pds-od-axis" id="pds-od-x" marker-end="url(#pds-od-arrow)"/>
+            <line class="pds-od-axis" id="pds-od-y" marker-end="url(#pds-od-arrow)"/>
+            <circle class="pds-od-dot" id="pds-od-dot" r="5"/>
+            <text class="pds-od-label" id="pds-od-x-label" text-anchor="middle">X</text>
+            <text class="pds-od-label" id="pds-od-y-label" text-anchor="middle">Y</text>
+            <text class="pds-od-label" id="pds-od-zero" text-anchor="middle">0,0</text>
+            <text class="pds-od-edge" x="105" y="166" text-anchor="middle">FRONT · OPERATOR</text>
+          </svg>
+        </div>
+        <p class="pds-note">Changing the corner moves the studs: their X and Y stay the same numbers, measured from the new corner.</p>
       </section>
 
     </div>

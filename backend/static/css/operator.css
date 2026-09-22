@@ -4677,7 +4677,7 @@ body.kiosk .pd-part-delete-btn { opacity: 1; }
 }
 
 /* ── Part Settings modal (manager part designer) ──
-   Three tabs over one form. The panels share one grid cell, so the modal is as
+   Four tabs over one form. The panels share one grid cell, so the modal is as
    tall as its tallest tab and doesn't jump when switching; only the panel area
    scrolls when the window is shorter than that. */
 .wf-modal.pds-modal {
@@ -4767,7 +4767,7 @@ body.kiosk .pd-part-delete-btn { opacity: 1; }
 
 .pds-tabs {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 6px;
   border-bottom: 1px solid var(--line);
 }
@@ -5123,6 +5123,93 @@ body.kiosk .pd-part-delete-btn { opacity: 1; }
   fill: #5c7fa0;
 }
 
+/* Origin tab: four corner buttons laid out as the operator faces the bed, and a
+   drawing of the picked corner's 0,0. Red is the operator preview's origin dot. */
+.pds-origin {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 210px;
+  gap: 20px;
+  align-items: start;
+}
+
+.pds-corner-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 8px;
+  background: var(--bg-bottom);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.pds-corner-edge {
+  grid-column: 1 / -1;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-align: center;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.pds-corner-btn {
+  min-height: 44px;
+  padding: 0 10px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 700;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.pds-corner-btn.active {
+  background: var(--header-end);
+  border-color: var(--header-end);
+  color: #ffffff;
+}
+
+.pds-corner-btn:focus-visible {
+  outline: 2px solid var(--header-end);
+  outline-offset: 2px;
+}
+
+.pds-od-bed {
+  fill: #f3f7fb;
+  stroke: #b0c8dc;
+}
+
+.pds-od-axis {
+  stroke: #b4232f;
+  stroke-width: 2.5;
+}
+
+.pds-od-arrowhead,
+.pds-od-dot {
+  fill: #b4232f;
+}
+
+.pds-od-dot {
+  stroke: #ffffff;
+  stroke-width: 1.5;
+}
+
+.pds-od-label {
+  font-size: 11px;
+  font-weight: 700;
+  fill: #b4232f;
+}
+
+.pds-od-edge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  fill: var(--muted);
+}
+
 .pds-foot {
   display: flex;
   align-items: center;
@@ -5151,6 +5238,7 @@ body.kiosk .pd-part-delete-btn { opacity: 1; }
 
 @media (max-width: 600px) {
   .pds-heights,
+  .pds-origin,
   .pds-row {
     grid-template-columns: minmax(0, 1fr);
   }

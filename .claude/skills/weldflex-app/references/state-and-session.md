@@ -76,6 +76,18 @@ write sites in `app.py`, both just `"pause_points": []` — and read by nothing;
 not exist yet; see `docs/ARCHITECTURE.md`. Do not build anything that assumes
 this field means something.
 
+**`origin_corner` says which bed corner the studs are measured from**:
+`front_left` (the taught `zerozero`), `front_right`, `back_left` or
+`back_right`, with X/Y running inward from it. A record without it reads as
+`front_left` in `_recipes_enrich()`, so no migration writes it. On save it
+follows `di_check`'s keep-if-missing rule, because only the part designer sends
+it and the operator Parts editor's save must not re-corner a part. An unknown
+value is refused, not defaulted. **Stored studs are therefore not robot
+offsets.** Anything that moves to a stud must resolve it through
+`part_origin.resolve_studs()`/`resolve_point()` first, as `lua_builder`,
+`JobManager.load` and `/ui/parts/goto` do. The Single Shot record ignores the
+field; its target is always measured from `zerozero`.
+
 `_recipes_load()` auto-migrates any recipe missing an `id` by assigning a fresh
 UUID and re-saving. `_recipes_enrich()` derives `studs_count` and
 a human `updated_label` for display. `_parse_studs()` /

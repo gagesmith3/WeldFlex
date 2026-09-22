@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from lua_builder import DSC_CALIBRATED_ENV, STUD_RELOAD_MS_MAX, STUD_RELOAD_MS_MIN
+from part_origin import CORNERS
 from robot_service import WeldFlexRobotService
 
 WELD_LUA = Path(__file__).resolve().parents[1] / "programs" / "weld.lua"
@@ -46,13 +47,22 @@ def _input_attr(html: str, input_id: str, name: str) -> str:
 def test_every_settings_tab_controls_its_own_panel(client):
     html = _designer(client)
     tabs = re.findall(r'<button[^>]*\brole="tab"[^>]*>', html)
-    assert [_attr(tab, "data-tab") for tab in tabs] == ["heights", "weld", "motion"]
+    assert [_attr(tab, "data-tab") for tab in tabs] == ["heights", "weld", "motion", "origin"]
     for tab in tabs:
         name = _attr(tab, "data-tab")
         assert _attr(tab, "aria-controls") == f"pds-panel-{name}"
         panel = re.search(rf'<section[^>]*\bid="pds-panel-{name}"[^>]*>', html)
         assert panel, f"no panel for the {name} tab"
         assert _attr(panel.group(0), "data-tab") == name
+
+
+def test_the_origin_tab_offers_every_corner_part_origin_accepts(client):
+    """One button per corner, each posting a key the save route accepts."""
+    buttons = re.findall(r'<button[^>]*\bclass="pds-corner-btn"[^>]*>', _designer(client))
+    corners = [_attr(button, "data-corner") for button in buttons]
+    assert sorted(corners) == sorted(CORNERS)
+    for button, corner in zip(buttons, corners):
+        assert f"pdsSetCorner('{corner}')" in button
 
 
 def test_pressure_limit_is_weld_lua_press_limit(client):

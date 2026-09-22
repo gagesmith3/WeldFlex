@@ -26,7 +26,7 @@ at the repo root; that file is the spec, this one maps it onto the code.
 
 | Layer | Owns | Code |
 |---|---|---|
-| **Part Library** | Named parts, each an x/y stud list | `backend/recipes.json`, `/operator/parts` |
+| **Part Library** | Named parts, each an x/y stud list measured from one bed corner | `backend/recipes.json`, `/operator/parts` |
 | **Job Manager** | The current run: state, cycle count, controls, history | `backend/job_manager.py` |
 | **WeldFlex.lua** | The welding process on the controller | `programs/WeldFlex.lua` + `backend/lua_builder.py` |
 | **Robot Software** | Motion, IO, safety — Fairino's, not ours | `backend/robot_link.py` → `backend/robot_service.py` → vendor SDK |
@@ -106,6 +106,21 @@ Consequences worth knowing:
   builds `programs/single_shot.lua` with `build_single_shot_lua`: one cycle,
   one target from the `"system": "single_shot"` record in `recipes.json`, no
   home moves, and the same `RUN_MODE` marker. `weld.lua` feeds after the shot.
+- **A stud is stored the way the part is measured, and inlined the way the
+  robot needs it.** Each part saves an `origin_corner`, the bed corner it is
+  tooled against, and its X/Y run inward from that corner so they are never
+  negative. Before inlining, `lua_builder` resolves them through
+  `backend/part_origin.py` into offsets from the one taught point, `zerozero`,
+  at the bed's front-left. A right corner mirrors X against `WELDFLEX_BED_X_MM`
+  and a back corner mirrors Y against `WELDFLEX_BED_Y_MM`; both default to the
+  nominal 762 mm. Front-left studs are inlined unchanged. The other three corners
+  are computed, not taught, so they are only as accurate as the measured
+  stop-to-stop distances and how square wobj 2 sits to the bed edges; teaching a
+  point at each corner is the likely next step. Mirroring the studs is safe
+  where mirroring a frame would not be: a user frame has to stay right-handed
+  with +Z up, but a stud is a point welded with the tool vertical, and DSC only
+  uses the distances between studs. `JobManager.load` resolves the studs too,
+  so a stud that would flip across the bed is refused at load, not at Run.
 - `WeldFlex.lua` applies each stud position through
   `PointsOffsetEnable(0, ...)`, so percentage-mode `Lin` calls must use
   `Lin(point, speed, -1, 0, 0)`. Its final `0` means no *inline* offset; it is

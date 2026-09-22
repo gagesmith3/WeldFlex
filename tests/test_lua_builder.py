@@ -25,6 +25,7 @@ from lua_builder import (
     format_number,
     strip_lua_comments,
 )
+from part_origin import BedSpan
 
 # Most tests here are about something other than the run mode; they build live.
 LIVE = RunMode("live")
@@ -1283,6 +1284,57 @@ def test_a_single_shot_goes_where_a_part_stud_at_the_same_xy_goes(x, y):
     assert part["point"] == "zerozero"
     assert part["offset"] == pytest.approx([0, x, y, 63.5 + 76.2, 0, 0, 0], abs=5e-4)
     assert part["weld_xy"] == part["offset"][1:3]
+
+
+def test_a_back_right_part_parks_where_its_mirrored_bed_point_is():
+    """X/Y measured inward from the back-right stops reach the robot as offsets
+    from zerozero, and weld.lua's retract gets the same resolved numbers — it
+    reuses weldX/weldY, so it follows without a change of its own."""
+    heights = {"safe_z": 60.0, "part_z": 0.0}
+    part = _stud_approach(build_weldflex_lua(
+        [{"x": 100, "y": 50}], cycles=1, run_mode=LIVE,
+        origin_corner="back_right", bed_span=BedSpan(760.0, 750.0), **heights,
+    ))
+    assert part["point"] == "zerozero"
+    assert part["offset"] == pytest.approx([0, 660, 700, 60, 0, 0, 0], abs=5e-4)
+    assert part["weld_xy"] == part["offset"][1:3]
+    # The same place a single shot aimed at those bed coordinates goes.
+    assert part == _stud_approach(build_single_shot_lua(660, 700, cycles=1, run_mode=LIVE, **heights))
+
+
+def test_a_front_left_part_never_reads_the_bed_span():
+    studs = [{"x": 10, "y": -20.5}, {"x": 373, "y": 1.25}]
+    assert (
+        build_weldflex_lua(studs, cycles=2, run_mode=LIVE, bed_span=BedSpan(1.0, 1.0)).text
+        == build_weldflex_lua(studs, cycles=2, run_mode=LIVE).text
+    )
+
+
+def test_mirroring_a_part_keeps_its_dynamic_stud_legs(monkeypatch):
+    """DSC times each leg from the distance between studs, which a mirror keeps."""
+    monkeypatch.setenv("WELDFLEX_DSC_CALIBRATED", "1")
+    monkeypatch.setenv("WELDFLEX_DSC_RATE_100_PCT_MMS", "200")
+    monkeypatch.setenv("WELDFLEX_DSC_FIXED_OVERHEAD_MS", "150")
+    monkeypatch.setenv("WELDFLEX_DSC_SAFETY_MARGIN_MS", "0")
+    monkeypatch.setenv("WELDFLEX_FEED_PULSE_MS", "250")
+
+    built = build_weldflex_lua(
+        [{"x": 0, "y": 0}, {"x": 20, "y": 0}, {"x": 120, "y": 0}],
+        cycles=1, run_mode=LIVE, dsc_enabled=True, stud_reload_ms=600,
+        origin_corner="back_right", bed_span=BedSpan(762.0, 762.0),
+    )
+
+    assert "{x=762, y=762}," in built.text
+    assert "{x=742, y=762, s2sSpeed=50, s2sWaitMs=0}," in built.text
+    assert "{x=642, y=762, s2sSpeed=100, s2sWaitMs=0}," in built.text
+
+
+def test_the_builder_refuses_a_stud_that_would_flip_across_the_bed():
+    with pytest.raises(ValueError, match="Stud 2"):
+        build_weldflex_lua(
+            [{"x": 1, "y": 1}, {"x": 800, "y": 0}], cycles=1, run_mode=LIVE,
+            origin_corner="front_right", bed_span=BedSpan(762.0, 762.0),
+        )
 
 
 def test_single_shot_marker_line_really_is_the_boundary_dwell():

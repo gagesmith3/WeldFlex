@@ -46,6 +46,7 @@ from lua_builder import (
     build_weldflex_lua,
     strip_lua_comments,
 )
+from part_origin import DEFAULT_CORNER, parse_corner, resolve_studs
 
 log = logging.getLogger("weldflex.job")
 
@@ -283,6 +284,7 @@ class _Session:
     speed: float | int | None = None
     dsc_enabled: bool = False
     stud_reload_ms: int | None = None
+    origin_corner: str = DEFAULT_CORNER
     started_at: str | None = None
     started_ts: float | None = None
     ended_at: str | None = None
@@ -357,6 +359,7 @@ class JobManager:
         speed: float | int | None = None,
         dsc_enabled: bool = False,
         stud_reload_ms: int | None = None,
+        origin_corner: str = DEFAULT_CORNER,
     ) -> JobSnapshot:
         """Queue a part (or a single shot) for running.
 
@@ -367,7 +370,10 @@ class JobManager:
           forgets gets a TypeError rather than a guess.
         * **The recipe** — `di_check` (False skips the DI0/DI1 checks, live
           runs included), plus the geometry and press settings from `safe_z`
-          on down.
+          on down. `origin_corner` is the bed corner the studs are measured
+          from; a part's studs are resolved against it here as well as at
+          build time, so a stud that would flip across the bed is refused at
+          load rather than when Run is pressed. Single shots ignore it.
         * **The entry point** — `kind` picks the builder (`JOB_KINDS`), and
           `gate_mode` what happens between cycles. "single_shot" jobs pass a
           one-point `studs` list (`[{"x":..., "y":...}]`).
@@ -384,6 +390,12 @@ class JobManager:
             raise JobError(f"Unknown arm mode {arm_mode!r}; every run must be live or dry")
         if not isinstance(di_check, bool):
             raise JobError(f"DI check must be true or false, got {di_check!r}")
+        try:
+            origin_corner = parse_corner(origin_corner, strict=True)
+            if kind == "part":
+                resolve_studs(studs, origin_corner)
+        except ValueError as exc:
+            raise JobError(str(exc)) from None
         cycles = max(1, int(cycles))
         with self._lock:
             state = self._state_locked()
@@ -410,13 +422,17 @@ class JobManager:
                 speed=speed,
                 dsc_enabled=bool(dsc_enabled),
                 stud_reload_ms=stud_reload_ms,
+                origin_corner=origin_corner,
             )
             snap = self._snapshot_locked()
-        log.info("job loaded run_id=%s kind=%s part=%r cycles=%d gate=%s arm=%s di_check=%s studs=%d",
-                 run_id, kind, part_name, cycles, gate_mode, arm_mode, di_check, len(studs))
+        log.info("job loaded run_id=%s kind=%s part=%r cycles=%d gate=%s arm=%s di_check=%s "
+                 "origin=%s studs=%d",
+                 run_id, kind, part_name, cycles, gate_mode, arm_mode, di_check,
+                 origin_corner, len(studs))
         self._event(run_id, "load", {"part_id": part_id, "part_name": part_name,
                                      "kind": kind, "cycles": cycles, "gate_mode": gate_mode,
                                      "arm_mode": arm_mode, "di_check": di_check,
+                                     "origin_corner": origin_corner,
                                      "studs": len(studs)})
         return snap
 
@@ -655,6 +671,7 @@ class JobManager:
                 speed = sess.speed
                 dsc_enabled = sess.dsc_enabled
                 stud_reload_ms = sess.stud_reload_ms
+                origin_corner = sess.origin_corner
 
             ft_config = self._robot.ft_config()
             if ft_config.get("company") != 24 or ft_config.get("device") != 0:
@@ -700,6 +717,7 @@ class JobManager:
                     speed=speed,
                     dsc_enabled=dsc_enabled,
                     stud_reload_ms=stud_reload_ms,
+                    origin_corner=origin_corner,
                 )
 
             tmp_dir = tempfile.mkdtemp()

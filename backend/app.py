@@ -36,6 +36,7 @@ from lua_builder import (
     STUD_RELOAD_MS_MAX,
     STUD_RELOAD_MS_MIN,
 )
+import part_origin
 from robot_service import STATE_MAP as ROBOT_STATE_MAP, WeldFlexRobotService
 
 # stderr, which systemd hands to journald. The unit already sets PYTHONUNBUFFERED=1,
@@ -213,6 +214,8 @@ def _recipes_enrich(recipes):
             'di_check': bool(r.get('di_check', True)),
             'dsc_enabled': bool(r.get('dsc_enabled', False)),
             'stud_reload_ms': _parse_stud_reload_ms(r.get('stud_reload_ms')),
+            # Parts saved before corners existed were all measured from zerozero.
+            'origin_corner': part_origin.parse_corner(r.get('origin_corner')),
         })
     return result
 
@@ -311,14 +314,40 @@ def _parse_target(x_raw, y_raw):
         point[axis] = value
     return [point], None
 
-def _preview_data(studs):
+_PREVIEW_PX = 200  # partials/studs_preview.html's plot square, inside a 20 px margin
+
+def _preview_data(studs, origin_corner=part_origin.DEFAULT_CORNER):
+    """Top-down plot of where a part's studs sit on the bed.
+
+    Drawn the way the operator faces the bed and the part designer draws it:
+    front at the bottom, zerozero's front-left corner bottom-left, +X right. The
+    0,0 dot and the axis numbers follow the part's own corner. It plots the
+    nominal bed and refuses nothing — the job load is where a stud is checked.
+    """
+    corner = part_origin.parse_corner(origin_corner)
+    span = part_origin.BedSpan(BED_MM, BED_MM)
+    scale = _PREVIEW_PX / BED_MM
+    points = []
+    for i, s in enumerate(studs):
+        bed_x, bed_y = part_origin.to_bed(s['x'], s['y'], corner, span)
+        points.append({'x_plot': round(bed_x * scale, 2),
+                       'y_plot': round((BED_MM - bed_y) * scale, 2),
+                       'index': i + 1})
+    from_right = corner.endswith('_right')
+    from_back = corner.startswith('back_')
+    ticks = [0.0, BED_MM / 2, BED_MM]  # plot positions left→right / top→bottom
     return {
-        'graph_points': [
-            {'x_plot': round((BED_MM - s['x']) / BED_MM * 200, 2),
-             'y_plot': round((BED_MM - s['y']) / BED_MM * 200, 2),
-             'index': i + 1}
-            for i, s in enumerate(studs)
-        ]
+        'graph_points': points,
+        'origin': {'cx': 20 + (_PREVIEW_PX if from_right else 0),
+                   'cy': 20 + (0 if from_back else _PREVIEW_PX)},
+        # Distance from the part's corner at each tick: along the bottom edge for
+        # X, down the right edge for Y.
+        'x_labels': [{'pos': 20 + t * scale,
+                      'text': format_number(BED_MM - t if from_right else t)}
+                     for t in ticks],
+        'y_labels': [{'pos': 20 + t * scale,
+                      'text': format_number(t if from_back else BED_MM - t)}
+                     for t in ticks],
     }
 
 def _on_job_finish(record: dict) -> None:
@@ -553,6 +582,15 @@ def ui_recipes_save():
     di_check_raw = request.form.get('di_check')
     # A form without the field keeps the saved value instead of resetting it.
     di_check = None if di_check_raw is None else di_check_raw.strip() != '0'
+    # Same for the origin corner: only the part designer sends it, and the
+    # operator Parts editor's save must not reset a part to front-left.
+    origin_corner_raw = request.form.get('origin_corner')
+    try:
+        origin_corner = (None if origin_corner_raw is None
+                         else part_origin.parse_corner(origin_corner_raw, strict=True))
+    except ValueError as exc:
+        return render_template('partials/command_result.html', ok=False,
+                               title='Save Recipe', payload={'error': str(exc)})
 
     studs_json = (request.form.get('studs_json') or '').strip()
     studs_text = (request.form.get('studs_text') or '').strip()
@@ -596,6 +634,8 @@ def ui_recipes_save():
             existing['pressure_setting'] = pressure_setting
             if di_check is not None:
                 existing['di_check']     = di_check
+            if origin_corner is not None:
+                existing['origin_corner'] = origin_corner
             existing['speed']            = speed
             existing['dsc_enabled']      = dsc_enabled
             existing['stud_reload_ms']   = stud_reload_ms
@@ -615,6 +655,7 @@ def ui_recipes_save():
                 'substrate': substrate,
                 'pressure_setting': pressure_setting,
                 'di_check': True if di_check is None else di_check,
+                'origin_corner': origin_corner or part_origin.DEFAULT_CORNER,
                 'speed': speed,
                 'dsc_enabled': dsc_enabled,
                 'stud_reload_ms': stud_reload_ms,
@@ -661,7 +702,8 @@ def ui_studs_preview():
     studs, err = _parse_studs(text)
     if err:
         return render_template('partials/studs_preview.html', ok=False, preview={'error': err})
-    return render_template('partials/studs_preview.html', ok=True, preview=_preview_data(studs))
+    return render_template('partials/studs_preview.html', ok=True,
+                           preview=_preview_data(studs, request.args.get('origin_corner')))
 
 @app.route('/ui/manager/parts-list')
 def ui_manager_parts_list():
@@ -772,6 +814,7 @@ def ui_job_load():
             speed=speed,
             dsc_enabled=recipe.get("dsc_enabled", False),
             stud_reload_ms=recipe.get("stud_reload_ms"),
+            origin_corner=recipe["origin_corner"],
         )
     except JobError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 409
@@ -985,8 +1028,10 @@ def ui_single_shot_move_home():
 def ui_parts_goto():
     """Move the robot to a single stud's X/Y at retract height.
 
-    Takes x/y/retract_z/part_z straight from the request (the designer's in-memory
-    state, which may be unsaved) rather than the persisted recipe.
+    Takes x/y/retract_z/part_z/origin_corner straight from the request (the
+    designer's in-memory state, which may be unsaved) rather than the persisted
+    recipe. X/Y are measured from the part's corner and resolved to zerozero
+    offsets the same way a run's studs are.
     """
     if job.snapshot().active:
         return render_template(
@@ -1000,6 +1045,14 @@ def ui_parts_goto():
         return render_template(
             "partials/command_result.html", ok=False, title="Goto",
             payload={"error": "Missing or invalid stud X/Y."},
+        )
+    try:
+        bed_x, bed_y = part_origin.resolve_point(x, y, request.form.get("origin_corner"),
+                                                 what="Stud")
+    except ValueError as exc:
+        return render_template(
+            "partials/command_result.html", ok=False, title="Goto",
+            payload={"error": str(exc)},
         )
     retract_z = float(request.form.get("retract_z") or 10.0)
     part_z = float(request.form.get("part_z") or 0.0)
@@ -1016,7 +1069,7 @@ def ui_parts_goto():
         "wobj = 2\n"
         "speed = 25\n"
         f"APPROACH_Z = {approach_z}\n"
-        f"PointsOffsetEnable(0, {x}, {y}, APPROACH_Z, 0, 0, 0)\n"
+        f"PointsOffsetEnable(0, {bed_x}, {bed_y}, APPROACH_Z, 0, 0, 0)\n"
         "PTP(zerozero, speed, -1, 0)\n"
         "PointsOffsetDisable()\n"
     )

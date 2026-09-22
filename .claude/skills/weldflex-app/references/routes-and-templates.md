@@ -111,15 +111,17 @@ robot round trips a second per viewer. See `docs/ROBOT_TELEMETRY.md`,
   load. `app._hide_system_recipes()` drops it from every parts listing,
   `/ui/job/load` refuses it, and a save or delete by name skips it.
 - **The target is entered as separate `target_x`/`target_y` fields**, in mm
-  from `zerozero` like a part's studs: the on-screen number pad has no comma
-  key, so a single `"X, Y"` box cannot be filled in on the kiosk.
+  from `zerozero`, like the studs of a front-left part. A shot has no origin
+  corner. The fields are separate because the on-screen number pad has no
+  comma key, so a single `"X, Y"` box cannot be filled in on the kiosk.
   `/ui/recipes/save` holds both to `app.BED_MM` (0–762 mm, the part designer's
   `BED`) and refuses a bad target with an error toast instead of saving no
   target; an unparseable `studs_text` from the parts page is refused the same
   way. The modal only closes and reloads when the response carries
   `X-Recipe-Id`. `tests/test_lua_builder.py` resolves both programs' approach
-  offsets to check a shot and a part stud at the same X/Y park in the same
-  place.
+  offsets to check a shot and a front-left part's stud at the same X/Y park in
+  the same place, and that a back-right part's stud parks where a shot at its
+  mirrored bed point does.
 - **`single_shot.lua`** is structurally parallel to `WeldFlex.lua` but targets
   one point: PTP straight to the target at safe height, `weld.lua` once
   (feeding afterwards like any stud), then it stays parked. It never moves to

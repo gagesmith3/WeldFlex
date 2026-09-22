@@ -16,6 +16,7 @@ let _state = {
   dsc_enabled: false,
   stud_reload_ms: 600,
   di_check: true,
+  origin_corner: 'front_left',
   isDirty: false,
 };
 
@@ -103,17 +104,42 @@ function pdInit() {
   });
 }
 
-// ── Coordinate helpers (physical ↔ SVG) ──────────────────────────────────────
-// Physical 0,0 (zerozero) is at the bottom-left corner of the 762×762 bed.
-// SVG 0,0 is top-left, so we mirror the Y axis only.
+// ── Coordinate helpers (part ↔ SVG) ──────────────────────────────────────────
+// The bed is drawn as the operator faces it: front at the bottom, zerozero at
+// the bottom-left. A part's X/Y are measured inward from its origin corner, so a
+// right corner mirrors X and a back corner mirrors Y. SVG 0,0 is top-left.
 
 const BED = 762; // 30in bed, in mm
 const MM_PER_INCH = 25.4;
 
+// Same keys as part_origin.CORNERS; tests/test_part_origin.py holds them together.
+const PD_CORNERS = ['front_left', 'front_right', 'back_left', 'back_right'];
+const PD_CORNER_LABELS = {
+  front_left: 'Front-left',
+  front_right: 'Front-right',
+  back_left: 'Back-left',
+  back_right: 'Back-right',
+};
+
+function normalizeCorner(value) { return PD_CORNERS.includes(value) ? value : PD_CORNERS[0]; }
+function cornerLabel(corner = _state.origin_corner) { return PD_CORNER_LABELS[normalizeCorner(corner)]; }
+function cornerMirrors(corner = _state.origin_corner) {
+  const c = normalizeCorner(corner);
+  return { x: c.endsWith('_right'), y: c.startsWith('back_') };
+}
+
 // Length helpers default to the part's units; the Part Settings modal passes its
 // own until Apply.
-function toSVG(px, py)  { return { x: px, y: BED - py }; }
-function toPhys(sx, sy) { return { x: sx, y: BED - sy }; }
+function toSVG(px, py, corner = _state.origin_corner) {
+  const m = cornerMirrors(corner);
+  const bedY = m.y ? BED - py : py;
+  return { x: m.x ? BED - px : px, y: BED - bedY };
+}
+function toPhys(sx, sy, corner = _state.origin_corner) {
+  const m = cornerMirrors(corner);
+  const bedY = BED - sy;
+  return { x: m.x ? BED - sx : sx, y: m.y ? BED - bedY : bedY };
+}
 function isInches(units = _state.units) { return units === 'in'; }
 function lengthFactor(units = _state.units) { return isInches(units) ? MM_PER_INCH : 1; }
 function lengthStep(units = _state.units) { return isInches(units) ? '0.0001' : '0.001'; }
@@ -131,6 +157,7 @@ function buildGrid() {
   if (!g) return;
   g.innerHTML = '';
   const SIZE = BED, STEP = 50;
+  const m = cornerMirrors();
 
   const gridLines = Array.from(
     { length: Math.floor(SIZE / STEP) + 1 },
@@ -146,41 +173,64 @@ function buildGrid() {
     g.appendChild(svgEl('line', {x1:i, y1:0,    x2:i,    y2:SIZE, stroke:color, 'stroke-width':w}));
     g.appendChild(svgEl('line', {x1:0, y1:i,    x2:SIZE, y2:i,    stroke:color, 'stroke-width':w}));
 
-    // Labels for X and Y axes
+    // Axis labels count from the part's corner, along the two edges that meet
+    // there: X on the front or back edge, Y on the left or right edge.
     if (major && i > 0 && i < SIZE) {
-      // X-axis label (bottom edge: i=0 is 0 at zerozero, i=762 is 762)
-      const physX = formatLength(i);
       const tx = svgEl('text', {
-        x: i + 4, y: SIZE - 6,
+        x: i + 4, y: m.y ? 16 : SIZE - 6,
         fill:'#7c95a8', 'font-size':'13', 'font-weight':'600', 'font-family':'monospace',
       });
-      tx.textContent = `${physX}`;
+      tx.textContent = formatLength(m.x ? SIZE - i : i);
       g.appendChild(tx);
 
-      // Y-axis label (left edge: i=0 is 762, i=762 is 0 at zerozero)
-      const physY = formatLength(BED - i);
       const ty = svgEl('text', {
-        x: 4, y: i - 4,
+        x: m.x ? SIZE - 4 : 4, y: i - 4, 'text-anchor': m.x ? 'end' : 'start',
         fill:'#7c95a8', 'font-size':'13', 'font-weight':'600', 'font-family':'monospace',
       });
-      ty.textContent = `${physY}`;
+      ty.textContent = formatLength(m.y ? i : SIZE - i);
       g.appendChild(ty);
     }
   }
 
-  // Origin marker at SVG bottom-left (physical X=0, Y=0 — zerozero)
-  const ox = svgEl('text', {
-    x: 6, y: SIZE - 20,
-    fill:'#5c7fa0', 'font-size':'14', 'font-weight':'700', 'font-family':'monospace',
-  });
-  ox.textContent = `zerozero (${formatLength(0)}, ${formatLength(0)})`;
-  g.appendChild(ox);
-
-  // Bed border
+  // Bed border, under the origin arrows that run along it.
   g.appendChild(svgEl('rect', {
     x:0, y:0, width:SIZE, height:SIZE,
     fill:'none', stroke:'#b0c8dc', 'stroke-width':1,
   }));
+
+  // The part's 0,0: the corner it is tooled against, with X and Y running inward.
+  // Sized to stay legible on the ~190px kiosk bed without crowding the studs.
+  const ORIGIN = '#b4232f', AXIS = 130;
+  const ox = m.x ? SIZE : 0, oy = m.y ? 0 : SIZE;
+  const dx = m.x ? -1 : 1, dy = m.y ? 1 : -1;
+  const origin = svgEl('g', {opacity:0.75});
+  const defs = svgEl('defs');
+  const arrow = svgEl('marker', {
+    id:'pd-origin-arrow', viewBox:'0 0 10 10', refX:5, refY:5,
+    markerWidth:4, markerHeight:4, orient:'auto-start-reverse',
+  });
+  arrow.appendChild(svgEl('path', {d:'M0 0 10 5 0 10z', fill:ORIGIN}));
+  defs.appendChild(arrow);
+  origin.appendChild(defs);
+  for (const [x2, y2] of [[ox + dx * AXIS, oy], [ox, oy + dy * AXIS]]) {
+    origin.appendChild(svgEl('line', {
+      x1:ox, y1:oy, x2, y2, stroke:ORIGIN, 'stroke-width':4,
+      'marker-end':'url(#pd-origin-arrow)',
+    }));
+  }
+  origin.appendChild(svgEl('circle', {cx:ox, cy:oy, r:10, fill:ORIGIN, stroke:'#ffffff', 'stroke-width':3}));
+
+  const labelAttrs = {fill:ORIGIN, 'font-size':'24', 'font-weight':'600', 'font-family':'monospace'};
+  const axisX = svgEl('text', {...labelAttrs, x: ox + dx * (AXIS - 10), y: oy + dy * 32 + 9, 'text-anchor':'middle'});
+  axisX.textContent = 'X';
+  const axisY = svgEl('text', {...labelAttrs, x: ox + dx * 32, y: oy + dy * (AXIS - 10) + 9, 'text-anchor':'middle'});
+  axisY.textContent = 'Y';
+  const zero = svgEl('text', {
+    ...labelAttrs, x: ox + dx * 28, y: oy + dy * 44 + 9, 'text-anchor': m.x ? 'end' : 'start',
+  });
+  zero.textContent = '0,0';
+  origin.append(axisX, axisY, zero);
+  g.appendChild(origin);
 }
 
 // ── Parts list (real data) ────────────────────────────────────────────────────
@@ -277,6 +327,7 @@ function loadPart(id, name, idx) {
         _state.dsc_enabled = data.recipe.dsc_enabled === true;
         _state.stud_reload_ms = normalizeStudReloadMs(data.recipe.stud_reload_ms);
         _state.di_check = data.recipe.di_check !== false;
+        _state.origin_corner = normalizeCorner(data.recipe.origin_corner);
       }
       renderPoints();
       renderStudList();
@@ -358,7 +409,7 @@ function renderPoints() {
 function showTooltip(p) {
   const tip = document.getElementById('pd-tooltip');
   if (!tip) return;
-  tip.innerHTML = `<strong>Point ${p.id}</strong><br>X: ${formatLength(p.x)} ${unitLabel()} &nbsp; Y: ${formatLength(p.y)} ${unitLabel()} from zerozero`;
+  tip.innerHTML = `<strong>Point ${p.id}</strong><br>X: ${formatLength(p.x)} ${unitLabel()} &nbsp; Y: ${formatLength(p.y)} ${unitLabel()} from the ${cornerLabel().toLowerCase()} corner`;
   tip.classList.remove('pd-hidden');
 }
 
@@ -419,6 +470,7 @@ function pdStartNewPart(name) {
   _state.dsc_enabled   = false;
   _state.stud_reload_ms = 600;
   _state.di_check      = true;
+  _state.origin_corner = PD_CORNERS[0];
 
   const titleEl = document.getElementById('pd-canvas-part-title');
   if (titleEl) titleEl.textContent = name;
@@ -468,6 +520,7 @@ function pdSave() {
   const dsc_enabled = _state.dsc_enabled === true ? '1' : '0';
   const stud_reload_ms = normalizeStudReloadMs(_state.stud_reload_ms);
   const di_check = _state.di_check === false ? '0' : '1';
+  const origin_corner = normalizeCorner(_state.origin_corner);
 
   const body = new URLSearchParams({
     recipe_name: name,
@@ -483,6 +536,7 @@ function pdSave() {
     dsc_enabled,
     stud_reload_ms,
     di_check,
+    origin_corner,
   });
   if (_state.activeId) body.set('recipe_id', _state.activeId);
 
@@ -538,14 +592,14 @@ function pdConfirmDelete() {
         _state.activePart    = null;
         _state.points        = [];
         _state.selectedPoint = null;
+        _state.origin_corner = PD_CORNERS[0];
         const titleEl = document.getElementById('pd-canvas-part-title');
         if (titleEl) titleEl.textContent = 'No Part Selected';
+        buildGrid();
         renderPoints();
         renderStudList();
         setCoords(null);
         pdSetDirty(false);
-        const coords = document.getElementById('pd-coords');
-        if (coords) coords.textContent = 'zerozero reference · 762 × 762 mm bed';
       }
       fetchParts();
     });
@@ -556,9 +610,10 @@ function pdConfirmDelete() {
 function setCoords(p) {
   const el = document.getElementById('pd-coords');
   if (!el) return;
+  const corner = cornerLabel().toLowerCase();
   el.textContent = p
-    ? `Point ${p.id}  ·  X: ${formatLength(p.x)} ${unitLabel()}  ·  Y: ${formatLength(p.y)} ${unitLabel()} from zerozero`
-    : `zerozero reference · ${formatLength(BED)} × ${formatLength(BED)} ${unitLabel()} bed`;
+    ? `Point ${p.id}  ·  X: ${formatLength(p.x)} ${unitLabel()}  ·  Y: ${formatLength(p.y)} ${unitLabel()} from ${corner}`
+    : `0,0 = ${corner} corner · ${formatLength(BED)} × ${formatLength(BED)} ${unitLabel()} bed`;
 }
 
 // ── Stud list ─────────────────────────────────────────────────────────────────
@@ -709,7 +764,10 @@ function pdGotoStud(p, btn) {
   const part_z = _state.part_z !== undefined ? _state.part_z : 0.0;
   fetch('/ui/parts/goto', {
     method: 'POST',
-    body: new URLSearchParams({ x: p.x, y: p.y, retract_z, part_z }),
+    body: new URLSearchParams({
+      x: p.x, y: p.y, retract_z, part_z,
+      origin_corner: normalizeCorner(_state.origin_corner),
+    }),
   })
     .then(r => r.text())
     .then(html => {
@@ -728,15 +786,17 @@ function svgEl(tag, attrs = {}) {
 }
 
 // ── Part Settings modal ───────────────────────────────────────────────────────
-// Three tabs over one form. Nothing reaches _state until Apply & Save, so Cancel,
-// Esc and a backdrop tap discard every edit, the units switch included. Limits are
-// read from the inputs' own min/max, which tests hold to weld.lua and lua_builder.
+// Four tabs over one form. Nothing reaches _state until Apply & Save, so Cancel,
+// Esc and a backdrop tap discard every edit, the units switch and the origin
+// corner included. Limits are read from the inputs' own min/max, which tests
+// hold to weld.lua and lua_builder.
 
-const PDS_TABS = ['heights', 'weld', 'motion'];
+const PDS_TABS = ['heights', 'weld', 'motion', 'origin'];
 const PDS_LENGTH_IDS = ['pd-modal-safe-z', 'pd-modal-retract-z', 'pd-modal-part-z'];
 
 let _pdsTab = 'heights';      // reopens on the tab last used
 let _pdsUnits = 'mm';         // the modal's units until Apply
+let _pdsCorner = PD_CORNERS[0]; // the modal's origin corner until Apply
 let _pdsShowErrors = false;   // set by the first Apply attempt
 
 function pdsEl(id) { return document.getElementById(id); }
@@ -771,6 +831,7 @@ function pdOpenJobSettingsModal() {
   if (!modal || (!_state.activeId && !_state.activePart)) return;
 
   _pdsUnits = _state.units === 'in' ? 'in' : 'mm';
+  _pdsCorner = normalizeCorner(_state.origin_corner);
   _pdsShowErrors = false;
   pdsText('pd-modal-settings-part-name', _state.activePart || 'Untitled');
 
@@ -810,9 +871,12 @@ function pdSaveJobSettingsModal() {
   }
 
   const unitsChanged = _pdsUnits !== _state.units;
+  // A new corner keeps the studs' numbers, so they move: redraw them.
+  const cornerChanged = values.origin_corner !== normalizeCorner(_state.origin_corner);
   Object.assign(_state, values, { units: _pdsUnits });
-  if (unitsChanged) {
+  if (unitsChanged || cornerChanged) {
     buildGrid();
+    renderPoints();
     renderStudList();
     setCoords(_state.points.find(point => point.id === _state.selectedPoint) || null);
   }
@@ -865,6 +929,8 @@ function pdsReadForm() {
   else if (!values.dsc_enabled) values.stud_reload_ms = normalizeStudReloadMs(reloadMs);
   else errors['pd-modal-stud-reload-ms'] = `Enter ${reloadMin} to ${reloadMax} ms.`;
 
+  values.origin_corner = normalizeCorner(_pdsCorner);
+
   return { values, errors };
 }
 
@@ -882,6 +948,7 @@ function pdsRefresh() {
   pdsText('pds-sum-heights', `Safe ${raw('pd-modal-safe-z')} · Part ${raw('pd-modal-part-z')} ${unitLabel(_pdsUnits)}`);
   pdsText('pds-sum-weld', `${raw('pd-modal-stud-type')} · ${raw('pd-modal-pressure')} lbf · DI ${diOn ? 'on' : 'off'}`);
   pdsText('pds-sum-motion', `${raw('pd-modal-speed')}% · DSC ${dscOn ? 'on' : 'off'}`);
+  pdsText('pds-sum-origin', cornerLabel(_pdsCorner));
 
   const diNote = pdsEl('pds-di-note');
   if (diNote) diNote.hidden = diOn;
@@ -913,7 +980,38 @@ function pdsRefresh() {
   pdsText('pds-foot-msg', errorCount ? `Fix ${errorCount} field${errorCount === 1 ? '' : 's'} before saving.` : '');
 
   pdsDrawHeights();
+  pdsDrawOrigin();
   return form;
+}
+
+function pdsSetCorner(corner) {
+  _pdsCorner = normalizeCorner(corner);
+  pdsRefresh();
+}
+
+// The Origin tab: the picked corner's button, and a drawing of the bed as the
+// operator faces it with that corner's 0,0 and X/Y arrows running inward.
+function pdsDrawOrigin() {
+  document.querySelectorAll('#pd-settings-modal .pds-corner-btn').forEach(btn => {
+    const on = btn.dataset.corner === _pdsCorner;
+    btn.classList.toggle('active', on);
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
+
+  const m = cornerMirrors(_pdsCorner);
+  const [left, right, top, bottom, length] = [40, 170, 20, 150, 72];  // the bed rect in the SVG
+  const x0 = m.x ? right : left, y0 = m.y ? top : bottom;
+  const dx = m.x ? -1 : 1, dy = m.y ? 1 : -1;  // inward
+  const place = (id, attrs) => {
+    const el = pdsEl(id);
+    if (el) Object.entries(attrs).forEach(([name, value]) => el.setAttribute(name, value));
+  };
+  place('pds-od-x', { x1: x0, y1: y0, x2: x0 + dx * length, y2: y0 });
+  place('pds-od-y', { x1: x0, y1: y0, x2: x0, y2: y0 + dy * length });
+  place('pds-od-dot', { cx: x0, cy: y0 });
+  place('pds-od-x-label', { x: x0 + dx * (length - 6), y: y0 + dy * 12 + 4 });
+  place('pds-od-y-label', { x: x0 + dx * 12, y: y0 + dy * (length - 6) + 4 });
+  place('pds-od-zero', { x: x0 + dx * 22, y: y0 + dy * 20 + 4 });
 }
 
 function pdsDrawHeights() {

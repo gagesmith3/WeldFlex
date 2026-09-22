@@ -5085,7 +5085,7 @@ body.kiosk .pd-part-delete-btn { opacity: 1; }
   stroke: var(--header-end);
 }
 
-.pds-zd-plane.is-goto {
+.pds-zd-plane.is-search {
   stroke: #7c95a8;
 }
 

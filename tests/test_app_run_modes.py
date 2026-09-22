@@ -194,7 +194,7 @@ def goto(run_app, monkeypatch):
                         lambda path: uploaded.append(Path(path).read_text(encoding="utf-8")))
 
     def post(**form):
-        response = run_app.client.post("/ui/parts/goto", data={"retract_z": "10", "part_z": "0", **form})
+        response = run_app.client.post("/ui/parts/goto", data={"safe_z": "60", "part_z": "0", **form})
         return response.get_data(as_text=True), uploaded
 
     return post
@@ -203,13 +203,22 @@ def goto(run_app, monkeypatch):
 def test_goto_moves_to_the_stud_measured_from_the_parts_corner(goto):
     _, uploaded = goto(x="100", y="50", origin_corner="back_right")
     (program,) = uploaded
-    assert "PointsOffsetEnable(0, 662.0, 712.0, APPROACH_Z, 0, 0, 0)" in program
+    assert "PointsOffsetEnable(0, 662.0, 712.0, HIGH_Z, 0, 0, 0)" in program
     assert "PTP(zerozero, speed, -1, 0)" in program
+
+
+def test_goto_parks_at_safe_z_not_the_search_height(goto):
+    """⌖ travels at Safe Z, the height that clears fixtures (owner, 2026-09-22).
+    The Search Height (retract_z) is only where a run's search starts."""
+    _, uploaded = goto(x="100", y="50", safe_z="127", part_z="2.54", retract_z="50.8")
+    (program,) = uploaded
+    assert "HIGH_Z = 129.54" in program
+    assert "50.8" not in program and "53.34" not in program
 
 
 def test_goto_without_a_corner_is_front_left(goto):
     _, uploaded = goto(x="100", y="50")
-    assert "PointsOffsetEnable(0, 100.0, 50.0, APPROACH_Z, 0, 0, 0)" in uploaded[0]
+    assert "PointsOffsetEnable(0, 100.0, 50.0, HIGH_Z, 0, 0, 0)" in uploaded[0]
 
 
 def test_goto_refuses_a_stud_that_would_flip_across_the_bed(goto):

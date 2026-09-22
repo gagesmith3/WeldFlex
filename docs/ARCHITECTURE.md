@@ -164,9 +164,29 @@ Gap 2 is the one most likely to mislead: the data model looks like it supports
 per-stud waits and it does not.
 
 **Return-to-home is now built** (was gap 2 here as of 2026-07-28): a home
-approach runs before the cycle loop starts and a home return runs after the
-last cycle, both gated by `WeldFlex.lua`'s `USE_HOME_MOVE` flag. Do not
+approach runs before the cycle loop starts and a home return runs at the end of
+every cycle, both gated by `WeldFlex.lua`'s `USE_HOME_MOVE` flag. Do not
 describe this as missing.
+
+**A run never moves Z and X/Y together** (owner, 2026-09-22). Every move is
+straight up, straight down, or level at Safe Z. Both heights are measured up
+from `zerozero` in the workpiece frame:
+
+1. `homewf`, which is taught at Safe Z (`PART_Z + SAFE_Z`). Nothing offsets it.
+2. Level at Safe Z to above the stud.
+3. Straight down to the Search Height (`PART_Z + RETRACT_Z`). The recipe
+   still stores it as `retract_z`; the part designer labels it Search Height.
+4. `weld.lua`: search down from there, press, weld, then retract back to it.
+5. Straight up to Safe Z, then level to the next stud (step 2).
+
+After the last stud of a cycle, the head goes straight up and then level into
+`homewf`. The one case that breaks the rule is a recipe whose Safe Z is not the
+height `homewf` is taught at: the legs between home and the part then slope
+between the two heights. Nothing reads `homewf`'s height to catch that yet.
+
+The part designer's move-to-stud button (⌖) goes to the stud at Safe Z, not the
+Search Height, so it clears fixtures too. It is not bound by the rule above: it
+is a single `PTP` from wherever the head is, so it can move Z and X/Y together.
 
 ## Where to go next
 

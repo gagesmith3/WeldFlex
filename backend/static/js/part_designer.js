@@ -641,7 +641,7 @@ function renderStudList() {
       <input class="pd-stud-input" type="number" min="0" max="${formatLength(BED)}" step="${lengthStep()}" value="${formatLength(p.x)}" data-pid="${p.id}" data-axis="x" inputmode="none" data-kbd="num">
       <span class="pd-stud-label">Y</span>
       <input class="pd-stud-input" type="number" min="0" max="${formatLength(BED)}" step="${lengthStep()}" value="${formatLength(p.y)}" data-pid="${p.id}" data-axis="y" inputmode="none" data-kbd="num">
-      <button class="pd-stud-goto-btn" data-pid="${p.id}" title="Move robot to this stud (retract height)">⌖</button>
+      <button class="pd-stud-goto-btn" data-pid="${p.id}" title="Move robot above this stud at Safe Z">⌖</button>
       <button class="pd-stud-delete-btn" data-pid="${p.id}" title="Remove stud">×</button>
     </div>
   `).join('');
@@ -760,12 +760,13 @@ function renderStudList() {
 
 function pdGotoStud(p, btn) {
   if (btn) btn.disabled = true;
-  const retract_z = _state.retract_z !== undefined ? _state.retract_z : 10.0;
+  // Safe Z clears the fixtures; the Search Height is only for a run's search.
+  const safe_z = _state.safe_z !== undefined ? _state.safe_z : 60.0;
   const part_z = _state.part_z !== undefined ? _state.part_z : 0.0;
   fetch('/ui/parts/goto', {
     method: 'POST',
     body: new URLSearchParams({
-      x: p.x, y: p.y, retract_z, part_z,
+      x: p.x, y: p.y, safe_z, part_z,
       origin_corner: normalizeCorner(_state.origin_corner),
     }),
   })
@@ -1017,17 +1018,17 @@ function pdsDrawOrigin() {
 function pdsDrawHeights() {
   const unit = unitLabel(_pdsUnits);
   const safeZ = pdsNum('pd-modal-safe-z');
-  const goToZ = pdsNum('pd-modal-retract-z');
+  const searchZ = pdsNum('pd-modal-retract-z');
   const partZ = pdsNum('pd-modal-part-z');
   const show = (value, sign) => (Number.isFinite(value) ? `${sign}${value} ${unit}` : '—');
 
-  // The higher plane takes the top slot, so the drawing never puts the go-to
+  // The higher plane takes the top slot, so the drawing never puts the search
   // height above Safe Z unless it really is.
-  const goToOnTop = goToZ > safeZ;
-  pdsEl('pds-zd-safe')?.setAttribute('transform', `translate(0 ${goToOnTop ? 122 : 52})`);
-  pdsEl('pds-zd-goto')?.setAttribute('transform', `translate(0 ${goToOnTop ? 52 : 122})`);
+  const searchOnTop = searchZ > safeZ;
+  pdsEl('pds-zd-safe')?.setAttribute('transform', `translate(0 ${searchOnTop ? 122 : 52})`);
+  pdsEl('pds-zd-search')?.setAttribute('transform', `translate(0 ${searchOnTop ? 52 : 122})`);
   pdsText('pds-zd-safe-val', show(safeZ, '+'));
-  pdsText('pds-zd-goto-val', show(goToZ, '+'));
+  pdsText('pds-zd-search-val', show(searchZ, '+'));
   pdsText('pds-zd-part-val', show(partZ, ''));
 }
 

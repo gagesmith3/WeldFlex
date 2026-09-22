@@ -2,7 +2,7 @@
 -- weld.lua — Weld sub-process for one stud
 --
 -- Executed per stud by WeldFlex.lua (and once by single_shot.lua) with the
--- torch at safe Z clearance.
+-- torch parked over the stud at the caller's Z_CLEARANCE.
 -- Sequence: SEARCH -> PRESS -> WELD -> HOLD -> RETRACT -> FEED
 -- See docs/weldNotes.md for full technical documentation & bring-up notes.
 -- =========================================
@@ -86,13 +86,14 @@ local PRESS_DIR = 0     -- 0 = negative (FT_LinInsertion encoding; flipped with 
 -- at 10 mm/s with the press at 1.0, then 0.5) left the press stuck well short of
 -- force both times, while 5 and 0.25 held pressure accurately. Both stop on force,
 -- but the press ends on its first reading past threshold, and arriving faster
--- stopped it short. Shorten a shot some other way: a lower Safe Z shortens the search.
+-- stopped it short. Shorten a shot some other way: a lower park height (a run's
+-- Search Height) shortens the search.
 local SEARCH_SPEED_MMS = 5.0
 local PRESS_SPEED_MMS  = 0.25
 
-local SAFE_Z_MM = (type(WELD_SAFE_Z) == "number" and WELD_SAFE_Z > 0) and WELD_SAFE_Z or 60.0
-local PART_Z_MM = (type(WELD_PART_Z) == "number") and WELD_PART_Z or 0.0
-local Z_CLEARANCE = PART_Z_MM + SAFE_Z_MM
+-- The park height is the caller's global Z_CLEARANCE, read where it is used and
+-- never shadowed here: WeldFlex.lua parks at the Search Height, single_shot.lua at
+-- its Safe Z. The search starts there and the retract returns there.
 local SEARCH_MAX_MM   = 100.0
 local PRESS_MAX_MM    = 60.0
 local PRESS_ADJUST_MM = 60.0
@@ -244,7 +245,7 @@ local function readToolZ()
 end
 
 -- ===== Departure Along The Approach Axis =====
--- The caller parks the torch at zerozero + (weldX, weldY, PART_Z + SAFE_Z) in the
+-- The caller parks the torch at zerozero + (weldX, weldY, Z_CLEARANCE) in the
 -- workpiece frame, and FT_FindSurface and FT_LinInsertion then drive the stud
 -- straight down tool Z from there (FIND_RCS = 0) without turning it. So the
 -- pressed pose lies on a straight tool-Z line from the park pose, however far the
@@ -402,8 +403,8 @@ local function requireContract()
     if weldX == nil or weldY == nil then
         error("[WELD] weldX/weldY not set — WeldFlex.lua must publish the stud offset")
     end
-    if WELD_SAFE_Z == nil and Z_CLEARANCE == nil then
-        error("[WELD] WELD_SAFE_Z not set — WeldFlex.lua must publish the safe Z")
+    if type(Z_CLEARANCE) ~= "number" then
+        error("[WELD] Z_CLEARANCE not set — the caller must publish the height it parked at")
     end
 end
 

@@ -28,7 +28,11 @@ studs = {
 
 --{{CYCLE_COUNT}}
 
--- Move to the taught home position, which is already safe.
+-- Move to the taught home position. homewf is taught AT the safe height
+-- (PART_Z + SAFE_Z above zerozero), so the legs between home and the part
+-- are level moves; nothing below offsets homewf. An earlier version lifted
+-- to homewf + HIGH_Z, which stacked the safe height on top of a home that
+-- already sat there: a full safe height straight up, then back down.
 if USE_HOME_MOVE == 1 then
     Lin(homewf, speed, -1, 0, 0)
 end
@@ -39,36 +43,42 @@ local lastWeldY = nil
 
 for cycleIndex = 1, cycleCount do --{{LOOP_START}}
     for _, stud in ipairs(studs) do
+        -- Both heights are measured up from zerozero's Z in the wobj-2 frame:
+        -- HIGH_Z is Safe Z, the fixture-clearing plane every XY move happens
+        -- at; SEARCH_Z is the recipe's Search Height, where weld.lua's search
+        -- starts. RETRACT_Z carries the Search Height (stored as retract_z).
+        HIGH_Z = PART_Z + SAFE_Z
+        SEARCH_Z = PART_Z + RETRACT_Z
+
         -- Publish weld.lua input contract globals
         weldX = stud.x
         weldY = stud.y
         WELD_RUN = 1
-        WELD_SAFE_Z = SAFE_Z
-        WELD_PART_Z = PART_Z
-        Z_CLEARANCE = PART_Z + SAFE_Z
+        Z_CLEARANCE = SEARCH_Z
         WELD_PRESS_LBF = stud.pressLbf or PRESS_LBF
         WELD_FT_SENSOR_NUM = FT_SENSOR_NUM
         WELD_STUD_TYPE = STUD_TYPE
         WELD_SUBSTRATE = SUBSTRATE
         WELD_FEED_PULSE_MS = FEED_PULSE_MS
 
-        HIGH_Z = PART_Z + SAFE_Z
-
-        -- Each traverse stays at the fixture-clearing safe plane. weld.lua
-        -- captures this pose, descends entirely on tool Z with FT_FindSurface,
-        -- and returns to this same pose after every stud.
-        if lastWeldX == nil or lastWeldY == nil then
-            PointsOffsetEnable(0, 0, 0, HIGH_Z, 0, 0, 0)
-            Lin(homewf, speed, -1, 0, 0)
+        -- Z and XY never move together: every move below is straight up,
+        -- straight down, or level at HIGH_Z. The first stud of a cycle starts
+        -- from homewf, which is already at HIGH_Z; every later one first lifts
+        -- straight up off the previous stud's search pose.
+        --
+        -- flag=0: offset in the wobj-2 workpiece frame (FR Lua manual §3.2.12),
+        -- not flag=1's tool frame — flag=1 rode the torch's current orientation
+        -- instead of the taught bed axes, which is why Z looked ignored.
+        if lastWeldX ~= nil and lastWeldY ~= nil then
+            PointsOffsetEnable(0, lastWeldX, lastWeldY, HIGH_Z, 0, 0, 0)
+            Lin(zerozero, speed, -1, 0, 0)
             PointsOffsetDisable()
         end
+
         local travelSpeed = speed
         if lastWeldX ~= nil and lastWeldY ~= nil and stud.s2sSpeed ~= nil then
             travelSpeed = stud.s2sSpeed
         end
-        -- flag=0: offset in the wobj-2 workpiece frame (FR Lua manual §3.2.12),
-        -- not flag=1's tool frame — flag=1 rode the torch's current orientation
-        -- instead of the taught bed axes, which is why Z looked ignored.
         PointsOffsetEnable(0, weldX, weldY, HIGH_Z, 0, 0, 0)
         Lin(zerozero, travelSpeed, -1, 0, 0)
         PointsOffsetDisable()
@@ -76,6 +86,12 @@ for cycleIndex = 1, cycleCount do --{{LOOP_START}}
         if stud.s2sWaitMs ~= nil and stud.s2sWaitMs > 0 then
             WaitMs(stud.s2sWaitMs)
         end
+
+        -- Straight down to the Search Height. weld.lua searches down tool Z from
+        -- here and retracts back to this same pose.
+        PointsOffsetEnable(0, weldX, weldY, SEARCH_Z, 0, 0, 0)
+        Lin(zerozero, speed, -1, 0, 0)
+        PointsOffsetDisable()
 
         lastWeldX = weldX
         lastWeldY = weldY
@@ -92,18 +108,16 @@ for cycleIndex = 1, cycleCount do --{{LOOP_START}}
         end
     end
 
-    -- Clear the part before the next cycle (and on a fault): elevate off the
-    -- last stud, traverse at the safe height to home XY, then descend into
-    -- home. Runs every cycle, including the last.
+    -- Clear the part before the next cycle (and on a fault): lift straight up
+    -- off the last stud's search pose to the safe height, then traverse level
+    -- into homewf, which is taught at that height. Runs every cycle,
+    -- including the last.
     if USE_HOME_MOVE == 1 then
         if lastWeldX ~= nil and lastWeldY ~= nil then
             PointsOffsetEnable(0, lastWeldX, lastWeldY, HIGH_Z, 0, 0, 0)
             Lin(zerozero, speed, -1, 0, 0)
             PointsOffsetDisable()
         end
-        PointsOffsetEnable(0, 0, 0, HIGH_Z, 0, 0, 0)
-        Lin(homewf, speed, -1, 0, 0)
-        PointsOffsetDisable()
         Lin(homewf, speed, -1, 0, 0)
         lastWeldX = nil
         lastWeldY = nil

@@ -166,14 +166,17 @@ def test_weld_lua_uses_the_builder_feed_pulse_when_supplied():
     assert "WaitMs(FEED_PULSE_MS)" in weld
 
 
-def test_weldflex_lua_publishes_part_and_safe_z_for_force_motion():
+def test_weldflex_lua_publishes_the_search_height_as_weld_lua_park_height():
     built = build_weldflex_lua(
-        [{"x": 10, "y": 20}], cycles=1, run_mode=LIVE, part_z=63.5, safe_z=50.8
+        [{"x": 10, "y": 20}], cycles=1, run_mode=LIVE, part_z=63.5, safe_z=127, retract_z=50.8
     )
     assert "PART_Z = 63.5" in built.text
-    assert "WELD_SAFE_Z = SAFE_Z" in built.text
-    assert "WELD_PART_Z = PART_Z" in built.text
-    assert "Z_CLEARANCE = PART_Z + SAFE_Z" in built.text
+    assert "RETRACT_Z = 50.8" in built.text
+    assert "SEARCH_Z = PART_Z + RETRACT_Z" in built.text
+    assert "Z_CLEARANCE = SEARCH_Z" in built.text
+    # weld.lua reads Z_CLEARANCE only; these were its old, now-dead inputs.
+    assert "WELD_SAFE_Z" not in built.text
+    assert "WELD_PART_Z" not in built.text
 
 
 def test_weldflex_lua_keeps_part_designer_x_y_order():
@@ -194,23 +197,91 @@ def test_weldflex_lua_uses_safe_height_for_every_stud_traverse():
         part_z=2.0,
     )
     assert "HIGH_Z = PART_Z + SAFE_Z" in built.text
-    assert "if lastWeldX == nil or lastWeldY == nil then" in built.text
-    assert "PointsOffsetEnable(0, 0, 0, HIGH_Z, 0, 0, 0)" in built.text
     assert "Lin(homewf, speed, -1, 0, 0)" in built.text
     assert "PointsOffsetEnable(0, weldX, weldY, HIGH_Z, 0, 0, 0)" in built.text
-    assert built.text.count("Lin(homewf, speed, -1, 0, 0)") == 4
-    assert "APPROACH_Z" not in built.text
+    assert built.text.count("Lin(homewf, speed, -1, 0, 0)") == 2
     assert "WELD_RETRACT_Z" not in built.text
+
+
+def _moves(code):
+    """Every motion command in text order, with the (x, y, z) offset active for it."""
+    moves, offset = [], None
+    for line in code.splitlines():
+        stmt = line.strip()
+        if stmt.startswith("PointsOffsetEnable("):
+            args = stmt[len("PointsOffsetEnable("):-1].split(",")
+            offset = tuple(arg.strip() for arg in args[1:4])
+        elif stmt.startswith("PointsOffsetDisable("):
+            offset = None
+        else:
+            move = re.match(r"(?:Lin|PTP|MoveCart|MoveL|MoveJ)\((\w+)", stmt)
+            if move:
+                moves.append((move.group(1), offset))
+    return moves
+
+
+def test_a_run_never_moves_z_and_xy_together():
+    """Owner, 2026-09-22: for safety a move is straight up, straight down, or
+    level at Safe Z — never Z and X/Y at once. homewf is taught at Safe Z.
+    Per stud: level at Safe Z to above it, straight down to the Search Height,
+    weld.lua searches from there and retracts back to it, straight up again.
+    """
+    built = build_weldflex_lua(
+        [{"x": 10, "y": 20}, {"x": 30, "y": 40}],
+        cycles=2, run_mode=DRY, safe_z=127.0, retract_z=50.8, part_z=2.54,
+    )
+    code = strip_lua_comments(built.text)
+
+    assert _moves(code) == [
+        ("homewf", None),                                    # start: home, at Safe Z
+        ("zerozero", ("lastWeldX", "lastWeldY", "HIGH_Z")),  # off the last stud: up
+        ("zerozero", ("weldX", "weldY", "HIGH_Z")),          # level at Safe Z
+        ("zerozero", ("weldX", "weldY", "SEARCH_Z")),        # down to Search Height
+        ("zerozero", ("lastWeldX", "lastWeldY", "HIGH_Z")),  # end of cycle: up
+        ("homewf", None),                                    # level into home
+    ]
+    assert "HIGH_Z = PART_Z + SAFE_Z" in code
+    assert "SEARCH_Z = PART_Z + RETRACT_Z" in code
+    # weld.lua parks, searches and retracts at the height the run descended to.
+    assert "Z_CLEARANCE = SEARCH_Z" in code
+    # The lift off a stud only runs once there is a previous stud to lift off.
+    lift = code.index("PointsOffsetEnable(0, lastWeldX, lastWeldY, HIGH_Z, 0, 0, 0)")
+    assert code.rfind("if lastWeldX ~= nil and lastWeldY ~= nil then", 0, lift) != -1
+    assert code.index("lastWeldX = weldX") > code.index(
+        "PointsOffsetEnable(0, weldX, weldY, SEARCH_Z, 0, 0, 0)"
+    )
+
+
+def test_weldflex_lua_never_offsets_homewf_by_the_safe_height():
+    """homewf is taught AT the safe height (owner, 2026-09-22). Offsetting it
+    by HIGH_Z stacked the safe height on top of itself — the head rose 5 in
+    off home before dropping back to the first stud, and rose again before
+    settling into home at the end. Home legs are level moves straight
+    to/from the stud's safe-plane pose.
+    """
+    built = build_weldflex_lua(
+        [{"x": 10, "y": 20}, {"x": 30, "y": 40}],
+        cycles=2, run_mode=DRY, safe_z=127.0, part_z=2.54,
+    )
+    code = strip_lua_comments(built.text)
+    assert "PointsOffsetEnable(0, 0, 0," not in code
+    for i, line in enumerate(code.splitlines()):
+        if "Lin(homewf" in line:
+            # No offset may be active when homewf is the target.
+            before = "\n".join(code.splitlines()[:i])
+            assert before.rfind("PointsOffsetDisable()") >= before.rfind(
+                "PointsOffsetEnable("
+            ), line
 
 
 def test_weldflex_lua_uses_global_point_offsets_without_inline_lin_offsets():
     built = build_weldflex_lua([{"x": 10, "y": 20}, {"x": 30, "y": 40}], cycles=1, run_mode=LIVE)
 
-    assert built.text.count("Lin(homewf, speed, -1, 0, 0)") == 4
-    # The stud approach rides DSC's travelSpeed (e12e699); only the lift off the
-    # last stud still moves to zerozero at plain speed.
+    assert built.text.count("Lin(homewf, speed, -1, 0, 0)") == 2
+    # The level traverse rides DSC's travelSpeed (e12e699); the vertical moves
+    # (lift between studs, descent to Search Height, lift at cycle end) use plain speed.
     assert built.text.count("Lin(zerozero, travelSpeed, -1, 0, 0)") == 1
-    assert built.text.count("Lin(zerozero, speed, -1, 0, 0)") == 1
+    assert built.text.count("Lin(zerozero, speed, -1, 0, 0)") == 3
     assert "Lin(zerozero, travelSpeed, -1, 0, 1)" not in built.text
 
 
@@ -223,10 +294,10 @@ def test_weldflex_lua_returns_home_every_cycle_before_the_gate():
     """
     built = build_weldflex_lua([{"x": 10, "y": 20}], cycles=3, run_mode=LIVE)
     lines = built.text.splitlines()
-    # Initial home, safe-height lift/traverse at both cycle ends, then descent.
-    assert built.text.count("Lin(homewf, speed, -1, 0, 0)") == 4
+    # Initial home, then the level return from the last stud every cycle.
+    assert built.text.count("Lin(homewf, speed, -1, 0, 0)") == 2
     home_idxs = [i for i, l in enumerate(lines, 1) if "Lin(homewf" in l]
-    # The final safe-height traverse and home descent precede the boundary gate.
+    # The safe-height lift and return home precede the boundary gate.
     assert home_idxs[-1] < built.cycle_marker_line < built.gate_line
     # Nothing homes after the loop any more — it is done every cycle instead.
     assert not any(i > built.gate_line for i in home_idxs)
@@ -263,12 +334,13 @@ def test_dry_run_uses_the_same_safe_plane_force_motion_path():
     text = built.text
 
     # Dry only disarms the arc; motion remains the production safe-plane path:
-    # home -> safe height -> stud XY at safe height -> F/T descent.
+    # home (at safe height) -> stud XY at safe height -> down to search -> F/T descent.
     assert "WELD_ARMED = 0" in text
     assert "HIGH_Z = PART_Z + SAFE_Z" in text
-    home_lift = text.index("PointsOffsetEnable(0, 0, 0, HIGH_Z, 0, 0, 0)")
+    home = text.index("Lin(homewf, speed, -1, 0, 0)")
     stud_safe = text.index("PointsOffsetEnable(0, weldX, weldY, HIGH_Z, 0, 0, 0)")
-    assert home_lift < stud_safe
+    search = text.index("PointsOffsetEnable(0, weldX, weldY, SEARCH_Z, 0, 0, 0)")
+    assert home < stud_safe < search < text.index('NewDofile("/fruser/weld.lua"')
     assert text.rindex("PointsOffsetEnable(0, lastWeldX, lastWeldY, HIGH_Z, 0, 0, 0)") > stud_safe
 
 
@@ -1261,45 +1333,70 @@ def _stud_approach(built):
         "point": move.group(1),
         "weld_xy": [resolve("weldX"), resolve("weldY")],
         "frame": [resolve("tool"), resolve("wobj")],
+        # The park height weld.lua is told, which its retract returns to.
+        "clearance": resolve("Z_CLEARANCE"),
     }
+
+
+def _over_the_same_point(a, b):
+    """Two parks share base point, frame, offset flag and X/Y; Z may differ."""
+    return (
+        a["point"] == b["point"]
+        and a["frame"] == b["frame"]
+        and a["weld_xy"] == b["weld_xy"]
+        and a["offset"][:3] == b["offset"][:3]
+    )
 
 
 @pytest.mark.parametrize("x, y", [(10, 20), (215.265, 304.79999999999995), (0, 762)])
 def test_a_single_shot_goes_where_a_part_stud_at_the_same_xy_goes(x, y):
-    """The same X/Y must park the torch in the same place in both programs.
+    """The same X/Y must park the torch over the same point in both programs.
 
     Each program's approach offset is resolved to numbers, so a change to
     either one's offset frame, argument order, base point, tool/wobj or
     published coordinate fails here. The move type is left out on purpose:
     WeldFlex.lua uses Lin and single_shot.lua PTP, and the offset applies to
     both the same way (FR Lua manual §3.2.12).
-    """
-    heights = {"safe_z": 76.2, "part_z": 63.5}
-    part = _stud_approach(build_weldflex_lua([{"x": x, "y": y}], cycles=1, run_mode=LIVE, **heights))
-    shot = _stud_approach(build_single_shot_lua(x, y, cycles=1, run_mode=LIVE, **heights))
 
-    assert shot == part
-    # And that shared place is the designer's: X/Y from zerozero in the workpiece
-    # frame (flag 0), at part Z + safe Z, handed to weld.lua unchanged.
+    The heights differ on purpose (2026-09-22): a run descends to its Search
+    Height before the search, a Single Shot searches from its Safe Z. Either
+    way weld.lua is told the height it was actually parked at.
+    """
+    heights = {"safe_z": 76.2, "retract_z": 25.4, "part_z": 63.5}
+    part = _stud_approach(build_weldflex_lua([{"x": x, "y": y}], cycles=1, run_mode=LIVE, **heights))
+    shot = _stud_approach(build_single_shot_lua(
+        x, y, cycles=1, run_mode=LIVE, safe_z=heights["safe_z"], part_z=heights["part_z"],
+    ))
+
+    assert _over_the_same_point(shot, part)
+    # And that shared point is the designer's: X/Y from zerozero in the workpiece
+    # frame (flag 0), handed to weld.lua unchanged.
     assert part["point"] == "zerozero"
-    assert part["offset"] == pytest.approx([0, x, y, 63.5 + 76.2, 0, 0, 0], abs=5e-4)
+    assert part["offset"] == pytest.approx([0, x, y, 63.5 + 25.4, 0, 0, 0], abs=5e-4)
+    assert shot["offset"] == pytest.approx([0, x, y, 63.5 + 76.2, 0, 0, 0], abs=5e-4)
     assert part["weld_xy"] == part["offset"][1:3]
+    assert part["clearance"] == pytest.approx(part["offset"][3])
+    assert shot["clearance"] == pytest.approx(shot["offset"][3])
 
 
 def test_a_back_right_part_parks_where_its_mirrored_bed_point_is():
     """X/Y measured inward from the back-right stops reach the robot as offsets
     from zerozero, and weld.lua's retract gets the same resolved numbers — it
     reuses weldX/weldY, so it follows without a change of its own."""
-    heights = {"safe_z": 60.0, "part_z": 0.0}
+    heights = {"safe_z": 60.0, "retract_z": 10.0, "part_z": 0.0}
     part = _stud_approach(build_weldflex_lua(
         [{"x": 100, "y": 50}], cycles=1, run_mode=LIVE,
         origin_corner="back_right", bed_span=BedSpan(760.0, 750.0), **heights,
     ))
     assert part["point"] == "zerozero"
-    assert part["offset"] == pytest.approx([0, 660, 700, 60, 0, 0, 0], abs=5e-4)
+    assert part["offset"] == pytest.approx([0, 660, 700, 10, 0, 0, 0], abs=5e-4)
     assert part["weld_xy"] == part["offset"][1:3]
-    # The same place a single shot aimed at those bed coordinates goes.
-    assert part == _stud_approach(build_single_shot_lua(660, 700, cycles=1, run_mode=LIVE, **heights))
+    # Over the same point a single shot aimed at those bed coordinates goes.
+    assert _over_the_same_point(
+        part, _stud_approach(build_single_shot_lua(
+            660, 700, cycles=1, run_mode=LIVE, safe_z=60.0, part_z=0.0,
+        ))
+    )
 
 
 def test_a_front_left_part_never_reads_the_bed_span():

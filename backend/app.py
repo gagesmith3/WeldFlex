@@ -1026,9 +1026,12 @@ def ui_single_shot_move_home():
 
 @app.route("/ui/parts/goto", methods=["POST"])
 def ui_parts_goto():
-    """Move the robot to a single stud's X/Y at retract height.
+    """Move the robot to a single stud's X/Y at the part's Safe Z.
 
-    Takes x/y/retract_z/part_z/origin_corner straight from the request (the
+    Safe Z, not the Search Height: it is the height that clears fixtures on
+    the bed, and the one every run traverse uses (owner, 2026-09-22).
+
+    Takes x/y/safe_z/part_z/origin_corner straight from the request (the
     designer's in-memory state, which may be unsaved) rather than the persisted
     recipe. X/Y are measured from the part's corner and resolved to zerozero
     offsets the same way a run's studs are.
@@ -1054,9 +1057,9 @@ def ui_parts_goto():
             "partials/command_result.html", ok=False, title="Goto",
             payload={"error": str(exc)},
         )
-    retract_z = float(request.form.get("retract_z") or 10.0)
+    safe_z = float(request.form.get("safe_z") or 60.0)
     part_z = float(request.form.get("part_z") or 0.0)
-    approach_z = part_z + retract_z
+    high_z = part_z + safe_z
 
     # flag=0 offsets in the wobj-2 workpiece frame (per FR Lua manual §3.2.12),
     # not flag=1's tool frame — the offset is off the taught zerozero point,
@@ -1068,8 +1071,8 @@ def ui_parts_goto():
         "blend = -1\n"
         "wobj = 2\n"
         "speed = 25\n"
-        f"APPROACH_Z = {approach_z}\n"
-        f"PointsOffsetEnable(0, {bed_x}, {bed_y}, APPROACH_Z, 0, 0, 0)\n"
+        f"HIGH_Z = {high_z}\n"
+        f"PointsOffsetEnable(0, {bed_x}, {bed_y}, HIGH_Z, 0, 0, 0)\n"
         "PTP(zerozero, speed, -1, 0)\n"
         "PointsOffsetDisable()\n"
     )
@@ -1080,7 +1083,7 @@ def ui_parts_goto():
             tmp_path = tf.name
         try:
             robot.upload_and_run(tmp_path)
-            ok, payload = True, {"target": f"x={x}, y={y}, z={approach_z}"}
+            ok, payload = True, {"target": f"x={x}, y={y}, z={high_z}"}
         finally:
             if os.path.exists(tmp_path):
                 os.unlink(tmp_path)

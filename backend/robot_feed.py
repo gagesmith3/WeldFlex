@@ -99,7 +99,10 @@ class FeedSnapshot:
     reference under a lock and are then free of it.
     """
 
-    fields: Mapping[str, Any] = _EMPTY
+    # default_factory, not a plain default: mappingproxy only became hashable in
+    # Python 3.12, so 3.11 (the RPi's Bookworm Python) rejects `= _EMPTY` as a
+    # mutable default and the backend dies at import.
+    fields: Mapping[str, Any] = field(default_factory=lambda: _EMPTY)
     received_monotonic: float | None = None
     received_ts: float | None = None
     generation: int = 0

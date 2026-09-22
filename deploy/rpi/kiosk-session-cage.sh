@@ -21,6 +21,53 @@
 set -u
 
 URL="http://localhost:5000/operator"
+
+# Display scale (applied as the wlr-randr output scale in the second stage
+# below). The operator UI is laid out for an 800x480
+# panel (every compact breakpoint is max-width 820px / max-height 520px). The
+# production HMI is now the EDATEC ED-HMI3020-101C, a 1280x800 10.1" panel, and at
+# scale 1 none of those breakpoints fire and it renders the desktop layout.
+# 1280x800 / 1.6 = an 800x500 CSS viewport, which reuses the tuned kiosk layouts
+# unchanged and makes touch targets 1.6x larger on the glass. Set this to 1 on
+# an 800x480 panel. Override without editing: KIOSK_SCALE=1.25 in the environment.
+KIOSK_SCALE="${KIOSK_SCALE:-1.6}"
+
+# Output rotation, as a wlr-randr transform (normal, 90, 180, 270). The
+# ED-HMI3020-101C's DSI panel is natively portrait — the kernel reports it as
+# 800x1280 on DSI-2 — so landscape needs a quarter turn. cage 0.2.0 has no rotate
+# option, so the transform is applied from inside the session (below) before
+# Chromium starts. Set to "normal" on a natively landscape panel. Touch is NOT
+# rotated by this — the installer's udev calibration-matrix rule does that, and
+# must be changed to match if this value changes.
+KIOSK_OUTPUT="${KIOSK_OUTPUT:-DSI-2}"
+KIOSK_ROTATE="${KIOSK_ROTATE:-90}"
+
+# Second stage: this script re-runs itself as cage's one child (see the loop at
+# the bottom), rotates the output, then becomes Chromium. Handled before the
+# logging redirect so output is not teed twice — it inherits the outer script's
+# stdout/stderr.
+if [ "${1:-}" = "--in-cage" ]; then
+    # Scale is set on the output, not with Chromium's --force-device-scale-factor:
+    # under Wayland that flag rendered the page into a 640x400 corner of the
+    # 1280x800 panel with the layout cropped (ED-HMI3020, 2026-09-22). An output
+    # scale reaches Chromium through the normal Wayland scale protocol.
+    wlr-randr --output "$KIOSK_OUTPUT" --transform "$KIOSK_ROTATE" --scale "$KIOSK_SCALE" \
+        || echo "wlr-randr failed; outputs: $(wlr-randr 2>&1 | grep -v '^ ')"
+    exec chromium \
+        --kiosk \
+        --ozone-platform=wayland \
+        --noerrdialogs \
+        --disable-infobars \
+        --no-first-run \
+        --touch-events=enabled \
+        --no-sandbox \
+        --disable-dev-shm-usage \
+        --user-data-dir=/tmp/weldflex-kiosk \
+        --disable-features=TranslateUI \
+        --disable-background-networking \
+        "$URL"
+fi
+
 READY_URL="http://localhost:5000/"
 
 # The compositor's cursor is deliberately NOT handled here — see the diversion
@@ -80,19 +127,8 @@ while true; do
     # Flags to verify against `cage --help` on the target image before adding any
     # more — cage's option set is small and version-dependent. Bare `cage -- CMD`
     # is the stable, documented invocation.
-    cage -- chromium \
-        --kiosk \
-        --ozone-platform=wayland \
-        --noerrdialogs \
-        --disable-infobars \
-        --no-first-run \
-        --touch-events=enabled \
-        --no-sandbox \
-        --disable-dev-shm-usage \
-        --user-data-dir=/tmp/weldflex-kiosk \
-        --disable-features=TranslateUI \
-        --disable-background-networking \
-        "$URL"
+    # bash + $0 so the second stage does not depend on the exec bit.
+    cage -- bash "$0" --in-cage
     echo "cage exited (status $?) — restarting in 2s"
     sleep 2
 done

@@ -142,9 +142,16 @@ IP on that subnet:
 
 ```bash
 sudo nmcli con add type ethernet ifname eth0 con-name robot-net \
-    ipv4.method manual ipv4.addresses 192.168.58.100/24
+    ipv4.method manual ipv4.addresses 192.168.58.100/24 \
+    ipv4.never-default yes ipv6.method disabled
 sudo nmcli con up robot-net
 ```
+
+`ipv4.never-default yes` keeps the robot link from ever owning the default
+route, so internet (updates, apt) stays on Wi-Fi. The first ED-HMI3020
+bring-up (2026-09-22) lost internet after WeldFlex was set up on it; a
+route-stealing static eth0 is the suspected cause (not confirmed — the unit was
+reflashed instead of diagnosed).
 
 Verify with `ip a` — `eth0` must show `state UP`, not `NO-CARRIER` (ethernet must
 be physically plugged in before the connection comes up).

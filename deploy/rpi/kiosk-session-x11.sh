@@ -14,6 +14,15 @@
 # the cage session. Only stdout/stderr are touched; X still owns the VT.
 exec > >(logger -t weldflex-kiosk) 2>&1
 
+# Chromium's device scale factor. The operator UI is laid out for an 800x480
+# panel (every compact breakpoint is max-width 820px / max-height 520px). The
+# production HMI is now the EDATEC ED-HMI3020-101C, a 1280x800 10.1" panel, and at
+# scale 1 none of those breakpoints fire and it renders the desktop layout.
+# 1280x800 / 1.6 = an 800x500 CSS viewport, which reuses the tuned kiosk layouts
+# unchanged and makes touch targets 1.6x larger on the glass. Set this to 1 on
+# an 800x480 panel. Override without editing: KIOSK_SCALE=1.25 in the environment.
+KIOSK_SCALE="${KIOSK_SCALE:-1.6}"
+
 # Prevent screen blanking and DPMS power-off
 xset s off
 xset s noblank
@@ -38,6 +47,7 @@ done
 while true; do
     chromium \
         --kiosk \
+        --force-device-scale-factor="$KIOSK_SCALE" \
         --noerrdialogs \
         --disable-infobars \
         --no-first-run \

@@ -10,7 +10,7 @@ a cached copy that mentions Liberty, it is out of date.
 Multi-step wizard/session state is carried across stateless HTTP requests as a
 module-level `dict` guarded by a `threading.Lock`. Every mutating route does
 its mutation inside a fresh `with <lock>:` block, then renders a partial from
-a **snapshot** taken under the same lock. `_tcp_render()` (`app.py:602`) is the
+a **snapshot** taken under the same lock. `_tcp_render()` is the
 clean, factored example:
 
 ```python
@@ -37,9 +37,9 @@ routes.
 
 | State | Lock | Shape | Notes |
 |---|---|---|---|
-| `_tcp_calib` (`app.py:94`) | `_tcp_lock` (`app.py:103`) | `points_recorded` (a `set`), `drag_point`, `drag_error`, `record_error`, `apply_error`, `applied`, `tcp_offset` | The only module-level session dict left. Working reference for the wizard pattern. |
-| recipes.json | `_rec_lock` (`app.py:106`) | see below | File-backed, not a dict. Every read-modify-write goes under this lock. |
-| the current job | *(inside `JobManager`)* | `JobSnapshot` | **Not** module state in `app.py`. `job = JobManager(...)` (`app.py:206`) owns it behind its own internal lock. |
+| `_tcp_calib` | `_tcp_lock` | `points_recorded` (a `set`), `drag_point`, `drag_error`, `record_error`, `apply_error`, `applied`, `tcp_offset` | The only module-level session dict left. Working reference for the wizard pattern. |
+| recipes.json | `_rec_lock` | see below | File-backed, not a dict. Every read-modify-write goes under this lock. |
+| the current job | *(inside `JobManager`)* | `JobSnapshot` | **Not** module state in `app.py`. `job = JobManager(...)` owns it behind its own internal lock. |
 
 **No run state lives in `app.py`.** Don't add any. `/ui/job/*` routes are thin
 adapters that call a `JobManager` method and re-render from the returned
@@ -48,8 +48,7 @@ snapshot.
 ## Recipe data model
 
 Storage: `backend/recipes.json`, a flat JSON array, loaded/saved via
-`_recipes_load()` (`app.py:108`) / `_recipes_save()` (`app.py:123`) under
-`_rec_lock`.
+`_recipes_load()` / `_recipes_save()` under `_rec_lock`.
 
 ```json
 {
@@ -66,20 +65,21 @@ Storage: `backend/recipes.json`, a flat JSON array, loaded/saved via
 ```
 
 `times_ran` / `avg_cycle_time` / `last_run` **are now live** — `_on_job_finish()`
-(`app.py:176`) folds each finished run into the part's lifetime stats, wired in
+folds each finished run into the part's lifetime stats, wired in
 as `JobManager(robot, on_finish=_on_job_finish, ...)`. `times_ran` counts
 *cycles*, not jobs, and `avg_cycle_time` is a running mean over every cycle the
 part has ever produced.
 
-**`pause_points` is still dead.** Written as `[]` at creation (`app.py:382`),
-read by nothing — `lua_builder._stud_rows` consumes only `x` and `y`. Per-stud
-operator waits do not exist yet; see `docs/ARCHITECTURE.md`. Do not build
-anything that assumes this field means something.
+**`pause_points` is still dead.** Written as `[]` at creation — two separate
+write sites in `app.py`, both just `"pause_points": []` — and read by nothing;
+`lua_builder._stud_rows` consumes only `x` and `y`. Per-stud operator waits do
+not exist yet; see `docs/ARCHITECTURE.md`. Do not build anything that assumes
+this field means something.
 
 `_recipes_load()` auto-migrates any recipe missing an `id` by assigning a fresh
-UUID and re-saving. `_recipes_enrich()` (`app.py:137`) derives `studs_count` and
-a human `updated_label` for display. `_parse_studs()` (`app.py:149`) /
-`_preview_data()` (`app.py:165`) support a freeform textarea → SVG preview as an
+UUID and re-saving. `_recipes_enrich()` derives `studs_count` and
+a human `updated_label` for display. `_parse_studs()` /
+`_preview_data()` support a freeform textarea → SVG preview as an
 alternative input mode to the coordinate-table UI.
 
 ## Run lifecycle

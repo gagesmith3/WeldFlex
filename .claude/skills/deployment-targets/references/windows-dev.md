@@ -12,10 +12,13 @@ python backend\app.py
 
 (per the root `README.md`). No install script, no venv-activation wrapper —
 just the checked-in `venv\Scripts\python.exe` or system Python with
-`requirements.txt` installed. `app.run(host="0.0.0.0", port=5000, debug=False,
-use_reloader=False)` (`app.py:1105`) — `debug=False`/`use_reloader=False` are
-not platform-specific, just this app's standing choice (avoids the reloader
-spawning a second process that double-opens the robot connection).
+`requirements.txt` installed. `app.py`'s `if __name__ == "__main__":` block
+runs production `waitress.serve(...)` on `PORT` (env `PORT`, default `5000`)
+by default; `app.run(host="0.0.0.0", port=PORT, debug=False,
+use_reloader=False)` only runs instead if `WELDFLEX_DEV_SERVER=1` is set.
+`use_reloader=False` applies either way and is not platform-specific — just
+this app's standing choice (avoids the reloader spawning a second process
+that double-opens the robot connection).
 
 ## `.env` on this machine
 
@@ -26,7 +29,9 @@ WELDFLEX_FAIRINO_PATH=C:/Users/Gage/Desktop/WeldFlex/fairino-python-sdk-main/win
 ```
 
 This means `_bootstrap_sdk()`'s `sys.platform`-based auto-detect branch
-(`robot_service.py:28-29`) never actually executes on this machine — the env
+(`robot_link.py` — this and `_bootstrap_sdk()` moved out of `robot_service.py`
+when the connection layer was split; see the top-level SKILL.md) never
+actually executes on this machine — the env
 override in the candidates list always wins first. If you need to test the
 auto-detect path itself (e.g. verifying it'd correctly resolve `windows/` on
 a machine without the override), temporarily unset the var rather than
@@ -39,19 +44,15 @@ UI cannot be visually verified on this machine** without either setting
 assume a change "looks fine" on Windows dev implies it's fine at 800×480
 touch scale.
 
-## OS-integration routes are intentionally inert here
+## `/operator/settings` has no OS-integration routes to test here
 
-`/operator/settings`'s NTP/timezone/wifi-scan/wifi-connect/reboot/shutdown
-actions (`app.py:1023-1099`) are each wrapped `if sys.platform != "win32":`
-around the actual `timedatectl`/`nmcli`/`iwgetid`/`subprocess.Popen(["sudo",
-...])` call. On Windows, every one of these routes still returns its normal
-`command_result.html` toast with `ok=True` and an empty payload — **not** an
-error, and **not** a no-op you'd notice without reading the response body
-closely. If you're testing the Settings page locally and a button seems to
-"succeed but do nothing," that's expected — those features only function on
-the RPi. Don't add Windows equivalents (e.g. shelling out to `powercfg` or
-`shutdown.exe`) — they're RPi/production-only by design, not a cross-platform
-gap to close.
+The NTP/timezone/wifi-scan/wifi-connect/reboot/shutdown routes this section
+used to describe were removed in `d446c3a` ("Refactor settings page and remove
+unused components", 2026-07-28). `/operator/settings` now renders
+`settings.html`, a static "Settings are coming soon" page — there's nothing
+platform-gated to test on either machine. If that functionality is rebuilt,
+document its actual shape here rather than assuming it returns to the old
+`sys.platform != "win32":`-wrapped-subprocess pattern.
 
 ## The Chinese-debug-print / UTF-8 fix
 

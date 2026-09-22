@@ -41,13 +41,14 @@ The partial then renders each `*_error` key inline, independently, per step:
 a wizard has multiple independent steps that can each fail separately and the
 operator needs to see which step failed without losing progress on the others.
 
-**Known gap**: `_run_session["error_msg"]` is set on failure in
-`ui_operator_run` (`app.py:527-530`) and the cycle-advance branch of
-`ui_operator_current_job` (`app.py:582-585`) — following Pattern B — but
-`partials/current_job.html` **never reads `session.error_msg`**, only shows a
-generic `state-badge--error` badge with no message text. If you touch the run
-session's error path, either wire up the display or note in your change that
-you're aware it's still silent. See `../../sdk-alignment-findings.md`.
+**This gap is closed.** `ui_operator_run`/`ui_operator_current_job`/
+`_run_session` no longer exist — they went with the poll-driven run session
+`job_manager.py` replaced (see `state-and-session.md`). The run's error now
+lives on `JobSnapshot.error` (set by the manager on failure) and
+`partials/current_job.html` reads it directly: `{% if job.error %}<p
+class="current-job-error">{{ job.error }}</p>{% endif %}`. A still-current
+example of Pattern B's per-step inline error is `_tcp_calib`'s
+`drag_error`/`record_error`/`apply_error`, shown above.
 
 ## Pattern C — raw status-code endpoints (JS-driven polling loops)
 
@@ -72,7 +73,7 @@ in).
 
 ## Oddball: out-of-band swap
 
-`partials/diagnostics_readout.html:92-96` uses an HTMX out-of-band swap
+`partials/diagnostics_readout.html`'s `#diagnostics-error` block uses an HTMX out-of-band swap
 (`hx-swap-oob="innerHTML"` on `#diagnostics-error`) to push an error into a
 sibling panel. This is unique to the diagnostics page — treat it as a one-off
 for that specific layout, not a fourth general convention to reuse elsewhere.

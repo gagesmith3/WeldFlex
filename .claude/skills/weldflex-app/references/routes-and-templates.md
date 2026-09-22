@@ -15,9 +15,22 @@ Page routes (`app.py`) — verified against the code 2026-09-09:
 /operator/calibration/force-sensor  force_sensor.html
 /operator/tcp-calibrate             tcp_calibrate.html
 /operator/robot-diagnostics         robot_diagnostics.html
-/operator/settings                  settings.html
-/manager                            manager.html   (standalone shell — does not extend base.html)
+/operator/settings                  settings.html   (placeholder — "Settings are coming soon", no routes behind it)
+/manager                            redirects to /manager/part-designer (see bug note below)
+/manager/part-designer               manager.html (active_tab=part-designer)
+/manager/settings                    manager.html (active_tab=settings)
+/manager/reports                     manager.html (active_tab=reports)
 ```
+
+**Bug: `/manager` is registered twice.** `app.py` has two `@app.route("/manager")`
+handlers — an early one that redirects to `/manager/part-designer`, and a later
+one, near the bottom of the file, that renders `manager.html` directly.
+Werkzeug keeps the first-registered rule for an identical path, so the second
+is dead, unreachable code; a request to bare `/manager` always gets the
+redirect. Earlier revisions of this file documented the second handler's
+behavior (a standalone shell not extending `base.html`) as if it were live —
+it never runs. Worth deleting the dead handler rather than leaving it to
+confuse the next reader, but that's a code fix, not a doc one.
 
 **`/operator/liberty`, `liberty.html` and `/operator/faceplate` are gone**
 (2026-09-14). The Liberty endurance page went with the `welder_profile` recipe
@@ -43,11 +56,18 @@ nested further (never `/ui/tcp/calibrate`). Live features: `connection`,
 `diagnostics`, `ft`, `job`, `jog`, `manager`, `parts`, `recipes`, `settings`,
 `single-shot`, `tcp-calibrate`.
 
-`ft` is `/ui/ft/{reading,stream,inspect,setup,zero,deactivate}`. `setup` and
-`zero` are wired to `force_sensor.html`'s Initialize/Zero buttons (toast
-responses); `deactivate` exists but has no UI caller — deliberate, not an orphan
-to build on. The readout itself is the one place in the app that does **not**
-use an HTMX poll:
+`ft` is `/ui/ft/{reading,stream,inspect}` — that's the whole route set;
+`setup` and `zero` don't exist as routes (an earlier revision of this file
+listed them as wired to Initialize/Zero buttons — that UI is gone).
+`force_sensor.html` today has exactly one action button, `/ui/ft/inspect`
+(toast response), and says outright that "F/T configuration, zeroing, and
+payload identification are managed from the pendant during commissioning."
+`robot_service.py` still has `ft_setup()`/`ft_zero()`/`ft_deactivate()`
+methods, but no `/ui/ft/*` route calls any of the three — `force_sensor.html`'s
+own comment claiming `/ui/ft/deactivate` "still exists in app.py" is itself
+stale; don't assume a `robot_service.py` method existing means a route calls
+it. The readout itself is the one place in the app that does **not** use an
+HTMX poll:
 
 - `reading` renders `partials/ft_reading.html` and now raises rather than
   falling back to `get_universal_state()` when force is unavailable, so a stale
@@ -131,7 +151,7 @@ still in the code (see the audit log).
 | Item | Status | Build on this instead |
 |---|---|---|
 | `partials/recipe_library.html` | Not included/rendered anywhere. References `/ui/recipes/load`, `/ui/recipes/delete`, `GET /ui/recipes` — none exist. | `parts.html` + `partials/parts_editor.html` + `partials/parts_recipe_list.html` |
-| `partials/status.html` + `live_status_mount` macro (`components/ui.html:90-92`, default endpoint `/ui/status`) | Neither the macro nor the partial is invoked from any template; `/ui/status` doesn't exist. | `partials/connection_chips.html` via `/ui/connection`, or `partials/diagnostics_readout.html` via `/ui/diagnostics` |
+| `partials/status.html` + `live_status_mount` macro (`components/ui.html`, default endpoint `/ui/status`) | Neither the macro nor the partial is invoked from any template; `/ui/status` doesn't exist. | `partials/connection_chips.html` via `/ui/connection`, or `partials/diagnostics_readout.html` via `/ui/diagnostics` |
 | `/operator/calibrate` + `/ui/calibrate/status\|enable-drag\|record-pin\|goto-clearance\|apply\|reset` | Linked from `calibration.html`; `calibrate.html`/`partials/calibrate_steps.html` exist and target all 6 endpoints — **none of these routes exist in `app.py` yet.** | This is the next planned feature — see `state-and-session.md` and the `fairino-sdk` skill's `coordinate-calibration.md` |
 
 `home.html` and `partials/home_current_run.html` have since been deleted —
@@ -150,10 +170,10 @@ Only `.home-body`, `.home-hero` and `.home-nav-panel` went with `home.html`.
 ## `icon_safe()` / `_ICONS`
 
 ```python
-# app.py:226-250 — 22 entries of raw SVG <path>/<circle> inner markup
+# app.py — _ICONS = { ... }, 31 entries of raw SVG <path>/<circle> inner markup
 _ICONS = { "home": '...', "link_2": '...', ... }
 
-# app.py:252-262
+# app.py — def icon_safe(...), right after _ICONS
 def icon_safe(name, fallback="circle", width=14, height=14, class_=""):
     paths = _ICONS.get(name) or _ICONS.get(fallback) or _ICONS["circle"]
     ...
@@ -166,7 +186,7 @@ or via `components/ui.html` macros (`action_button`, `icon_link`,
 
 **`icon_safe()` never errors on an unknown name — it silently falls back to a
 plain circle.** When adding a new `icon=` reference in a template, add its SVG
-path data to `_ICONS` in `app.py:226`, or the icon will silently render as a
+path data to `_ICONS` in `app.py`, or the icon will silently render as a
 circle with no warning. (The audit log has the current list of already-broken
 icon names found this session — check it before assuming an icon works.)
 
@@ -185,8 +205,10 @@ icon names found this session — check it before assuming an icon works.)
 .kiosk, .kiosk * { cursor: none !important; }
 ```
 
-`kiosk_mode` is injected globally via `inject_defaults()` (`app.py:437-447`,
-`KIOSK_MODE = os.getenv("WELDFLEX_KIOSK", "0") == "1"`) and applied as
+`kiosk_mode` is injected globally via the `inject_defaults()` context
+processor, which returns the module-level `KIOSK_MODE = os.getenv("WELDFLEX_KIOSK",
+"0") == "1"` constant (defined separately, near the top of `app.py`, not
+computed inside `inject_defaults()` itself) and applied as
 `<body class="kiosk">` in `base.html:12`. All primary action buttons enforce
 `min-height: 44px` at the `@media (max-width: 820px)` breakpoint. New
 operator-facing UI should follow the same constraint — no scrolling, touch

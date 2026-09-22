@@ -64,7 +64,9 @@ the controller and use a *different, separate* instruction set — `PTP(...)`,
 `docs/FR Lua programmingscript.txt`, Table 3-15 (the text extract is OCR-lossy,
 so trust its parameter table and paired examples over its wrapped prototype).
 
-`PTP(point, vel, blend, offset_flag)` as used in `programs/WeldFlex.lua:39`:
+`PTP(point, vel, blend, offset_flag)` as used in `programs/single_shot.lua`'s
+approach move (`PTP(zerozero, speed, -1, 0)` — `WeldFlex.lua` moved to `Lin`
+for its equivalent moves, so this is the live `PTP` example now):
 
 | arg | example | reading | confidence |
 |---|---|---|---|

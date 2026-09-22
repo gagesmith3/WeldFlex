@@ -863,9 +863,9 @@ def ui_single_shot_move_position():
     y_val = float(target.get('y', 0.0))
 
     program = (
-        "tool = 10\n"
+        "tool = 2\n"
         "blend = -1\n"
-        "wobj = 4\n"
+        "wobj = 2\n"
         "speed = 25\n"
         f"targetX = {x_val}\n"
         f"targetY = {y_val}\n"
@@ -954,9 +954,9 @@ def ui_single_shot_move_home():
     approach_z = part_z + safe_z
 
     program = (
-        "tool = 10\n"
+        "tool = 2\n"
         "blend = -1\n"
-        "wobj = 4\n"
+        "wobj = 2\n"
         "speed = 25\n"
         f"APPROACH_Z = {approach_z}\n"
         "PointsOffsetEnable(0, 0, 0, APPROACH_Z, 0, 0, 0)\n"
@@ -1005,15 +1005,15 @@ def ui_parts_goto():
     part_z = float(request.form.get("part_z") or 0.0)
     approach_z = part_z + retract_z
 
-    # flag=0 offsets in the wobj-4 workpiece frame (per FR Lua manual §3.2.12),
+    # flag=0 offsets in the wobj-2 workpiece frame (per FR Lua manual §3.2.12),
     # not flag=1's tool frame — the offset is off the taught zerozero point,
     # which sits at the workpiece origin, so this walks x/y/z along the
     # workpiece's own axes: +X = bed left-right, +Y = bed depth, +Z = up.
     # The production program uses this same X/Y order.
     program = (
-        "tool = 10\n"
+        "tool = 2\n"
         "blend = -1\n"
-        "wobj = 4\n"
+        "wobj = 2\n"
         "speed = 25\n"
         f"APPROACH_Z = {approach_z}\n"
         f"PointsOffsetEnable(0, {x}, {y}, APPROACH_Z, 0, 0, 0)\n"
@@ -1158,8 +1158,8 @@ def ui_tcp_calibrate_record_point():
 @app.route("/ui/tcp-calibrate/apply", methods=["POST"])
 def ui_tcp_calibrate_apply():
     try:
-        # tool slot 10 — the id every production Lua program (WeldFlex.lua, single_shot.lua) reads.
-        tcp_offset = robot.tcp_compute_and_apply(tool_id=10)
+        # tool slot 2 — the id every production Lua program (WeldFlex.lua, single_shot.lua) reads.
+        tcp_offset = robot.tcp_compute_and_apply(tool_id=2)
         with _tcp_lock:
             _tcp_calib["applied"] = True
             _tcp_calib["tcp_offset"] = tcp_offset

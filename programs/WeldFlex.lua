@@ -1,8 +1,8 @@
 -- WeldFlex.lua — canonical stud-weld program.
 
-tool = 10
+tool = 2
 blend = -1
-wobj = 4
+wobj = 2
 offsetEnable = 1
 speed = 25 --{{SPEED}}
 FEED_PULSE_MS = 250 --{{FEED_PULSE_MS}}
@@ -66,7 +66,7 @@ for cycleIndex = 1, cycleCount do --{{LOOP_START}}
         if lastWeldX ~= nil and lastWeldY ~= nil and stud.s2sSpeed ~= nil then
             travelSpeed = stud.s2sSpeed
         end
-        -- flag=0: offset in the wobj-4 workpiece frame (FR Lua manual §3.2.12),
+        -- flag=0: offset in the wobj-2 workpiece frame (FR Lua manual §3.2.12),
         -- not flag=1's tool frame — flag=1 rode the torch's current orientation
         -- instead of the taught bed axes, which is why Z looked ignored.
         PointsOffsetEnable(0, weldX, weldY, HIGH_Z, 0, 0, 0)

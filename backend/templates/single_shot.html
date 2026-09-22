@@ -140,6 +140,11 @@
                value="{{ recipe.part_z }}" required>
       </div>
       <div>
+        <label for="ss_retract_z">Retract Height (mm)</label>
+        <input id="ss_retract_z" name="retract_z" type="text" inputmode="none" data-kbd="num"
+               value="{{ recipe.retract_z }}" required>
+      </div>
+      <div>
         <label for="ss_stud_type">Stud Selector</label>
         <select id="ss_stud_type" name="stud_type">
           {% for opt in ['M2', 'M2.5', 'M3', 'M4', 'M5', 'M6', 'M8', 'M10', 'M12', '1/8"', '3/16"', '1/4"', '5/16"', '3/8"', '1/2"'] %}
@@ -166,6 +171,11 @@
           <option value="1" {% if recipe.di_check %}selected{% endif %}>On</option>
           <option value="0" {% if not recipe.di_check %}selected{% endif %}>Off</option>
         </select>
+      </div>
+      <div>
+        <label for="ss_speed">Motion Speed (%)</label>
+        <input id="ss_speed" name="speed" type="text" inputmode="none" data-kbd="num"
+               value="{{ recipe.speed or 25 }}" required>
       </div>
       <div class="settings-actions wf-modal-actions">
         <button type="button" class="btn wf-cancel" onclick="closeSingleShotModal('ss-settings-modal')">Cancel</button>

@@ -1,6 +1,6 @@
 ---
 name: deployment-targets
-description: Conventions for WeldFlex's two deploy targets — the Windows dev machine and the Raspberry Pi OS Lite production kiosk. Use when writing or reviewing any sys.platform branch, editing anything under deploy/rpi/, touching the SDK path bootstrap (_bootstrap_sdk in robot_link.py), changing .env/.env.example/.env.rpi.example, or working on the /operator/settings OS-integration routes (NTP, timezone, wifi, reboot, shutdown). Covers the sys.platform != "win32" guard convention, the windows/linux SDK folder auto-detect vs. WELDFLEX_FAIRINO_PATH override, the systemd + cage/Wayland kiosk install pipeline (with its X11 fallback stack), the .gitattributes CRLF guard, and the CNDE-port connect-gate patch history.
+description: Conventions for WeldFlex's two deploy targets — the Windows dev machine and the Raspberry Pi OS Lite production kiosk. Use when writing or reviewing any sys.platform branch, editing anything under deploy/rpi/, touching the SDK path bootstrap (_bootstrap_sdk in robot_link.py), or changing .env/.env.example/.env.rpi.example. Covers the sys.platform != "win32" guard convention, the windows/linux SDK folder auto-detect vs. WELDFLEX_FAIRINO_PATH override, the systemd + cage/Wayland kiosk install pipeline (with its X11 fallback stack), the .gitattributes CRLF guard, and the CNDE-port connect-gate patch history.
 ---
 
 # WeldFlex deploy targets — Windows dev vs. RPi kiosk
@@ -28,7 +28,7 @@ see the `fairino-sdk` skill, for Flask/route conventions see `weldflex-app`.
 
 | # | Gotcha | Detail |
 |---|---|---|
-| 1 | OS-integration settings routes silently no-op on Windows | `timedatectl`/`nmcli`/`iwgetid`/`reboot`/`shutdown` calls in `app.py` are all wrapped `if sys.platform != "win32":` — on Windows they skip the subprocess call entirely and report `ok=True` with an empty payload, not an error. Testing `/operator/settings` locally will look like every button "does nothing" — that's by design, not a bug to fix. |
+| 1 | `/operator/settings` is a placeholder, not OS-integration routes | The NTP/timezone/wifi-scan/wifi-connect/reboot/shutdown routes this row used to document were removed in `d446c3a` ("Refactor settings page and remove unused components", 2026-07-28). `/operator/settings` now renders `settings.html`, a static "Settings are coming soon" page with no backing routes — there is no `sys.platform` branching left in `app.py` to reason about here. If OS-integration settings come back, document their shape fresh rather than reviving this row's old text. |
 | 2 | SDK path auto-detect is untested on the dev box itself | `_bootstrap_sdk()` picks `windows/`-vs-`linux/` from `sys.platform`, but `WELDFLEX_FAIRINO_PATH` always wins if set — and the dev-machine `.env` hardcodes it to an absolute Windows path. The `sys.platform` branch only actually gets exercised via `deploy/rpi/.env.rpi.example`, which deliberately omits the var. |
 | 3 | The RPi systemd unit's SDK patch step is **gone** | `weldflex-backend.service` used to `sed`-patch `if cnde_ok and xmlrpc_ok:` → `if xmlrpc_ok:` in the vendored `Robot.py` via `ExecStartPre` at every service start. Commit `452bbfc` ("fixit8", 2026-07-15) baked that edit into both vendored copies, making the `sed` a no-op; the line has since been deleted from the unit. See "CNDE connect-gate" below. |
 | 4 | `libfairino/` and `fairino/build/lib.*` are unused | Both platform dirs also ship a compiled Cython extension (`libfairino/Robot.*.pyd`/`.so`) and stray build artifacts inside `fairino/build/`. `_bootstrap_sdk()` only ever imports the plain `fairino/Robot.py` source — never add `libfairino` to a deploy step. |
@@ -89,6 +89,6 @@ consequence: `WELDFLEX_STATUS_PORT` and `WELDFLEX_FEED_STALE_S` belong in every
 | File | Load this when... |
 |---|---|
 | `references/rpi-kiosk-deploy.md` | Installing, debugging, or modifying the RPi kiosk (systemd unit, X11/Chromium session, autologin, networking) |
-| `references/windows-dev.md` | Working on the Windows dev machine, or explaining why an OS-integration feature "does nothing" locally |
+| `references/windows-dev.md` | Working on the Windows dev machine, or checking what differs from the RPi kiosk (dev-server choice, `.env` override, unavailable touch-target CSS) |
 
 Audit log: `../../sdk-alignment-findings.md`.

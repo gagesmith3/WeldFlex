@@ -6,9 +6,9 @@
 -- this program never does. Built by backend/lua_builder.py's
 -- build_single_shot_lua(); never edit the copy on the controller.
 
-tool = 10
+tool = 2
 blend = -1
-wobj = 4
+wobj = 2
 offsetEnable = 1
 speed = 25 --{{SPEED}}
 FEED_PULSE_MS = 250 --{{FEED_PULSE_MS}}

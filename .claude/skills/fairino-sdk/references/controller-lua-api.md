@@ -115,8 +115,9 @@ Two channels actually work:
 
 System variables are the only channel that keeps reporting while force control
 owns the sensor and `FT_GetForceTorqueRCS` is refused with code 14. `weld.lua`'s
-`pub()` writes to eight slots — 1 phase, 2 last `FT_*` return, 3/4 press
-contact-Z/travel, 5 collision-guard state, 8 press force target, and **6/7 the
+`pub()` writes to ten slots — 1 phase, 2 last `FT_*` return, 3/4 press
+contact-Z/travel, 5 collision-guard state, 8 press force target, 9/10 the
+press-hold and post-weld jolt travel diagnostics, and **6/7 the
 two weld interlock DI levels** (`SV_STUD_ON_WORK`/`SV_WELD_READY`). `app.py`
 decodes the phase/fault/guard/ret codes in `_WELD_PHASES`/`_WELD_FAULT_SITES`/
 `_WELD_GUARD_CODES`/`_WELD_RET_CODES`. Full slot semantics and phase-code

@@ -3419,26 +3419,40 @@ pre {
 }
 
 /* The operator page fits the viewport by construction rather than by hand-sized
-   heights: Current Job takes what its content needs, and the Control Panel takes
-   whatever is left, with the run buttons stretching to fill it. Fixed button
-   heights (120px) plus a 2x2 metric grid overflowed 800x500 by ~120px and put a
-   scrollbar on the home page. A job hint, an error line or the progress bar now
-   shrink the buttons instead of pushing Current Job off the bottom. */
-/* No min-height: 0 here on purpose — the panel must never shrink below its
-   buttons' floor, or they spill out of it instead of the page scrolling. */
+   heights. The run buttons get a fixed, modest height and Current Job takes all
+   the remaining space, its metric cards stretching to fill it — the job details
+   are what the operator reads from a step back. Fixed 120px buttons plus a 2x2
+   metric grid overflowed 800x500 by ~120px and put a scrollbar on the home page.
+   When a hint, an error and the progress bar all show at once, the buttons give
+   up height (down to a 48px floor) before the page would scroll. */
+/* min-height: 0 lets the panel actually give up height; the buttons' own
+   min-height below is the floor that stops them spilling out of it. */
 .operator-control-panel {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
+  min-height: 0;
   display: flex;
   flex-direction: column;
 }
 
 .operator-control-panel .hero-main-controls {
-  flex: 1;
+  flex: 0 1 auto;
   min-height: 0;
 }
 
 .operator-current-job {
-  flex: none;
+  flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.operator-current-job .current-job-grid {
+  flex: 1;
+}
+
+.operator-current-job .metric-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
 }
 
 /* Icon beside the label instead of above it — one row less per card. */
@@ -3473,13 +3487,64 @@ pre {
 
   .operator-control-panel .hero-main-controls {
     margin: 0;
+    flex-basis: 80px;
+    min-height: 48px;
   }
 
-  /* The floor when a hint, an error and the progress bar are all showing.
-     Normally the buttons stretch well past this. */
+  /* Icon beside the label, so the shorter button still reads at a glance. */
   .operator-control-panel .hero-main-controls .btn {
-    min-height: 56px;
+    flex-direction: row;
+    min-height: 0;
     padding: 8px;
+    gap: 10px;
+    font-size: 1.2rem;
+  }
+
+  .operator-control-panel .hero-main-controls .btn svg {
+    width: 26px;
+    height: 26px;
+  }
+
+  /* Larger job details — they now own the spare height. */
+  .operator-current-job .metric-card {
+    padding: 10px;
+  }
+
+  .operator-current-job .metric-head {
+    gap: 5px;
+  }
+
+  .operator-current-job .metric-icon {
+    width: 24px;
+    height: 24px;
+  }
+
+  .operator-current-job .metric-label {
+    font-size: 0.72rem;
+    letter-spacing: 0.01em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .operator-current-job .metric-head {
+    min-width: 0;
+  }
+
+  .operator-current-job .metric-value {
+    font-size: 1.6rem;
+    margin-top: 6px;
+  }
+
+  /* Part names are text, not a number: two lines before an ellipsis. */
+  .operator-current-job .metric-value--name {
+    font-size: 1.3rem;
+    line-height: 1.2;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
   }
 
   .operator-current-job .current-job-note,

@@ -101,14 +101,17 @@ fi
 # reports X 0-799, Y 0-1280). kiosk-session-cage.sh turns the display landscape
 # with `wlr-randr --transform 90`, but wlroots 0.18 does not apply an output's
 # transform to touch coordinates, so without this every tap lands at a swapped
-# position. The matrix is a 90-degree rotation matching KIOSK_ROTATE=90; if the
-# rotation there changes, this must change with it (270 = "0 -1 1 1 0 0").
+# position. The matrix pairs with KIOSK_ROTATE=90 and was set by tapping the
+# live panel (2026-09-23): the textbook 90-degree "0 1 0 -1 0 1" landed every
+# tap 180 degrees off (left<->right AND top<->bottom), so the touch controller's
+# axes are the reverse of the display's. If the rotation there changes, this
+# must change with it (KIOSK_ROTATE=270 -> "0 1 0 -1 0 1").
 # Matched on the Goodix name so it is a no-op on other panels. Takes effect when
 # cage next opens the device (reboot, or kill cage and the session restarts it).
 if [ "$STACK" = "cage" ]; then
     echo "==> Installing touch rotation rule..."
     cat > /etc/udev/rules.d/99-weldflex-touch-rotate.rules <<'EOF'
-ENV{ID_INPUT_TOUCHSCREEN}=="1", ATTRS{name}=="*Goodix Capacitive TouchScreen", ENV{LIBINPUT_CALIBRATION_MATRIX}="0 1 0 -1 0 1"
+ENV{ID_INPUT_TOUCHSCREEN}=="1", ATTRS{name}=="*Goodix Capacitive TouchScreen", ENV{LIBINPUT_CALIBRATION_MATRIX}="0 -1 1 1 0 0"
 EOF
     udevadm control --reload
     udevadm trigger --subsystem-match=input --action=change

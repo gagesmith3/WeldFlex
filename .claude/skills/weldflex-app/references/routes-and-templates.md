@@ -7,6 +7,7 @@ Page routes (`app.py`) — verified against the code 2026-09-09:
 /                                   landing.html
 /operator                           operator.html
 /operator/admin                     admin.html   (hidden — 700ms long-press on header home button, see admin.js)
+/operator/robot-web                 robot_web.html   (Admin tool, frames the controller's own web app — see `robot-web` below)
 /operator/parts                     parts.html
 /operator/job-history               job_history.html
 /operator/single-shot               single_shot.html   (Admin tool, one weld at a saved target — see the `single-shot` section below)
@@ -53,8 +54,8 @@ rather than a standalone runner.
 `/ui/tcp-calibrate/enable-drag`, `/ui/job/start`, `/ui/jog/move`).
 Multi-word features are hyphenated (`tcp-calibrate`, `studs-preview`), never
 nested further (never `/ui/tcp/calibrate`). Live features: `connection`,
-`diagnostics`, `ft`, `job`, `jog`, `manager`, `parts`, `recipes`, `settings`,
-`single-shot`, `tcp-calibrate`.
+`diagnostics`, `fault`, `ft`, `job`, `jog`, `manager`, `parts`, `recipes`,
+`settings`, `single-shot`, `tcp-calibrate`.
 
 `ft` is `/ui/ft/{reading,stream,inspect}` — that's the whole route set;
 `setup` and `zero` don't exist as routes (an earlier revision of this file
@@ -87,6 +88,42 @@ This is affordable **only because `robot.ft_read()` is a pure cache read**. If
 anything behind `/ui/ft/reading` ever issues an RPC again, 10 Hz becomes 10
 robot round trips a second per viewer. See `docs/ROBOT_TELEMETRY.md`,
 "Host-side discipline".
+
+`robot-web` is the Admin page's window onto the FAIRINO controller's own web
+app. It has no `/ui/*` routes; everything load-bearing is outside Flask:
+
+- **It only works on the kiosk.** The controller sends
+  `X-Frame-Options: SAMEORIGIN`, so the iframe points at the Pi's loopback
+  nginx proxy (`deploy/rpi/nginx-robot-web.conf`, installer step 4b), which drops
+  that header, strips the session cookie's IP `Domain`, proxies the app's
+  `ws://<host>:9999` feed, and injects `static/js/robot_web_bridge.js`. Off the
+  kiosk the page shows a direct link instead. `WELDFLEX_ROBOT_WEB_URL` overrides
+  the frame URL.
+- **The frame host must match the page host.** `robot_web_page()` builds the URL
+  from `request.host`: the kiosk loads `localhost`, and a `127.0.0.1` frame is
+  cross-site to it, so the login cookie is blocked as third-party and login
+  loops.
+- **Typing goes through a relay.** The bridge posts `kbd-open` to the page on
+  field focus; the page focuses a hidden `data-kbd` input so `keyboard.js` opens,
+  and relays each value back by `postMessage`.
+- **The page has no header** (`hide_header=True` in `base.html`); a floating
+  `.robot-web-home` button is the only way out.
+- Run/Pause/Stop in the controller's app bypass `JobManager` — no run history,
+  no cycle tracking.
+
+`fault` is the header's fault modal: `GET /ui/fault/status` renders
+`partials/fault_panel.html` and `POST /ui/fault/reset` clears the fault.
+- **It has no chip of its own.** When `_fault_view()` reports `fault` or `estop`,
+  `partials/connection_chips.html` turns the State chip red and wraps it in a
+  button that opens `#fault-modal` (`base.html`). `static/js/fault.js` polls
+  the panel once a second, only while the modal is open. Both routes are pure
+  cache reads of `get_universal_state()`.
+- **`unknown` is not `clear`.** When no source answers, a blank code proves
+  nothing.
+- **Reset is the same verb as Diagnostics → Reset Errors.** Both routes call
+  `_reset_errors_result()`, and `robot.reset_errors()` refuses up front when
+  `commands_available` is false or the E-stop is engaged. A 0 return means the
+  request was accepted, not that the fault cleared; the next frame shows that.
 
 `single-shot` is the Admin page's one-stud tool (replaced `faceplate`
 2026-09-14): `POST /ui/single-shot/{fire,move-position,move-home,feed}` behind
@@ -172,7 +209,7 @@ Only `.home-body`, `.home-hero` and `.home-nav-panel` went with `home.html`.
 ## `icon_safe()` / `_ICONS`
 
 ```python
-# app.py — _ICONS = { ... }, 31 entries of raw SVG <path>/<circle> inner markup
+# app.py — _ICONS = { ... }, 32 entries of raw SVG <path>/<circle> inner markup
 _ICONS = { "home": '...', "link_2": '...', ... }
 
 # app.py — def icon_safe(...), right after _ICONS
@@ -211,7 +248,7 @@ icon names found this session — check it before assuming an icon works.)
 processor, which returns the module-level `KIOSK_MODE = os.getenv("WELDFLEX_KIOSK",
 "0") == "1"` constant (defined separately, near the top of `app.py`, not
 computed inside `inject_defaults()` itself) and applied as
-`<body class="kiosk">` in `base.html:12`. All primary action buttons enforce
+`<body class="kiosk">` on `base.html`'s `<body>` tag. All primary action buttons enforce
 `min-height: 44px` at the `@media (max-width: 820px)` breakpoint. New
 operator-facing UI should follow the same constraint — no scrolling, touch
 targets ≥44px.

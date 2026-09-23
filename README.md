@@ -58,7 +58,8 @@ cd ~/WeldFlex
 cp deploy/rpi/.env.rpi.example .env          # installer only warns, won't do this
 
 sudo nmcli con add type ethernet ifname eth0 con-name robot-net \
-    ipv4.method manual ipv4.addresses 192.168.58.100/24
+    ipv4.method manual ipv4.addresses 192.168.58.100/24 \
+    ipv4.never-default yes ipv6.method disabled   # else eth0 steals the default route
 sudo nmcli con up robot-net
 
 sudo bash deploy/rpi/install_rpi_kiosk.sh
@@ -72,3 +73,7 @@ cd ~/WeldFlex && git pull
 sudo systemctl restart weldflex-backend
 pkill cage   # supervising loop relaunches it — no reboot
 ```
+
+A pull that changes what the installer copies into the system (the nginx
+proxy conf, the touch rule, the service unit) only takes effect after re-running
+`sudo bash deploy/rpi/install_rpi_kiosk.sh`.

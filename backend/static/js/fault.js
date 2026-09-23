@@ -1,5 +1,6 @@
 /*
- * Header fault modal (#fault-modal in base.html), opened from the Faults chip.
+ * Header fault modal (#fault-modal in base.html), opened from the State chip
+ * while it shows FAULT / E-STOP.
  *
  * The panel body is fetched on open and re-polled once a second while the modal
  * is visible, then emptied on close so nothing polls behind a hidden dialog.

@@ -17,7 +17,7 @@ As of the Lite rebuild there are two, selected by an installer flag:
 |---|---|---|
 | Install | `sudo bash deploy/rpi/install_rpi_kiosk.sh` | `… install_rpi_kiosk.sh --x11` |
 | Session script | `kiosk-session-cage.sh` | `kiosk-session-x11.sh` |
-| Packages | `cage seatd` | `xserver-xorg xinit matchbox-window-manager xinput x11-xserver-utils unclutter` |
+| Packages | `cage seatd wlr-randr` | `xserver-xorg xinit matchbox-window-manager xinput x11-xserver-utils unclutter` |
 | Launched by | `.bash_profile` → script directly | `.bash_profile` → `startx` → script |
 | Supervises | compositor **and** browser | browser only |
 
@@ -52,13 +52,26 @@ hand-editing installed copies.
    `raspi-config nonint do_wayland W1`, and tolerates its absence: on Lite there
    is no desktop session to switch away from, so the toggle may not exist. The
    cage path skips it entirely.
-2. **Packages**: `chromium curl python3 python3-pip python3-venv` plus the
-   stack-specific set above. The Bookworm-and-later binary is `chromium`, **not**
-   `chromium-browser` — the old Raspbian name fails with "not found".
+2. **Packages**: `chromium curl git nginx python3 python3-pip python3-venv` plus
+   the stack-specific set above. The Bookworm-and-later binary is `chromium`,
+   **not** `chromium-browser` — the old Raspbian name fails with "not found".
+   - **2b (cage only)**: `dpkg-divert`s Adwaita's `default` cursor out of the
+     way — the only thing that removes cage's stuck centre cursor (see the
+     installer comments for what didn't work).
+   - **2c (cage only)**: udev rule `99-weldflex-touch-rotate.rules` sets a
+     libinput calibration matrix on the Goodix touchscreen, because wlroots 0.18
+     does not rotate touch with the output. The matrix pairs with the session
+     script's `KIOSK_ROTATE`; change both together.
 3. **Python venv** at `$PROJECT_DIR/venv`, `pip install -r requirements.txt`
    (Flask + python-dotenv + waitress — the FAIRINO SDK is stdlib-only and is
    added to `sys.path` at import time, never pip-installed).
 4. **`.env` check**: warns only; it does not copy `.env.rpi.example` for you.
+   - **4b. Robot web app proxy**: installs `nginx-robot-web.conf` as an nginx
+     site with `ROBOT_IP` taken from `.env`'s `WELDFLEX_ROBOT_IP` (default
+     `192.168.58.2`), removes Debian's default site, and reloads nginx.
+     Loopback only: `:8081` proxies the controller's web app for Admin → Robot
+     Web App, and `:9999` proxies its websocket. The conf's comments explain
+     the header, cookie and websocket rewrites.
 5. **Session scripts**: `chmod +x` on both, and `usermod -aG video,input,render`
    for the kiosk user. logind normally grants wlroots its DRM/input access via
    the seat; the group membership is belt-and-braces and harmless on X11.
@@ -90,9 +103,14 @@ inside the session script instead. Revisit only with hardware proof.
 2. Poll `curl -sf http://localhost:5000/` until the backend answers. systemd
    starts the backend and the session independently with no ordering; an `After=`
    would not help, since it orders start, not socket readiness.
-3. `while true; do cage -- chromium --kiosk …; sleep 2; done`. cage exits when its
-   child exits, so this one loop covers both a Chromium crash and a compositor
-   crash. The X11 script only ever supervised Chromium.
+3. `while true; do cage -- bash "$0" --in-cage; sleep 2; done`. cage exits when
+   its child exits, so this one loop covers both a Chromium crash and a
+   compositor crash. The X11 script only ever supervised Chromium.
+4. The `--in-cage` second stage runs inside the compositor: `wlr-randr` rotates
+   (`KIOSK_ROTATE`, default 90) and scales (`KIOSK_SCALE`, default 1.6) the
+   `KIOSK_OUTPUT` (default `DSI-2`), then `exec`s Chromium. Chromium's
+   `--force-device-scale-factor` is not used because under Wayland it rendered
+   into a corner of the panel.
 
 Chromium flags and why: `--ozone-platform=wayland` (cage path only),
 `--no-sandbox` (carried over from the X11 stack; worth testing removal, since a

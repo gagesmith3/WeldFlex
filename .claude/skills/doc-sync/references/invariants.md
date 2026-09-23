@@ -193,8 +193,9 @@ diff <(grep -ohE 'WELDFLEX_[A-Z_]+' backend/*.py | sort -u) \
 Not every variable needs to be in an example file — but any variable that
 **gates a whole feature** (the page 404s, the button is disabled, the endurance
 run refuses) must appear in README with what it does. Known vestigial pair:
-`WELDFLEX_FTP_USER` / `WELDFLEX_FTP_PASS` are set and unused (`LuaUpload` goes
-over XML-RPC); don't "fix" that by documenting them as required.
+`WELDFLEX_FTP_USER` / `WELDFLEX_FTP_PASS` are set and unused (Lua upload is
+XML-RPC `FileUpload` plus raw TCP on :20010, never FTP); don't "fix" that by
+documenting them as required.
 
 ---
 

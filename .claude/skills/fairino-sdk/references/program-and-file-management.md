@@ -76,9 +76,22 @@ though it's not SDK-mandated.
     `(tmp_error, errorStr)` — the reverse of the SDK's usual
     "tuple-on-success, bare-int-on-failure" pattern seen elsewhere. **Never
     discard that errorStr**: it carries the controller's actual reason
-    (`lua_name:...---line_num:N---error_info:...`). `robot_service.upload_program`
-    unpacks it and `_upload_hint()` puts it in the raised message — adding that
-    was what cracked the `weld.lua` refusal on 2026-07-28.
+    (`lua_name:...---line_num:N---error_info:...`). Surfacing it was what
+    cracked the `weld.lua` refusal on 2026-07-28.
+  - **WeldFlex no longer calls `LuaUpload`** (2026-09-23). `robot_service`'s
+    `_lua_upload()` runs the same two steps itself: `transfer_file()`
+    reimplements `__FileUpLoad`'s wire format byte for byte, and then calls raw
+    `LuaUpLoadUpdate`. That way every failure names its step (`rpc`/`connect`/
+    `send`/`reply`, plus the controller's reply bytes or the socket error), not
+    a bare `-1`. Socket errors are *returned*, never raised: `RobotLink.call`
+    treats a raised `OSError` as a dead XML-RPC link, and :20010 failing proves
+    nothing about that. Written for a Pi-only `-1` on a 183-byte Goto program.
+  - **:20010 refuses the first connect after `FileUpload`.** Confirmed live
+    2026-09-23: attempt 1 is refused and attempt 2 is accepted 0.10 s later.
+    Windows retries a refused SYN inside its TCP stack, so the SDK "works"
+    there. Linux (the Pi) fails on the first refusal, so every upload failed.
+    `transfer_file()` retries a refusal for `FILE_CONNECT_RETRY_S` (3 s).
+    Don't drop that retry and go back to calling `LuaUpload` on the kiosk.
   - **`-1` has two distinct sources — read the detail before touching the Lua.**
     `-1` is `RobotError.ERR_OTHER` (`:570`). `__FileUpLoad` (`9477-9539`)
     returns it bare from **five raw-socket points** on :20010 (refused

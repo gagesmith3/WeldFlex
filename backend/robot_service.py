@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+import logging
 import os
+import socket
 import tempfile
 import threading
 import time
@@ -19,7 +22,28 @@ from robot_link import (
     is_conn_code,
 )
 
+logger = logging.getLogger(__name__)
+
 SDK_TIMEOUT_S = 5.0
+
+# The controller's raw file-transfer socket, used by every Lua upload. Separate
+# from XML-RPC (20003), so commands can work while uploads fail.
+FILE_PORT = 20010
+# The SDK uses 20 s. Connect and reply each wait this long, and both have to
+# fit inside the 30 s upload call timeout, or the caller gives up while the
+# worker is still mid-transfer. The controller normally replies in under 1 s.
+FILE_SOCKET_TIMEOUT_S = 10.0
+# The controller's :20010 listener can refuse the connect that immediately
+# follows an accepted FileUpload (Pi, 2026-09-23: ECONNREFUSED every time).
+# Windows silently retries a refused connect for about a second; Linux fails
+# on the first refusal. Retry a refusal for this long, on every platform.
+FILE_CONNECT_RETRY_S = 3.0
+FILE_CONNECT_RETRY_INTERVAL_S = 0.1
+UPLOAD_CALL_TIMEOUT_S = 30.0
+# SDK framing: "/f/b" + 10-digit total size + 32-char md5 ... file ... "/b/f".
+# The size field counts the whole frame, header and trailer included.
+_FILE_HEAD_LEN = 4 + 10 + 32
+_FILE_TAIL = b"/b/f"
 
 # Mode(): the controller's operating mode, not a program state. Auto is what a
 # Lua program runs under; manual is the one with the green indicator, and is
@@ -214,40 +238,104 @@ class WeldTelemetrySnapshot:
         return None
 
 
-def _upload_hint(err_code: int, path: Path, detail: Any = None) -> str:
-    """Turn the SDK's catch-all upload codes into something actionable.
+@dataclass(frozen=True)
+class FileTransferResult:
+    """Outcome of one raw file transfer, naming the step that failed.
 
-    `LuaUpload` reports -1 (RobotError.ERR_OTHER) for five unrelated failures in
-    `__FileUpLoad` — a refused FileUpload RPC, no connect to the file port, a
-    short send, and a reply that wasn't "SUCCESS" — and never says which. Worth
-    naming, because a bare "code -1" reads like a compile error and it is not:
-    the transfer fails before the controller ever parses the Lua.
-
-    The exception: when the transfer succeeds but the post-upload
-    `LuaUpLoadUpdate` check refuses the file, the SDK returns (code, errorStr)
-    instead of a bare int. `detail` carries that errorStr — the controller's
-    own stated reason — so when it is present, report it verbatim and skip the
-    transfer guesswork, which would be wrong.
+    stage: "ok", "rpc" (FileUpload refused), "connect", "send" or "reply".
     """
-    if detail not in (None, ""):
-        return (
-            f" — the transfer completed; the controller refused the file at the "
-            f"post-upload check: {detail}"
-        )
-    if err_code == -1:
+
+    stage: str
+    detail: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return self.stage == "ok"
+
+
+def transfer_file(
+    rpc: Any,
+    host: str,
+    path: Path,
+    file_type: int = 0,
+    port: int = FILE_PORT,
+    timeout: float = FILE_SOCKET_TIMEOUT_S,
+    connect_retry_s: float = FILE_CONNECT_RETRY_S,
+) -> FileTransferResult:
+    """Send a file to the controller the way the SDK's `__FileUpLoad` does, but
+    say which step failed.
+
+    The SDK returns the same bare -1 for a refused FileUpload RPC, no connect
+    to :20010, a short send, and a reply that isn't "SUCCESS", then discards
+    the reason. That left a Pi-only upload failure (2026-09-23) undiagnosable.
+    The wire format here is the SDK's, byte for byte; the differences are that
+    `sendall` replaces a single unchecked `send`, a refused connect is retried
+    (see FILE_CONNECT_RETRY_S), the socket is always closed, and socket errors
+    are returned rather than raised. That last one matters:
+    `RobotLink.call` treats a raised OSError as a dead XML-RPC link and tears
+    the session down, and a failure on this separate port proves nothing
+    about that link.
+
+    `rpc` is the SDK's XML-RPC proxy (`Robot.robot`). An XML-RPC failure on the
+    FileUpload call itself is left to raise, since that one *is* link evidence.
+    """
+    data = path.read_bytes()
+    total = len(data) + _FILE_HEAD_LEN + len(_FILE_TAIL)
+    md5 = hashlib.md5(data).hexdigest()
+
+    rtn = rpc.FileUpload(file_type, path.name)
+    if rtn != 0:
+        return FileTransferResult("rpc", f"the controller refused the FileUpload request (code {rtn})")
+
+    sent = 0
+    started = time.monotonic()
+    attempts = 0
+    while True:
+        attempts += 1
         try:
-            size = path.stat().st_size
-        except OSError:
-            size = -1
-        return (
-            f" — the controller refused the transfer of {size} bytes; the Lua was "
-            "never parsed. Every program known to upload here is under 2 KB, so try "
-            "a smaller file first, then Reconnect from Robot Diagnostics (an aborted "
-            "transfer leaves the file port unusable until the session is remade)."
+            sock = socket.create_connection((host, port), timeout=timeout)
+            break
+        except ConnectionRefusedError as exc:
+            elapsed = time.monotonic() - started
+            if elapsed >= connect_retry_s:
+                return FileTransferResult(
+                    "connect",
+                    f"{host}:{port} refused all {attempts} connects over {elapsed:.1f}s: {exc!r}",
+                )
+            time.sleep(FILE_CONNECT_RETRY_INTERVAL_S)
+        except OSError as exc:
+            return FileTransferResult("connect", f"could not connect to {host}:{port}: {exc!r}")
+    if attempts > 1:
+        logger.info(
+            "File port %s:%s accepted on attempt %d after %.2fs",
+            host, port, attempts, time.monotonic() - started,
         )
-    if err_code == -7:
-        return " — the SDK could not find the local file it was asked to send."
-    return ""
+    try:
+        try:
+            for chunk in (f"/f/b{total:10d}{md5}".encode("utf-8"), data, _FILE_TAIL):
+                sock.sendall(chunk)
+                sent += len(chunk)
+        except OSError as exc:
+            return FileTransferResult(
+                "send", f"the transfer to {host}:{port} broke after {sent} of {total} bytes: {exc!r}"
+            )
+        # The SDK waits 0.5 s before its single recv; keep that so a reply the
+        # controller sends in pieces arrives whole.
+        time.sleep(0.5)
+        try:
+            reply = sock.recv(1024)
+        except socket.timeout:
+            return FileTransferResult("reply", f"sent all {total} bytes; no reply within {timeout:.0f}s")
+        except OSError as exc:
+            return FileTransferResult("reply", f"sent all {total} bytes; reading the reply failed: {exc!r}")
+    finally:
+        sock.close()
+
+    if reply[:7] == b"SUCCESS":
+        return FileTransferResult("ok")
+    if not reply:
+        return FileTransferResult("reply", f"sent all {total} bytes; the controller closed the socket without replying")
+    return FileTransferResult("reply", f"sent all {total} bytes; the controller replied {reply[:200]!r} instead of SUCCESS")
 
 
 class WeldFlexRobotService:
@@ -669,13 +757,31 @@ class WeldFlexRobotService:
         if replace:
             # Ignore delete errors; file may not already exist.
             self._call(lambda r: r.LuaDelete(path.name))
-        error = self._call(lambda r: r.LuaUpload(str(path)), timeout=30.0)
-        err_code, detail = self._unpack(error)
+        self._lua_upload(path)
+        return path.name
+
+    def _lua_upload(self, path: Path) -> None:
+        """The SDK's `LuaUpload`, in two steps that each report their own failure.
+
+        Step 1 is the raw transfer on :20010 (`transfer_file`), which fails
+        before the controller parses anything. Step 2 is `LuaUpLoadUpdate`, the
+        controller's post-upload check. That check EXECUTES top-level Lua (see
+        the fairino-sdk skill), and its errorStr is the controller's own reason.
+        """
+        result = self._call(
+            lambda r: transfer_file(r.robot, r.ip_address, path),
+            timeout=UPLOAD_CALL_TIMEOUT_S,
+        )
+        if not result.ok:
+            logger.warning("Lua upload of %s failed at %s: %s", path.name, result.stage, result.detail)
+            raise RuntimeError(f"Lua upload of {path.name} failed at the {result.stage} step: {result.detail}")
+        resp = self._call(lambda r: r.robot.LuaUpLoadUpdate(path.name), timeout=UPLOAD_CALL_TIMEOUT_S)
+        err_code, detail = self._unpack(resp)
         if err_code != 0:
             raise RuntimeError(
-                f"LuaUpload failed (code {err_code}): {path.name}{_upload_hint(err_code, path, detail)}"
+                f"Lua upload of {path.name} failed (code {err_code}): the transfer completed; "
+                f"the controller refused the file at the post-upload check: {detail}"
             )
-        return path.name
 
     def upload_studs_data(self, studs: list, filename: str = "studs_data_wf.lua") -> None:
         """Generate a studs data Lua file from a list of {x, y} dicts and upload it to the robot.
@@ -697,10 +803,7 @@ class WeldFlexRobotService:
         try:
             with open(tmp_path, "w", encoding="utf-8") as f:
                 f.write(lua_content)
-            error = self._call(lambda r: r.LuaUpload(tmp_path), timeout=30.0)
-            err_code, _ = self._unpack(error)
-            if err_code != 0:
-                raise RuntimeError(f"LuaUpload failed (code {err_code}): {filename}")
+            self._lua_upload(Path(tmp_path))
         finally:
             try:
                 os.remove(tmp_path)

@@ -1,3 +1,6 @@
+import hashlib
+import socket
+import sys
 import threading
 import time
 from types import SimpleNamespace
@@ -6,7 +9,13 @@ import pytest
 
 from robot_feed import FeedSnapshot
 from robot_link import ConnSnapshot, ConnState, ForceSnapshot
-from robot_service import DO_PULSE_MAX_S, WeldFlexRobotService, WeldTelemetrySnapshot
+from robot_service import (
+    DO_PULSE_MAX_S,
+    FileTransferResult,
+    WeldFlexRobotService,
+    WeldTelemetrySnapshot,
+    transfer_file,
+)
 
 
 def _connected_snapshot(generation: int) -> ConnSnapshot:
@@ -692,3 +701,171 @@ def test_pulse_do_clamps_the_hold_and_reports_a_failed_write(monkeypatch):
 
     # Clamped: the hold blocks the only command channel for its whole duration.
     assert slept == [DO_PULSE_MAX_S]
+
+
+# --- Lua upload: the raw :20010 transfer, one reported failure per step ---
+
+
+class _FakeFilePort:
+    """A one-shot stand-in for the controller's file port on localhost.
+
+    Reads until the SDK frame's "/b/f" trailer, records what arrived, then
+    answers with `reply` (None closes the socket without answering, and
+    "silent" holds it open without answering).
+    """
+
+    def __init__(self, reply=b"SUCCESS", bind_port=0):
+        self.reply = reply
+        self.received = b""
+        self._server = socket.create_server(("127.0.0.1", bind_port))
+        self.port = self._server.getsockname()[1]
+        self._thread = threading.Thread(target=self._serve, daemon=True)
+        self._thread.start()
+
+    def _serve(self):
+        conn, _ = self._server.accept()
+        with conn:
+            while not self.received.endswith(b"/b/f"):
+                chunk = conn.recv(4096)
+                if not chunk:
+                    break
+                self.received += chunk
+            if self.reply == "silent":
+                time.sleep(1.0)
+            elif self.reply is not None:
+                conn.sendall(self.reply)
+        self._server.close()
+
+    def join(self):
+        self._thread.join(timeout=2.0)
+
+
+class _FileRpc:
+    def __init__(self, upload_rtn=0, check=(0, "")):
+        self.upload_rtn = upload_rtn
+        self.check = check
+        self.calls = []
+
+    def FileUpload(self, file_type, name):
+        self.calls.append(("FileUpload", file_type, name))
+        return self.upload_rtn
+
+    def LuaUpLoadUpdate(self, name):
+        self.calls.append(("LuaUpLoadUpdate", name))
+        return list(self.check)
+
+
+def _lua(tmp_path, body=b"PTP(zerozero, 25, -1, 0)\n"):
+    path = tmp_path / "goto.lua"
+    path.write_bytes(body)
+    return path
+
+
+def test_transfer_file_sends_the_sdk_frame_byte_for_byte(tmp_path):
+    body = b"PTP(zerozero, 25, -1, 0)\n"
+    path = _lua(tmp_path, body)
+    port = _FakeFilePort()
+    rpc = _FileRpc()
+
+    result = transfer_file(rpc, "127.0.0.1", path, port=port.port, timeout=2.0)
+    port.join()
+
+    assert result.ok, result.detail
+    assert rpc.calls == [("FileUpload", 0, "goto.lua")]
+    total = len(body) + 46 + 4
+    md5 = hashlib.md5(body).hexdigest()
+    assert port.received == f"/f/b{total:10d}{md5}".encode() + body + b"/b/f"
+
+
+def test_transfer_file_reports_a_refused_fileupload_without_touching_the_port(tmp_path):
+    rpc = _FileRpc(upload_rtn=-1)
+    result = transfer_file(rpc, "127.0.0.1", _lua(tmp_path), port=1, timeout=0.5)
+    assert result.stage == "rpc"
+    assert "code -1" in result.detail
+
+
+def test_transfer_file_reports_an_unreachable_port_instead_of_raising(tmp_path):
+    """Raising OSError here would make RobotLink tear down a healthy XML-RPC session."""
+    with socket.create_server(("127.0.0.1", 0)) as s:
+        dead_port = s.getsockname()[1]
+    result = transfer_file(
+        _FileRpc(), "127.0.0.1", _lua(tmp_path), port=dead_port, timeout=0.5, connect_retry_s=0.3,
+    )
+    assert result.stage == "connect"
+    # Linux reports each refusal at once, so the retry loop is what gives up.
+    # Windows retries a refused SYN inside the stack (the behavior that hid the
+    # controller's slow listener on the dev box) and times out first.
+    assert f"127.0.0.1:{dead_port}" in result.detail
+    if sys.platform != "win32":
+        assert "refused all" in result.detail
+
+
+def test_transfer_file_waits_out_a_listener_that_opens_late(tmp_path):
+    """The Pi case: the controller accepts FileUpload, but :20010 refuses the
+    immediate connect. Linux gives up on the first refusal, and Windows does not.
+    """
+    with socket.create_server(("127.0.0.1", 0)) as s:
+        late_port = s.getsockname()[1]
+    ports = []
+
+    def open_late():
+        time.sleep(0.4)
+        ports.append(_FakeFilePort(bind_port=late_port))
+
+    threading.Thread(target=open_late, daemon=True).start()
+    result = transfer_file(_FileRpc(), "127.0.0.1", _lua(tmp_path), port=late_port, timeout=2.0)
+
+    assert result.ok, result.detail
+    ports[0].join()
+    assert ports[0].received.endswith(b"/b/f")
+
+
+@pytest.mark.parametrize(
+    "reply, expect",
+    [
+        (b"FAIL md5", "b'FAIL md5'"),
+        (None, "closed the socket without replying"),
+        ("silent", "no reply within"),
+    ],
+)
+def test_transfer_file_reports_what_the_controller_answered(tmp_path, reply, expect):
+    port = _FakeFilePort(reply=reply)
+    result = transfer_file(_FileRpc(), "127.0.0.1", _lua(tmp_path), port=port.port, timeout=0.3)
+    port.join()
+    assert result.stage == "reply"
+    assert expect in result.detail
+
+
+def _upload_service(monkeypatch, rpc, transfer):
+    service = WeldFlexRobotService("127.0.0.1")
+    raw = SimpleNamespace(robot=rpc, ip_address="192.168.58.2", LuaDelete=lambda name: 0)
+    monkeypatch.setattr(service, "_call", lambda fn, **kwargs: fn(raw))
+    monkeypatch.setattr("robot_service.transfer_file", transfer)
+    return service
+
+
+def test_upload_program_names_the_failed_step(monkeypatch, tmp_path):
+    rpc = _FileRpc()
+    service = _upload_service(
+        monkeypatch, rpc,
+        lambda r, host, path: FileTransferResult("connect", f"could not connect to {host}:20010"),
+    )
+    with pytest.raises(RuntimeError, match=r"failed at the connect step: could not connect to 192\.168\.58\.2:20010"):
+        service.upload_program(str(_lua(tmp_path)))
+    # The post-upload check never runs after a failed transfer.
+    assert rpc.calls == []
+
+
+def test_upload_program_reports_the_controllers_own_check_refusal(monkeypatch, tmp_path):
+    rpc = _FileRpc(check=(-1, "line 3: pcall is not allowed"))
+    service = _upload_service(monkeypatch, rpc, lambda r, host, path: FileTransferResult("ok"))
+    with pytest.raises(RuntimeError, match="post-upload check: line 3: pcall is not allowed"):
+        service.upload_program(str(_lua(tmp_path)))
+    assert rpc.calls == [("LuaUpLoadUpdate", "goto.lua")]
+
+
+def test_upload_program_succeeds_through_both_steps(monkeypatch, tmp_path):
+    rpc = _FileRpc()
+    service = _upload_service(monkeypatch, rpc, lambda r, host, path: FileTransferResult("ok"))
+    assert service.upload_program(str(_lua(tmp_path)), replace=True) == "goto.lua"
+    assert rpc.calls == [("LuaUpLoadUpdate", "goto.lua")]

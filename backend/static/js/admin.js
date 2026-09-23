@@ -18,6 +18,12 @@
     var btn = document.querySelector('.home-btn');
     if (!btn) return;
 
+    // A touch hold on a link starts a link drag (~650 ms on the Chromium kiosk,
+    // seen on the ED-HMI3020 2026-09-23), and the drag fires pointercancel before
+    // HOLD_MS. The CSS -webkit-user-drag: none covers this too; belt and braces.
+    btn.setAttribute('draggable', 'false');
+    btn.addEventListener('dragstart', function (e) { e.preventDefault(); });
+
     btn.addEventListener('pointerdown', function () {
       _holdFired = false;
       clearTimeout(_timer);

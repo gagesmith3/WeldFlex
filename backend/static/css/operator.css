@@ -107,6 +107,9 @@ input, textarea, select, [contenteditable] {
   border-radius: 12px;
   transition: background 120ms ease, transform 120ms ease, box-shadow 120ms ease;
   flex-shrink: 0;
+  /* It is a link, so a touch hold starts a link drag at ~650 ms, which fires
+     pointercancel and kills admin.js's 700 ms hold timer. */
+  -webkit-user-drag: none;
 }
 
 .home-btn svg {

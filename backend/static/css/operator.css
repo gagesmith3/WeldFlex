@@ -658,6 +658,53 @@ input, textarea, select, [contenteditable] {
   word-break: break-word;
 }
 
+/* Header chips: Connection and State (which also carries FAULT / E-STOP). */
+.chip-grid-header .chip {
+  min-width: 0;
+}
+
+/* One line, always: a wrapped value would change the sticky header's height. */
+.chip-grid-header .chip-value {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The State chip becomes a button while a fault or E-stop is active. Strip the
+   button chrome so it renders exactly as the chip it wraps. */
+.chip-btn {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.chip-btn .chip-error {
+  border-color: var(--stop);
+  background: #fbd9dc;
+  box-shadow: 0 0 0 2px rgba(180, 35, 47, 0.35);
+  animation: chip-fault-pulse 1.6s ease-in-out infinite;
+}
+
+.chip-btn .chip-value {
+  color: var(--stop);
+}
+
+.chip-btn:active .chip {
+  transform: scale(0.97);
+}
+
+@keyframes chip-fault-pulse {
+  50% { box-shadow: 0 0 0 4px rgba(180, 35, 47, 0.15); }
+}
+
 /* Secondary line on the connection chip: latency, attempt number, "manual".
    min-height holds the line open when the text is empty (see status_chip's
    reserve_detail). Without it the chip changes height as the link state changes,
@@ -2302,6 +2349,70 @@ pre {
 
 .btn.wf-cancel {
   background: var(--muted);
+}
+
+/* ── Header fault modal (base.html #fault-modal) ── */
+.wf-modal.fault-modal {
+  width: 380px;
+  padding: 18px 22px;
+  gap: 12px;
+}
+
+.fault-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 150px;
+}
+
+.fault-panel-title {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.fault-panel-fault .fault-panel-title,
+.fault-panel-estop .fault-panel-title { color: var(--stop); }
+.fault-panel-clear .fault-panel-title { color: var(--run); }
+.fault-panel-unknown .fault-panel-title { color: var(--pause); }
+
+.fault-panel-rows {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 12px;
+}
+
+.fault-panel-rows dt {
+  font-size: 0.66rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.fault-panel-rows dd {
+  margin: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.fault-panel-note {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.35;
+  color: var(--muted);
+}
+
+.fault-panel-warn { color: var(--stop); }
+.fault-panel-ok { color: var(--run); }
+
+.btn.fault-reset-btn {
+  background: var(--stop);
+  color: #ffffff;
+  min-width: 120px;
 }
 
 /* ── Calibrate workflow page ── */

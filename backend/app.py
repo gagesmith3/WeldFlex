@@ -46,6 +46,7 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)-7s %(name)s %(message)s",
     stream=sys.stderr,
 )
+log = logging.getLogger("weldflex.app")
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 _force_stream_slots = threading.BoundedSemaphore(4)
@@ -418,6 +419,10 @@ _ICONS = {
     "zap":              '<path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/>',
     "arrow_down_to_line": '<path d="M12 17V3"/><path d="m6 11 6 6 6-6"/><path d="M19 21H5"/>',
     "globe":            '<circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>',
+    # Header State chip's FAULT / E-STOP display and the fault modal.
+    "shield_check":     '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/>',
+    "octagon_x":        '<path d="M2.586 16.726A2 2 0 0 1 2 15.312V8.688a2 2 0 0 1 .586-1.414l4.688-4.688A2 2 0 0 1 8.688 2h6.624a2 2 0 0 1 1.414.586l4.688 4.688A2 2 0 0 1 22 8.688v6.624a2 2 0 0 1-.586 1.414l-4.688 4.688a2 2 0 0 1-1.414.586H8.688a2 2 0 0 1-1.414-.586z"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/>',
+    "rotate_ccw":       '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>',
 }
 
 def icon_safe(name, fallback="circle", width=14, height=14, class_=""):
@@ -1670,12 +1675,80 @@ def _connection_snapshot() -> dict:
         "error": snap.last_error,
         "force_lbf": ustate.fz_lbf,
         "target_press_lbf": ustate.target_press_lbf,
+        "fault": _fault_view(ustate),
+    }
+
+
+def _fault_view(ustate) -> dict:
+    """What the header's State chip and the fault modal show. Pure cache read.
+
+    `status` is one of:
+      "estop"   — E-stop engaged. Reset is refused until it is released.
+      "fault"   — a controller fault or alarm code is set.
+      "clear"   — a live source answered and reported no fault.
+      "unknown" — no source could answer; a blank code here proves nothing.
+    """
+    if ustate.emergency_stop:
+        status = "estop"
+    elif ustate.has_fault:
+        status = "fault"
+    elif ustate.fault_known:
+        status = "clear"
+    else:
+        status = "unknown"
+
+    code = None
+    if ustate.fault_main:
+        code = f"{ustate.fault_main}/{ustate.fault_sub or 0}"
+
+    reset_blocker = None
+    if not ustate.commands_available:
+        reset_blocker = "Commands unavailable — the robot is not accepting commands right now."
+    elif ustate.emergency_stop:
+        reset_blocker = "Release the E-stop first."
+
+    return {
+        "status": status,
+        "code": code,
+        "main": ustate.fault_main,
+        "sub": ustate.fault_sub,
+        "label": ustate.fault_label,
+        "source": ustate.fault_source,
+        "program_state": ustate.program_state,
+        "can_reset": reset_blocker is None,
+        "reset_blocker": reset_blocker,
+        "last_reset_age_s": robot.last_reset_age_s(),
     }
 
 
 @app.route("/ui/connection")
 def ui_connection():
     return render_template("partials/connection_chips.html", snapshot=_connection_snapshot())
+
+
+@app.route("/ui/fault/status")
+def ui_fault_status():
+    """Body of the header's fault modal, polled while it is open. Cache read only."""
+    return render_template(
+        "partials/fault_panel.html", fault=_fault_view(robot.get_universal_state())
+    )
+
+
+@app.route("/ui/fault/reset", methods=["POST"])
+def ui_fault_reset():
+    """Operator Reset from the header fault modal. Same guarded verb as Diagnostics."""
+    return _reset_errors_result()
+
+
+def _reset_errors_result():
+    try:
+        robot.reset_errors()
+        log.info("controller fault reset sent by operator")
+        ok, payload = True, {}
+    except Exception as e:
+        log.warning("controller fault reset refused/failed: %s", e)
+        ok, payload = False, {"error": str(e)}
+    return render_template("partials/command_result.html", ok=ok, title="Reset Errors", payload=payload)
 
 
 @app.route("/ui/connection/connect", methods=["POST"])
@@ -1785,12 +1858,7 @@ def ui_diagnostics_feed():
 
 @app.route("/ui/diagnostics/reset-errors", methods=["POST"])
 def ui_diagnostics_reset_errors():
-    try:
-        robot.reset_errors()
-        ok, payload = True, {}
-    except Exception as e:
-        ok, payload = False, {"error": str(e)}
-    return render_template("partials/command_result.html", ok=ok, title="Reset Errors", payload=payload)
+    return _reset_errors_result()
 
 @app.route("/ui/diagnostics/stop-program", methods=["POST"])
 def ui_diagnostics_stop_program():

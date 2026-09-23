@@ -527,6 +527,97 @@ def test_frame_fault_codes_distinguish_zero_from_absent(monkeypatch):
     assert faulted.fault_source == "8083"
 
 
+def test_frame_coarse_error_and_estop_reach_universal_state(monkeypatch):
+    """The header's State chip reads these; the coarse class is the only label."""
+    service = WeldFlexRobotService("127.0.0.1")
+    monkeypatch.setattr(service, "snapshot", lambda: _connected_snapshot(1))
+
+    monkeypatch.setattr(service, "feed_snapshot", lambda: _feed_frame(
+        error_code=0, emergency_stop=0,
+    ))
+    clean = service.get_universal_state()
+    assert clean.has_fault is False
+    assert clean.fault_known is True
+    assert clean.fault_label is None
+    assert clean.emergency_stop is False
+
+    monkeypatch.setattr(service, "feed_snapshot", lambda: _feed_frame(
+        error_code=3, main_errcode=117, sub_errcode=4, emergency_stop=1,
+    ))
+    faulted = service.get_universal_state()
+    assert faulted.has_fault is True
+    assert faulted.fault_class == 3
+    assert faulted.fault_label == "collision"
+    assert faulted.emergency_stop is True
+
+
+def test_a_blank_fault_code_from_a_dead_source_is_not_clear(monkeypatch):
+    """No feed and no XML-RPC: fault_main is None, which must read as unknown."""
+    service = WeldFlexRobotService("127.0.0.1")
+    monkeypatch.setattr(
+        service, "snapshot",
+        lambda: ConnSnapshot(state=ConnState.FAULTED.value, connected=False),
+    )
+    monkeypatch.setattr(service, "feed_snapshot", lambda: FeedSnapshot())
+
+    ustate = service.get_universal_state()
+    assert ustate.has_fault is False
+    assert ustate.fault_known is False
+    assert ustate.emergency_stop is None
+
+
+def _reset_service(monkeypatch, snapshot, feed, reply=0):
+    service = WeldFlexRobotService("127.0.0.1")
+    calls = []
+
+    class RawRobot:
+        def ResetAllError(self):
+            calls.append("ResetAllError")
+            return reply
+
+    monkeypatch.setattr(service, "snapshot", lambda: snapshot)
+    monkeypatch.setattr(service, "feed_snapshot", lambda: feed)
+    monkeypatch.setattr(service, "_call", lambda fn, **kwargs: fn(RawRobot()))
+    return service, calls
+
+
+def test_reset_errors_sends_reset_and_records_when(monkeypatch):
+    service, calls = _reset_service(
+        monkeypatch, _connected_snapshot(1), _feed_frame(main_errcode=117, emergency_stop=0),
+    )
+    assert service.last_reset_age_s() is None
+    service.reset_errors()
+    assert calls == ["ResetAllError"]
+    assert service.last_reset_age_s() is not None
+
+
+def test_reset_errors_is_refused_without_commands(monkeypatch):
+    """The telemetry window: the feed is live, XML-RPC is not — the verb can't arrive."""
+    service, calls = _reset_service(
+        monkeypatch,
+        ConnSnapshot(state=ConnState.FAULTED.value, connected=False),
+        _feed_frame(main_errcode=117),
+    )
+    with pytest.raises(RuntimeError, match="Commands are unavailable"):
+        service.reset_errors()
+    assert calls == []
+
+
+def test_reset_errors_is_refused_while_estop_is_engaged(monkeypatch):
+    service, calls = _reset_service(
+        monkeypatch, _connected_snapshot(1), _feed_frame(emergency_stop=1),
+    )
+    with pytest.raises(RuntimeError, match="E-stop"):
+        service.reset_errors()
+    assert calls == []
+
+
+def test_reset_errors_reports_a_refused_reset(monkeypatch):
+    service, _ = _reset_service(monkeypatch, _connected_snapshot(1), _feed_frame(), reply=14)
+    with pytest.raises(RuntimeError, match="code 14"):
+        service.reset_errors()
+
+
 def test_pulse_do_drives_the_line_high_then_low_in_one_dispatch(monkeypatch):
     """The whole pulse is one worker submission. The link runs a single worker, so
     keeping both writes inside it is what guarantees nothing is interleaved between

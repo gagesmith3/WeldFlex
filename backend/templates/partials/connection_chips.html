@@ -10,7 +10,7 @@
 #}
 {% set conn = {
     'connected':    ('ONLINE',       'link_2',     'ok'),
-    'connecting':   ('CONNECTING',   'refresh-cw', 'warn'),
+    'connecting':   ('CONNECTING',   'refresh_cw', 'warn'),
     'telemetry':    ('TELEMETRY',    'link_2',     'warn'),
     'degraded':     ('UNSTABLE',     'link_2',     'warn'),
     'faulted':      ('OFFLINE',      'link_2_off', 'error'),
@@ -32,7 +32,15 @@
 
 {% set conn_tooltip = snapshot.error or (snapshot.ip and 'Robot at ' ~ snapshot.ip) or '' %}
 
-<div class="chip-grid chip-grid-compact">
+{#
+  A fault or E-stop is a robot state, so it takes over the State chip rather than
+  getting a chip of its own. While one is active the chip turns red and becomes a
+  button that opens the fault modal in base.html (details + Reset).
+#}
+{% set f = snapshot.fault %}
+{% set faulted = f.status in ('fault', 'estop') %}
+
+<div class="chip-grid chip-grid-compact chip-grid-header">
   {{ status_chip(
       'Connection',
       label,
@@ -44,12 +52,25 @@
       tooltip=conn_tooltip
     )
   }}
+  {% if faulted %}
+  <button type="button" class="chip-btn" onclick="WfFault.open()" aria-label="Robot fault — open details and reset">
+    {% if f.status == 'estop' %}
+      {{ status_chip('State', 'E-STOP', icon='octagon_x', state='error', compact=true,
+                     detail='release to reset', reserve_detail=true) }}
+    {% else %}
+      {{ status_chip('State', 'FAULT', icon='shield_alert', state='error', compact=true,
+                     detail=f.label or f.code or 'tap for details', reserve_detail=true) }}
+    {% endif %}
+  </button>
+  {% else %}
   {{ status_chip(
       'State',
       snapshot.program_state,
       icon=state_icon,
       compact=true,
+      reserve_detail=true,
       tooltip=conn_tooltip
     )
   }}
+  {% endif %}
 </div>

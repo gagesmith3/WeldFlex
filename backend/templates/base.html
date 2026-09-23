@@ -38,6 +38,25 @@
       {% block body %}{% endblock %}
     </div>
   </main>
+  {% if not hide_header %}
+  {# Opened from the header's State chip while it shows FAULT / E-STOP. #fault-panel is filled and polled only
+     while open (static/js/fault.js); the buttons stay put so a poll can't eat a tap. #}
+  <div id="fault-modal" class="wf-modal-overlay" hidden onclick="if (event.target === this) WfFault.close()">
+    <div class="wf-modal fault-modal" role="dialog" aria-modal="true" aria-label="Robot fault">
+      <div id="fault-panel"></div>
+      <div class="wf-modal-actions">
+        <button type="button" class="btn wf-cancel" onclick="WfFault.close()">Close</button>
+        <button type="button" class="btn fault-reset-btn"
+                hx-post="/ui/fault/reset" hx-target="#toast-rack" hx-swap="innerHTML"
+                hx-disabled-elt="this" hx-on::after-request="WfFault.refresh()">
+          <span class="btn-icon">{{ icon_safe('rotate_ccw', width=14, height=14) }}</span>
+          <span>Reset</span>
+        </button>
+      </div>
+    </div>
+  </div>
+  <script defer src="{{ url_for('static', filename='js/fault.js') }}"></script>
+  {% endif %}
   <div id="toast-rack" class="toast-rack" aria-live="polite"></div>
   {% include "partials/keyboard.html" %}
   <script defer src="{{ url_for('static', filename='js/keyboard.js') }}"></script>

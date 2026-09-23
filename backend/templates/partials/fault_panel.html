@@ -1,0 +1,49 @@
+{#
+  Body of the header fault modal (#fault-modal in base.html). Polled once a second
+  while the modal is open; a pure cache read, like the chips. The Reset/Close
+  buttons live outside this partial so a poll never swaps them out from under a tap.
+#}
+{% set headings = {
+    'estop':   ('E-stop engaged',        'octagon_x'),
+    'fault':   ('Robot fault',            'shield_alert'),
+    'clear':   ('No active fault',        'shield_check'),
+    'unknown': ('Fault status unknown',   'shield_alert'),
+  } %}
+{% set heading, heading_icon = headings[fault.status] %}
+{% set age = fault.last_reset_age_s %}
+{% set recent_reset = age is not none and age < 60 %}
+
+<div class="fault-panel fault-panel-{{ fault.status }}">
+  <p class="fault-panel-title">
+    {{ icon_safe(heading_icon, width=20, height=20) }}
+    <span>{{ heading }}</span>
+  </p>
+
+  <dl class="fault-panel-rows">
+    {% if fault.status == 'fault' %}
+    <div><dt>Type</dt><dd>{{ fault.label or 'not reported' }}</dd></div>
+    <div><dt>Code</dt><dd>{{ fault.code or '—' }}</dd></div>
+    {% endif %}
+    <div><dt>Program</dt><dd>{{ fault.program_state }}</dd></div>
+    <div><dt>Source</dt><dd>{{ fault.source }}</dd></div>
+  </dl>
+
+  {% if fault.status == 'estop' %}
+    <p class="fault-panel-note">Release the E-stop, then press Reset to clear the fault it leaves behind.</p>
+  {% elif fault.status == 'fault' and recent_reset and age >= 3 %}
+    <p class="fault-panel-note fault-panel-warn">Still faulted {{ age|round|int }}s after Reset. This fault may need a physical
+      reset (drive power, E-stop cycle) or clearing on the pendant.</p>
+  {% elif fault.status == 'fault' and recent_reset %}
+    <p class="fault-panel-note">Reset sent — waiting for the controller…</p>
+  {% elif fault.status == 'fault' %}
+    <p class="fault-panel-note">Reset clears resettable faults only. It does not move the robot or restart the job.</p>
+  {% elif fault.status == 'clear' and recent_reset %}
+    <p class="fault-panel-note fault-panel-ok">Cleared. Reload or re-run the job when ready.</p>
+  {% elif fault.status == 'unknown' %}
+    <p class="fault-panel-note">Neither the status feed nor XML-RPC is answering, so a fault can't be ruled out.</p>
+  {% endif %}
+
+  {% if fault.reset_blocker %}
+    <p class="fault-panel-note fault-panel-warn">{{ fault.reset_blocker }}</p>
+  {% endif %}
+</div>

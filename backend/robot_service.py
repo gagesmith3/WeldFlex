@@ -8,6 +8,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable
 
+import frame_8083 as f8
 from robot_link import (
     ConnSnapshot,
     ConnState,
@@ -121,6 +122,16 @@ class UniversalRobotState:
     fault_sub: int | None = None
     fault_source: str = "none"
     has_fault: bool = False
+    # False when neither the feed nor XML-RPC could answer: a blank code from a
+    # dead source is "no reading", never "no fault".
+    fault_known: bool = False
+    # The feed's coarse class (Appendix 1, 0-12) — the only fault *description*
+    # the controller publishes; main/sub have no vendor text. None off-feed.
+    fault_class: int | None = None
+    fault_label: str | None = None
+    # 1/0 from a fresh frame, None when there is no frame to ask. ResetAllError
+    # cannot clear an engaged E-stop, so reset is refused while this is True.
+    emergency_stop: bool | None = None
     probe_error: str | None = None
     run_error: str | None = None
 
@@ -251,6 +262,7 @@ class WeldFlexRobotService:
         self._weld_telemetry_stop: threading.Event | None = None
         self._weld_telemetry_thread: threading.Thread | None = None
         self._weld_telemetry_config: tuple[int, int, tuple[int, ...], float] | None = None
+        self._last_reset_ts: float | None = None
 
     # --- connection surface (delegated to the link) ---
 
@@ -327,6 +339,9 @@ class WeldFlexRobotService:
             fault_sub = feed.fault_sub or None
             fault_source = "8083"
             telemetry_source = "8083"
+            fault_class = feed.get("error_code")
+            estop = feed.emergency_stop
+            emergency_stop = None if estop is None else bool(estop)
         else:
             prog_raw = snap.program_state_raw
             line = snap.current_line
@@ -334,9 +349,15 @@ class WeldFlexRobotService:
             fault_sub = snap.fault_sub
             fault_source = snap.fault_source
             telemetry_source = "rpc"
+            fault_class = None
+            emergency_stop = None
 
         program_state = STATE_MAP.get(prog_raw, "unknown") if prog_raw is not None else "unknown"
-        has_fault = fault_main is not None and fault_main != 0
+        has_fault = bool(fault_main) or bool(fault_class)
+        # "cache" is the SDK's dead local read, which reports 0 whatever the
+        # controller is doing (see fairino-sdk error-handling reference).
+        fault_known = fault_source == "8083" or (fault_source == "rpc" and connected)
+        fault_label = f8.ERROR_CODES.get(fault_class) if fault_class else None
 
         # A live feed proves the controller is reachable even when XML-RPC is
         # not. Say so rather than showing "offline" over a robot that is plainly
@@ -429,6 +450,10 @@ class WeldFlexRobotService:
             fault_sub=fault_sub,
             fault_source=fault_source,
             has_fault=has_fault,
+            fault_known=fault_known,
+            fault_class=fault_class,
+            fault_label=fault_label,
+            emergency_stop=emergency_stop,
             probe_error=probe_err,
                  tcp_z=(feed.tcp_z if fast_feed_fresh and feed.tcp_z is not None
                          else telemetry.tcp_z if telemetry_current else None),
@@ -1114,10 +1139,31 @@ class WeldFlexRobotService:
         }
 
     def reset_errors(self) -> None:
+        """Clear the controller's resettable faults (ResetAllError).
+
+        Refused up front in the two cases where the call cannot work, so the
+        operator gets a reason instead of a bare code: no XML-RPC link (the
+        `telemetry` window included — the verb would never arrive), and an
+        engaged E-stop, which only a physical release clears. A 0 return means
+        the controller accepted the request, not that the fault is gone; the
+        header chip shows whether it actually cleared on the next frame.
+        """
+        ustate = self.get_universal_state()
+        if not ustate.commands_available:
+            raise RuntimeError("Commands are unavailable — the robot is not accepting XML-RPC right now")
+        if ustate.emergency_stop:
+            raise RuntimeError("E-stop is engaged — release it before resetting")
         err = self._call(lambda r: r.ResetAllError())
         err_code, _ = self._unpack(err)
+        self._last_reset_ts = time.time()
         if err_code != 0:
             raise RuntimeError(f"ResetAllError failed (code {err_code})")
+
+    def last_reset_age_s(self) -> float | None:
+        """Seconds since reset_errors() last reached the controller, or None."""
+        if self._last_reset_ts is None:
+            return None
+        return max(0.0, time.time() - self._last_reset_ts)
 
     def uptime(self) -> str:
         elapsed = int(time.time() - self._start_time)

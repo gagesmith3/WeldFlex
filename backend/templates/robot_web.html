@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+
+{% block body %}
+{# The controller's own web app, framed under the WeldFlex header so the Home
+   button stays in reach — the kiosk has no address bar or back button. #}
+<div class="robot-web">
+  {% if not kiosk_mode %}
+    <p class="robot-web-note">
+      The controller refuses to be framed outside the kiosk.
+      <a href="{{ direct_url }}" target="_blank" rel="noopener">Open {{ direct_url }} in a new tab</a>.
+    </p>
+  {% endif %}
+  {# No header on this page (hide_header), so this is the only way out. #}
+  <a class="robot-web-home" href="/operator" aria-label="Back to Home" draggable="false">
+    {{ icon_safe('home', width=24, height=24) }}
+  </a>
+  <iframe id="robot-web-frame" class="robot-web-frame" src="{{ robot_web_url }}" title="Robot web app"></iframe>
+  {# The on-screen keyboard types here; each change is relayed into whichever
+     field has focus in the frame (static/js/robot_web_bridge.js, over there). #}
+  <input id="robot-web-relay" class="robot-web-relay" type="text" inputmode="none"
+         data-kbd="alpha" tabindex="-1" aria-hidden="true" autocomplete="off">
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  'use strict';
+  var frame = document.getElementById('robot-web-frame');
+  var relay = document.getElementById('robot-web-relay');
+  var frameOrigin = new URL(frame.src, location.href).origin;
+  var openId = null;
+
+  function send(msg) {
+    msg.id = openId;
+    frame.contentWindow.postMessage(msg, frameOrigin);
+  }
+
+  window.addEventListener('message', function (e) {
+    if (e.origin !== frameOrigin || !e.data || e.data.wf !== 'kbd-open') return;
+    // Blur first so keyboard.js sees a fresh focus (and the new mode) even when
+    // the relay already had it — before openId moves on, so the done it sends
+    // is addressed to the old field and ignored for the new one.
+    relay.blur();
+    openId = e.data.id;
+    relay.type = e.data.secret ? 'password' : 'text';
+    relay.dataset.kbd = e.data.mode === 'num' ? 'num' : 'alphanum';
+    relay.name = e.data.label || 'input';
+    relay.value = e.data.value || '';
+    relay.focus();
+  });
+
+  relay.addEventListener('input', function () { send({ wf: 'kbd-value', value: relay.value }); });
+  relay.addEventListener('blur', function () { send({ wf: 'kbd-done' }); });
+
+  // The keyboard overlays the bottom of the screen, which on the controller's
+  // login page is where the password field sits. While it is open, shrink the
+  // frame to the space above it and have the field scrolled into view.
+  var kbd = document.getElementById('wf-kbd');
+  var wrap = frame.parentElement;
+  new MutationObserver(function () {
+    var open = !kbd.classList.contains('wf-kbd-hidden');
+    wrap.style.paddingBottom = open ? kbd.offsetHeight + 'px' : '';
+    if (open) requestAnimationFrame(function () { send({ wf: 'kbd-reveal' }); });
+  }).observe(kbd, { attributes: true, attributeFilter: ['class'] });
+})();
+</script>
+{% endblock %}

@@ -8,6 +8,7 @@
       <section class="home-nav-grid">
         {{ nav_card('/operator/job-history', 'activity', 'Run History', 'Review completed and aborted production runs.') }}
         {{ nav_card('/operator/single-shot', 'zap', 'Single Shot') }}
+        {{ nav_card('/operator/robot-web', 'globe', 'Robot Web App') }}
       </section>
     {% endcall %}
     {% call panel_shell('Connection Settings', 'Runtime robot connection and polling configuration.', class_name='settings-shell') %}

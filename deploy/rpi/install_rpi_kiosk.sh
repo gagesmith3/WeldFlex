@@ -57,7 +57,7 @@ fi
 echo "==> Installing system packages..."
 apt-get update -qq
 
-COMMON_PKGS="chromium curl git python3 python3-pip python3-venv"
+COMMON_PKGS="chromium curl git nginx python3 python3-pip python3-venv"
 if [ "$STACK" = "cage" ]; then
     # seatd is a fallback seat provider; logind normally handles this, but having
     # it installed costs nothing and unblocks cage if libseat cannot reach logind.
@@ -132,6 +132,22 @@ if [ ! -f "$PROJECT_DIR/.env" ]; then
     echo "  Copy deploy/rpi/.env.rpi.example to .env and fill in your robot IP."
     echo ""
 fi
+
+# ── 4b. Robot web app proxy ───────────────────────────────────────────────────
+# Admin → Robot Web App frames the controller's own web app, which sends
+# X-Frame-Options: SAMEORIGIN; see the rationale in nginx-robot-web.conf. The
+# robot IP comes from .env so a re-IP'd controller only needs a re-run here.
+echo "==> Installing robot web app proxy (127.0.0.1:8081)..."
+ROBOT_IP="$(grep -E '^WELDFLEX_ROBOT_IP=' "$PROJECT_DIR/.env" 2>/dev/null | cut -d= -f2)"
+ROBOT_IP="${ROBOT_IP:-192.168.58.2}"
+sed "s/ROBOT_IP/$ROBOT_IP/g" "$DEPLOY_DIR/nginx-robot-web.conf" \
+    > /etc/nginx/sites-available/weldflex-robot-web
+ln -sf /etc/nginx/sites-available/weldflex-robot-web /etc/nginx/sites-enabled/
+# Debian's default site listens on :80 on every interface; nothing here uses it.
+rm -f /etc/nginx/sites-enabled/default
+nginx -t
+systemctl enable nginx
+systemctl reload-or-restart nginx
 
 # ── 5. Session scripts + device access ────────────────────────────────────────
 echo "==> Setting permissions..."

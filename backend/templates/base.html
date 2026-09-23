@@ -14,7 +14,8 @@
 </head>
 <body{% if kiosk_mode %} class="kiosk"{% endif %}>
   {% from "components/ui.html" import action_button, htmx_mount, icon_link, result_mount with context %}
-  <main class="app-shell">
+  <main class="app-shell{% if hide_header %} app-shell-bare{% endif %}">
+    {% if not hide_header %}
     <header class="app-header universal-navbar">
       <div class="app-header-left">
         {{ icon_link('/operator', 'home', '', 'home-btn', 'Back to Home') }}
@@ -31,6 +32,7 @@
         </div>
       </div>
     </header>
+    {% endif %}
 
     <div class="app-content-scroll {{ content_class or '' }}">
       {% block body %}{% endblock %}

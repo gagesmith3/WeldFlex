@@ -103,7 +103,9 @@
     }
 
     previewLabel.textContent = label;
-    previewValue.textContent = active.value || '—';
+    // The robot web app's login relays passwords through here (robot_web.html).
+    var shown = active.type === 'password' ? active.value.replace(/./g, '•') : active.value;
+    previewValue.textContent = shown || '—';
     previewEl.hidden = false;
   }
 

@@ -417,6 +417,7 @@ _ICONS = {
     "bar_chart_2":      '<line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>',
     "zap":              '<path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/>',
     "arrow_down_to_line": '<path d="M12 17V3"/><path d="m6 11 6 6 6-6"/><path d="M19 21H5"/>',
+    "globe":            '<circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>',
 }
 
 def icon_safe(name, fallback="circle", width=14, height=14, class_=""):
@@ -469,6 +470,26 @@ def admin():
         "status_interval_ms": os.getenv("WELDFLEX_STATUS_INTERVAL_MS", "1000"),
     }
     return render_template("admin.html", page_title="Admin", settings=settings)
+
+@app.route("/operator/robot-web")
+def robot_web_page():
+    # The controller sends X-Frame-Options: SAMEORIGIN, so the iframe only works
+    # through the kiosk's loopback proxy (deploy/rpi/nginx-robot-web.conf).
+    # Elsewhere the frame is refused and the page offers a plain link instead.
+    # Same hostname the page was loaded from (the kiosk uses `localhost`): to the
+    # browser, localhost and 127.0.0.1 are different sites, so a frame on the
+    # other one gets its login cookie blocked as third-party and loops on login.
+    page_host = request.host.rsplit(":", 1)[0] if not request.host.endswith("]") else request.host
+    default_url = f"http://{page_host}:8081/" if KIOSK_MODE else f"http://{robot.robot_ip}/"
+    return render_template(
+        "robot_web.html", page_title="Robot Web App",
+        content_class="app-content-scroll-locked",
+        # The header costs ~95 of the panel's 500 CSS px; the page floats its
+        # own small Home button instead.
+        hide_header=True,
+        robot_web_url=os.getenv("WELDFLEX_ROBOT_WEB_URL", default_url),
+        direct_url=f"http://{robot.robot_ip}/",
+    )
 
 @app.route("/ui/settings/save", methods=["POST"])
 def ui_settings_save():

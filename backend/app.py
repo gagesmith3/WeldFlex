@@ -1143,10 +1143,51 @@ def ui_single_shot_feed():
 def calibration():
     return render_template("calibration.html", page_title="Calibration")
 
+_JOG_SETTINGS_PATH = os.path.join(os.path.dirname(__file__), 'jog_settings.json')
+_JOG_DEFAULTS = {"step": 30.0, "vel": 10.0}
+
+def _jog_settings_load():
+    """Last-used jog step/velocity, so the operator isn't re-typing them every visit."""
+    settings = dict(_JOG_DEFAULTS)
+    try:
+        with open(_JOG_SETTINGS_PATH) as f:
+            saved = json.load(f)
+        for key in settings:
+            if key in saved:
+                settings[key] = float(saved[key])
+    except (OSError, ValueError, TypeError):
+        pass
+    return settings
+
+def _jog_settings_save(settings):
+    tmp_path = f"{_JOG_SETTINGS_PATH}.tmp"
+    with open(tmp_path, 'w') as f:
+        json.dump(settings, f, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp_path, _JOG_SETTINGS_PATH)
+
 @app.route("/operator/jog")
 def jog_page():
-    return render_template("jog.html", page_title="Jog",
+    return render_template("jog.html", page_title="Jog", jog_settings=_jog_settings_load(),
                            status_interval_ms=int(os.getenv("WELDFLEX_STATUS_INTERVAL_MS", "1000")))
+
+@app.route("/ui/jog/settings", methods=["POST"])
+def ui_jog_settings():
+    """Save the step/velocity fields as the new defaults. Bad input is ignored, not saved."""
+    settings = _jog_settings_load()
+    for key, field, lo, hi in (("step", "cartesian_step", 0, 1000), ("vel", "jog_velocity", 0, 100)):
+        try:
+            value = float(request.form.get(field, ""))
+        except ValueError:
+            continue
+        if lo < value <= hi:
+            settings[key] = value
+    try:
+        _jog_settings_save(settings)
+    except OSError as e:
+        return (str(e), 500)
+    return ("", 204)
 
 @app.route("/ui/jog/status")
 def ui_jog_status():
@@ -1165,8 +1206,8 @@ def ui_jog_move():
             frame=request.form.get("cartesian_frame", "base"),
             axis=request.form.get("axis", ""),
             direction=request.form.get("direction", ""),
-            step=float(request.form.get("cartesian_step") or 5),
-            vel=float(request.form.get("jog_velocity") or 20),
+            step=float(request.form.get("cartesian_step") or _JOG_DEFAULTS["step"]),
+            vel=float(request.form.get("jog_velocity") or _JOG_DEFAULTS["vel"]),
         )
         return ("", 204)
     except Exception as e:

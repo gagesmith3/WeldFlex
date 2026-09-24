@@ -21,3 +21,5 @@ fairino-python-sdk-main/**/__pycache__/
 *.obj
 *.o
 
+backend/jog_settings.json
+backend/jog_settings.json.tmp

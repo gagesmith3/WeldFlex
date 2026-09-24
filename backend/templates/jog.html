@@ -17,12 +17,12 @@
     <div class="jog-setting-field">
       <label for="cartesian_step">Step (mm / deg)</label>
       <input id="cartesian_step" name="cartesian_step" type="text"
-             value="5" inputmode="none" data-kbd="num">
+             value="{{ '%g' % jog_settings.step }}" inputmode="none" data-kbd="num">
     </div>
     <div class="jog-setting-field">
       <label for="jog_velocity">Velocity (%)</label>
       <input id="jog_velocity" name="jog_velocity" type="text"
-             value="20" inputmode="none" data-kbd="num">
+             value="{{ '%g' % jog_settings.vel }}" inputmode="none" data-kbd="num">
     </div>
   </div>
 
@@ -56,6 +56,16 @@ function jogSetFrame(btn, value) {
     b.classList.toggle('active', b === btn);
   });
 }
+
+// Whatever the operator types becomes the default next time the page opens.
+['cartesian_step', 'jog_velocity'].forEach(function (id) {
+  document.getElementById(id).addEventListener('change', function () {
+    var p = new URLSearchParams();
+    p.append('cartesian_step', document.getElementById('cartesian_step').value);
+    p.append('jog_velocity',   document.getElementById('jog_velocity').value);
+    fetch('/ui/jog/settings', { method: 'POST', body: p }).catch(function () {});
+  });
+});
 
 (function () {
   var _jogging = false;

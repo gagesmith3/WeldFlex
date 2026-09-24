@@ -1,0 +1,94 @@
+{# Wi-Fi card on the Settings page. Rendered by app.py's _wifi_card(); every
+   /ui/wifi/* action swaps the whole card. While a connect runs, the card polls
+   itself every second until the operation finishes. The modal it opens lives in
+   settings.html, outside this swap target, so a poll never closes it. #}
+<div id="wifi-card" class="wifi-card"
+  {% if op.running %}hx-get="/ui/wifi/card" hx-trigger="every 1s" hx-swap="outerHTML"{% endif %}>
+
+  <div class="wifi-head">
+    <div class="wifi-head-title">
+      {{ icon_safe('wifi', width=18, height=18) }}
+      <h3>Wi-Fi</h3>
+    </div>
+    {% if wifi.available and wifi.radio_on %}
+    <button type="button" class="btn primary wifi-btn wifi-scan-btn"
+      hx-get="/ui/wifi/card?rescan=1" hx-target="#wifi-card" hx-swap="outerHTML"
+      hx-disabled-elt="this" {% if op.running %}disabled{% endif %}>
+      <span class="btn-icon">{{ icon_safe('repeat', width=14, height=14) }}</span>
+      <span class="btn-icon-loading">{{ icon_safe('loader', width=14, height=14) }}</span>
+      <span>Scan</span>
+    </button>
+    {% endif %}
+  </div>
+
+  {% if not wifi.available %}
+    <p class="wifi-note">{{ wifi.reason }}</p>
+  {% else %}
+
+  {# Two separate facts, on purpose: the operator needs to see that the robot
+     link is not the Wi-Fi link before changing anything. #}
+  <div class="wifi-links">
+    <div class="wifi-link {{ 'is-ok' if wifi.ssid else '' }}">
+      <span class="wifi-link-label">Network</span>
+      <strong>
+        {% if not wifi.radio_on %}Wi-Fi is off
+        {% elif wifi.ssid %}{{ wifi.ssid }}
+        {% else %}Not connected{% endif %}
+      </strong>
+      {% if wifi.address %}<span class="wifi-link-detail">{{ wifi.address }}{% if wifi.signal is not none %} · {{ wifi.signal }}%{% endif %}</span>{% endif %}
+    </div>
+    <div class="wifi-link {{ 'is-ok' if wifi.robot_ok else 'is-warn' }}">
+      <span class="wifi-link-label">Robot link</span>
+      <strong>{{ wifi.robot_dev or 'no route' }}</strong>
+      <span class="wifi-link-detail">
+        {% if wifi.robot_ok %}Not affected by Wi-Fi changes{% elif wifi.robot_dev %}Robot is routed over Wi-Fi. Check the cable.{% else %}Check the robot cable.{% endif %}
+      </span>
+    </div>
+  </div>
+
+  {% if op.visible %}
+  <div class="wifi-banner wifi-banner-{{ op.state }}" role="status">
+    {% if op.running %}
+      <span class="wifi-spin">{{ icon_safe('loader', width=16, height=16) }}</span>
+      <span>Connecting to <strong>{{ op.ssid }}</strong>. This can take up to 30 s. The robot link stays up.</span>
+    {% else %}
+      <span>{{ op.message }}</span>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {% if error %}<div class="wifi-banner wifi-banner-failed" role="alert">{{ error }}</div>{% endif %}
+  {% if job_active %}<div class="wifi-banner wifi-banner-warn">A job is running. Wi-Fi can be changed once it finishes.</div>{% endif %}
+
+  {% if not wifi.radio_on %}
+    <button type="button" class="btn primary wifi-btn" hx-post="/ui/wifi/radio-on"
+      hx-target="#wifi-card" hx-swap="outerHTML" hx-disabled-elt="this">Turn Wi-Fi on</button>
+  {% else %}
+  <ul class="wifi-list" role="list">
+    {% for n in wifi.networks %}
+    <li>
+      <button type="button" class="wifi-row {{ 'is-current' if n.in_use else '' }}"
+        data-ssid="{{ n.ssid }}" data-secured="{{ 1 if n.secured else 0 }}"
+        data-saved="{{ 1 if n.saved else 0 }}" data-current="{{ 1 if n.in_use else 0 }}"
+        data-enterprise="{{ 1 if n.enterprise else 0 }}"
+        {% if op.running or job_active %}disabled{% endif %}>
+        <span class="wifi-bars wifi-bars-{{ n.bars }}" aria-label="Signal {{ n.signal }}%"><i></i><i></i><i></i></span>
+        <span class="wifi-ssid">{{ n.ssid }}</span>
+        {% if n.in_use %}<span class="wifi-tag wifi-tag-ok">Connected</span>
+        {% elif n.saved %}<span class="wifi-tag">Saved</span>{% endif %}
+        {% if n.secured %}<span class="wifi-lock" title="{{ n.security }}">{{ icon_safe('lock', width=14, height=14) }}</span>{% endif %}
+      </button>
+    </li>
+    {% else %}
+    <li class="wifi-empty">No networks found. Tap Scan.</li>
+    {% endfor %}
+    <li>
+      <button type="button" class="wifi-row wifi-row-other" data-other="1"
+        {% if op.running or job_active %}disabled{% endif %}>
+        <span class="wifi-ssid">Other network…</span>
+      </button>
+    </li>
+  </ul>
+  {% endif %}
+  {% endif %}
+</div>

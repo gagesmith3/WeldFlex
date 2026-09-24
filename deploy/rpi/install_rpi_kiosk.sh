@@ -149,6 +149,16 @@ nginx -t
 systemctl enable nginx
 systemctl reload-or-restart nginx
 
+# ── 4c. Wi-Fi permission for Settings → Wi-Fi ─────────────────────────────────
+# The backend runs as the kiosk user, and NetworkManager refuses changes from a
+# non-root user with no session. This rule grants the specific NM actions
+# backend/wifi.py needs. It uses polkit's JavaScript .rules format (Bookworm
+# ships polkit 122). polkitd picks up the file without a restart.
+echo "==> Installing Wi-Fi polkit rule..."
+sed "s/KIOSK_USER/$KIOSK_USER/g" "$DEPLOY_DIR/50-weldflex-wifi.rules" \
+    > /etc/polkit-1/rules.d/50-weldflex-wifi.rules
+chmod 644 /etc/polkit-1/rules.d/50-weldflex-wifi.rules
+
 # ── 5. Session scripts + device access ────────────────────────────────────────
 echo "==> Setting permissions..."
 chmod +x "$DEPLOY_DIR/kiosk-session-cage.sh" "$DEPLOY_DIR/kiosk-session-x11.sh"

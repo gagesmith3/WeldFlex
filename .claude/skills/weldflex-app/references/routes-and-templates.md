@@ -16,7 +16,7 @@ Page routes (`app.py`) — verified against the code 2026-09-09:
 /operator/calibration/force-sensor  force_sensor.html
 /operator/tcp-calibrate             tcp_calibrate.html
 /operator/robot-diagnostics         robot_diagnostics.html
-/operator/settings                  settings.html   (placeholder — "Settings are coming soon", no routes behind it)
+/operator/settings                  settings.html   (Wi-Fi card only — partials/wifi_card.html, /ui/wifi/*)
 /manager                            redirects to /manager/part-designer (see bug note below)
 /manager/part-designer               manager.html (active_tab=part-designer)
 /manager/settings                    manager.html (active_tab=settings)
@@ -55,7 +55,14 @@ rather than a standalone runner.
 Multi-word features are hyphenated (`tcp-calibrate`, `studs-preview`), never
 nested further (never `/ui/tcp/calibrate`). Live features: `connection`,
 `diagnostics`, `fault`, `ft`, `job`, `jog`, `manager`, `parts`, `recipes`,
-`settings`, `single-shot`, `tcp-calibrate`.
+`settings`, `single-shot`, `tcp-calibrate`, `wifi`.
+
+`wifi` is `/ui/wifi/{card,connect,forget,radio-on}`. Each one re-renders the whole
+card, and errors show inside it. `backend/wifi.py` does the work through `nmcli`.
+It is host-OS code outside the robot chain, and its docstring has the rule that
+the robot's eth0 profile is never touched. Connect runs on a thread, and the card
+polls `/ui/wifi/card` every second while it runs. Connect and forget are refused
+while a job is active.
 
 `ft` is `/ui/ft/{reading,stream,inspect}` — that's the whole route set;
 `setup` and `zero` don't exist as routes (an earlier revision of this file

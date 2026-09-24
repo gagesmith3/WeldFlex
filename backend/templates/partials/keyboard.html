@@ -59,8 +59,36 @@
       <button type="button" class="wf-key wf-key-fn" data-key="backspace">⌫</button>
     </div>
     <div class="wf-kbd-row">
+      <button type="button" class="wf-key wf-key-fn" data-key="panel:sym">#+=</button>
       <button type="button" class="wf-key wf-key-fn" data-key="-">−</button>
       <button type="button" class="wf-key wf-key-fn" data-key="_">_</button>
+      <button type="button" class="wf-key wf-key-space" data-key=" ">space</button>
+      <button type="button" class="wf-key wf-key-fn" data-key="clear">C</button>
+      <button type="button" class="wf-key wf-key-enter" data-key="enter">↵</button>
+    </div>
+  </div>
+
+  {# ── Symbols, reached from the alphanumeric panel's #+= key. Wi-Fi passwords
+       (Settings → Wi-Fi) need these; nothing else on the kiosk did before. ── #}
+  <div class="wf-kbd-panel" data-panel="sym" hidden>
+    <div class="wf-kbd-row">
+      {% for ch in ['!','@','#','$','%','^','&','*','(',')'] %}
+      <button type="button" class="wf-key" data-key="{{ ch }}">{{ ch }}</button>
+      {% endfor %}
+    </div>
+    <div class="wf-kbd-row">
+      {% for ch in ['~','`','=','+','[',']','{','}','\\','|'] %}
+      <button type="button" class="wf-key" data-key="{{ ch }}">{{ ch }}</button>
+      {% endfor %}
+    </div>
+    <div class="wf-kbd-row">
+      {% for ch in [';',':',"'",'"',',','.','<','>','/','?'] %}
+      <button type="button" class="wf-key" data-key="{{ ch }}">{{ ch }}</button>
+      {% endfor %}
+      <button type="button" class="wf-key wf-key-fn" data-key="backspace">⌫</button>
+    </div>
+    <div class="wf-kbd-row">
+      <button type="button" class="wf-key wf-key-fn" data-key="panel:alphanum">abc</button>
       <button type="button" class="wf-key wf-key-space" data-key=" ">space</button>
       <button type="button" class="wf-key wf-key-fn" data-key="clear">C</button>
       <button type="button" class="wf-key wf-key-enter" data-key="enter">↵</button>

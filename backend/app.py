@@ -37,6 +37,7 @@ from lua_builder import (
     STUD_RELOAD_MS_MIN,
 )
 import part_origin
+import wifi
 from robot_service import STATE_MAP as ROBOT_STATE_MAP, WeldFlexRobotService
 
 # stderr, which systemd hands to journald. The unit already sets PYTHONUNBUFFERED=1,
@@ -414,6 +415,7 @@ _ICONS = {
     # dots rather than icons.
     "clipboard":        '<rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>',
     "repeat":           '<path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/>',
+    "lock":             '<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
     "wifi":             '<path d="M5 13a10 10 0 0 1 14 0"/><path d="M8.5 16.5a5 5 0 0 1 7 0"/><path d="M2 8.82a15 15 0 0 1 20 0"/><line x1="12" y1="20" x2="12.01" y2="20"/>',
     "bar_chart_2":      '<line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>',
     "zap":              '<path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/>',
@@ -1945,6 +1947,60 @@ def ui_diagnostics_reconnect():
 @app.route("/operator/settings")
 def settings():
     return render_template("settings.html", page_title="Settings")
+
+# ── Wi-Fi card (Settings page) ────────────────────────────────────────────────
+# backend/wifi.py does the work and owns the rule that the robot's eth0 link is
+# never touched. Routes follow the in-state inline-error convention: every
+# action re-renders the whole card, with any error shown inside it.
+
+def _wifi_card(error="", rescan="no"):
+    op = wifi.operation()
+    # No scan while a connect is in progress: it can disturb the association.
+    st = wifi.status(robot.robot_ip, rescan="no" if op.running else rescan)
+    return render_template("partials/wifi_card.html", wifi=st, op=op,
+                           error=error or st.error, job_active=job.snapshot().active)
+
+def _wifi_refusal():
+    # The robot link does not depend on Wi-Fi, but a network change is not something
+    # to do in the middle of a weld, so it waits until the job is idle.
+    if job.snapshot().active:
+        return "A job is running. Change Wi-Fi when the job is finished or cleared."
+    return ""
+
+@app.route("/ui/wifi/card")
+def ui_wifi_card():
+    rescan = "yes" if request.args.get("rescan") == "1" else "auto"
+    return _wifi_card(rescan=rescan)
+
+@app.route("/ui/wifi/connect", methods=["POST"])
+def ui_wifi_connect():
+    error = _wifi_refusal()
+    if not error:
+        try:
+            wifi.start_connect(request.form.get("ssid", ""), request.form.get("password", ""),
+                               request.form.get("hidden") == "1", robot.robot_ip)
+        except wifi.WifiError as exc:
+            error = str(exc)
+    return _wifi_card(error=error)
+
+@app.route("/ui/wifi/forget", methods=["POST"])
+def ui_wifi_forget():
+    error = _wifi_refusal()
+    if not error:
+        try:
+            wifi.forget(request.form.get("ssid", ""))
+        except wifi.WifiError as exc:
+            error = str(exc)
+    return _wifi_card(error=error)
+
+@app.route("/ui/wifi/radio-on", methods=["POST"])
+def ui_wifi_radio_on():
+    error = ""
+    try:
+        wifi.radio_on()
+    except wifi.WifiError as exc:
+        error = str(exc)
+    return _wifi_card(error=error, rescan="yes")
 
 @app.route("/manager")
 def manager():

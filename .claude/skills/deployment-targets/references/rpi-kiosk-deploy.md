@@ -72,6 +72,10 @@ hand-editing installed copies.
      Loopback only: `:8081` proxies the controller's web app for Admin → Robot
      Web App, and `:9999` proxies its websocket. The conf's comments explain
      the header, cookie and websocket rewrites.
+   - **4c. Wi-Fi polkit rule**: installs `50-weldflex-wifi.rules` to
+     `/etc/polkit-1/rules.d/` with `KIOSK_USER` substituted. It grants the kiosk
+     user four NetworkManager actions (network-control, settings.modify.system,
+     wifi.scan, enable-disable-wifi) so Settings → Wi-Fi works without root.
 5. **Session scripts**: `chmod +x` on both, and `usermod -aG video,input,render`
    for the kiosk user. logind normally grants wlroots its DRM/input access via
    the seat; the group membership is belt-and-braces and harmless on X11.
@@ -173,6 +177,30 @@ reflashed instead of diagnosed).
 
 Verify with `ip a` — `eth0` must show `state UP`, not `NO-CARRIER` (ethernet must
 be physically plugged in before the connection comes up).
+
+## Wi-Fi from the kiosk (Settings → Wi-Fi)
+
+`backend/wifi.py` changes Wi-Fi without touching the robot link:
+
+- Every nmcli call names `wlan0` (`WELDFLEX_WIFI_IFACE` overrides it). Deletes only
+  ever hit `802-11-wireless` profiles, checked again just before the delete.
+- Before connecting, it records the interface that routes to the robot and that
+  interface's subnet. A new network is rolled back if its subnet overlaps the robot's
+  (for example, a shop Wi-Fi on 192.168.57.0/24) or if the robot route moves.
+  Rollback deletes the new profile and brings the previous Wi-Fi profile back up.
+  A failed connect (such as a wrong password) rolls back the same way.
+- A saved network reconnects without a password. To change its password,
+  forget it first. This avoids NetworkManager's version-dependent handling of
+  `device wifi connect` against an existing profile.
+- WPA-Enterprise (802.1X) networks are listed but cannot be joined from the card.
+  Set them up over SSH.
+- polkit cannot restrict `settings.modify.system` to Wi-Fi profiles, so the
+  eth0 guard lives in `wifi.py`, not in the rule.
+- The password goes on nmcli's command line, so it is briefly visible in `ps` to
+  local users. It is never logged.
+
+**Not yet run on hardware.** Only the fake-nmcli tests in `tests/test_wifi.py`
+have run. Verify the polkit rule and one real join and rollback on the Pi.
 
 ## `.env` on the RPi
 

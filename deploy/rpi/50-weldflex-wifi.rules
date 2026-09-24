@@ -1,0 +1,19 @@
+// Lets the WeldFlex backend (running as the kiosk user, not root) change Wi-Fi
+// from Settings → Wi-Fi. Installed to /etc/polkit-1/rules.d/ by
+// install_rpi_kiosk.sh, which substitutes KIOSK_USER.
+//
+// Only the NetworkManager actions backend/wifi.py uses are granted. polkit cannot
+// limit these to Wi-Fi profiles: settings.modify.system also covers the robot's
+// eth0 profile. wifi.py enforces that limit instead. It only touches profiles of
+// type 802-11-wireless, and it names the Wi-Fi interface in every command.
+polkit.addRule(function (action, subject) {
+    var allowed = [
+        "org.freedesktop.NetworkManager.network-control",
+        "org.freedesktop.NetworkManager.settings.modify.system",
+        "org.freedesktop.NetworkManager.wifi.scan",
+        "org.freedesktop.NetworkManager.enable-disable-wifi"
+    ];
+    if (subject.user === "KIOSK_USER" && allowed.indexOf(action.id) >= 0) {
+        return polkit.Result.YES;
+    }
+});

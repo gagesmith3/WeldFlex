@@ -2,12 +2,48 @@
 {% from "components/ui.html" import panel_shell with context %}
 
 {% block body %}
-<div class="page-body">
+<div class="page-body settings-page">
   {% call panel_shell('Settings', class_name='settings-shell') %}
-    <div class="mgr-coming-soon">
-      {{ icon_safe('settings', width=48, height=48) }}
-      <p>Settings are coming soon.</p>
+    <div id="wifi-card" class="wifi-card" hx-get="/ui/wifi/card" hx-trigger="load" hx-swap="outerHTML">
+      <div class="wifi-head">
+        <div class="wifi-head-title">{{ icon_safe('wifi', width=18, height=18) }}<h3>Wi-Fi</h3></div>
+      </div>
+      <p class="wifi-note">Scanning for networks…</p>
     </div>
   {% endcall %}
 </div>
+
+{# Outside #wifi-card so the card's polling swaps never close it. Pinned to the
+   top of the screen, because the on-screen keyboard covers the bottom half. #}
+<div id="wifi-modal" class="wf-modal-overlay wifi-modal-overlay" hidden>
+  {# Cancel and Connect sit in the top bar, as in a phone's join sheet: the
+     keyboard covers everything below about 180 px, and the buttons must stay
+     reachable while it is open. #}
+  <form class="wf-modal wifi-modal" hx-post="/ui/wifi/connect" hx-target="#wifi-card" hx-swap="outerHTML">
+    <div class="wifi-modal-bar">
+      <button type="button" class="btn wf-cancel" data-wifi-close>Cancel</button>
+      <p class="wf-modal-msg" id="wifi-modal-title"></p>
+      <button type="submit" class="btn primary wifi-btn" id="wifi-modal-connect">Connect</button>
+    </div>
+    <input type="hidden" name="hidden" value="0">
+    <input type="hidden" name="ssid" id="wifi-modal-ssid-hidden">
+    <label class="wifi-field" id="wifi-modal-ssid-row">
+      <span>Network</span>
+      <input type="text" id="wifi-modal-ssid" name="network" inputmode="none" data-kbd="alphanum"
+        autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="32">
+    </label>
+    <label class="wifi-field" id="wifi-modal-pw-row">
+      <span>Password</span>
+      <input type="password" name="password" id="wifi-modal-pw" inputmode="none" data-kbd="alphanum"
+        autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="64">
+      <button type="button" class="btn wf-cancel wifi-pw-toggle" id="wifi-modal-pw-toggle">Show</button>
+    </label>
+    <p class="wifi-note" id="wifi-modal-note" hidden></p>
+    <button type="button" class="btn stop wifi-forget" id="wifi-modal-forget" hidden>Forget this network</button>
+  </form>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script defer src="{{ url_for('static', filename='js/wifi.js') }}"></script>
 {% endblock %}

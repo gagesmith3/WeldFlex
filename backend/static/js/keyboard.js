@@ -51,9 +51,7 @@
     kbd.dataset.mode = mode;
     kbd.classList.remove('wf-kbd-hidden');
     kbd.setAttribute('aria-hidden', 'false');
-    kbd.querySelectorAll('.wf-kbd-panel').forEach(function (p) {
-      p.hidden = (p.dataset.panel !== mode);
-    });
+    showPanel(mode);
     shifted = false;
     syncShift();
     updatePreview();
@@ -65,6 +63,15 @@
       });
       setTimeout(ensureAboveKeyboard, 240);
     }
+  }
+
+  // Which key panel is visible. Separate from data-mode, which only picks the
+  // keyboard's placement (num is a side panel): the symbols panel sits in the
+  // same bottom placement as alphanum, so switching to it leaves data-mode alone.
+  function showPanel(name) {
+    kbd.querySelectorAll('.wf-kbd-panel').forEach(function (p) {
+      p.hidden = (p.dataset.panel !== name);
+    });
   }
 
   function ensureAboveKeyboard() {
@@ -117,6 +124,8 @@
 
   function handleKey(key) {
     if (!active) return;
+
+    if (key.indexOf('panel:') === 0) { showPanel(key.slice(6)); return; }
 
     switch (key) {
       case 'backspace': deleteChar(); break;

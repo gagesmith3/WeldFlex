@@ -366,7 +366,11 @@ ILLEGAL = [
 
 @pytest.mark.parametrize("command,state", ILLEGAL)
 def test_illegal_transitions_are_rejected_not_silently_applied(tmp_path, command, state):
-    mgr = make_manager(tmp_path)
+    # With no active job, pause/resume/stop act on the controller's own program
+    # instead — so these are only illegal while the controller has none running.
+    robot = FakeRobot()
+    robot.feed(BODY, program_state=0)
+    mgr = make_manager(tmp_path, robot)
     if state == JobState.QUEUED.value:
         mgr.load("p1", "Bracket", [], cycles=1, arm_mode="dry", gate_mode="none")
     with pytest.raises(JobError):
@@ -386,6 +390,7 @@ def test_pause_resume_stop_round_trip(tmp_path):
     assert mgr.resume().state == JobState.RUNNING.value
     assert mgr.stop().state == JobState.STOPPED.value
     assert "stop_program" in robot.calls
+    robot.feed(BODY, program_state=0)           # the controller reports the stop
     # Terminal: no further commands, but clear() returns to idle.
     with pytest.raises(JobError):
         mgr.pause()
@@ -494,7 +499,10 @@ def test_cycles_advance_with_nothing_polling(tmp_path):
     assert snap.ended_at and snap.error is None
 
 
-def test_lost_link_mid_run_is_interrupted_not_running(tmp_path):
+def test_lost_link_mid_run_is_interrupted_not_running(tmp_path, monkeypatch):
+    import job_manager as jm
+
+    monkeypatch.setattr(jm, "LINK_LOST_GRACE_S", 0.5)
     robot = FakeRobot()
     mgr = make_manager(tmp_path, robot)
     mgr.load("p1", "Bracket", [], cycles=5, arm_mode="dry", gate_mode="none")
@@ -503,6 +511,30 @@ def test_lost_link_mid_run_is_interrupted_not_running(tmp_path):
     robot.snap.state = "faulted"
     wait_state(mgr, JobState.INTERRUPTED.value)
     assert "Lost connection" in mgr.snapshot().error
+
+
+def test_brief_link_fault_does_not_interrupt_the_run(tmp_path, monkeypatch):
+    """The 2026-09-23 Pi regression: XML-RPC reconnected ~1 s after ProgramRun and
+    the run was written off on the first faulted tick, because the grace timer read
+    a `since_ts` that UniversalRobotState does not have. A blip shorter than the
+    grace must leave the run going, and recovering must reset the timer."""
+    import job_manager as jm
+
+    monkeypatch.setattr(jm, "LINK_LOST_GRACE_S", 1.0)
+    robot = FakeRobot()
+    mgr = make_manager(tmp_path, robot)
+    mgr.load("p1", "Bracket", [], cycles=5, arm_mode="dry", gate_mode="none")
+    mgr.start()
+    wait_state(mgr, JobState.RUNNING.value)
+
+    for _ in range(2):  # two blips, together longer than the grace
+        robot.snap.state = "faulted"
+        time.sleep(0.7)
+        robot.snap.state = "connected"
+        time.sleep(MONITOR_INTERVAL_S * 3)
+
+    assert mgr.snapshot().state == JobState.RUNNING.value
+    mgr.shutdown()
 
 
 def gate_one_cycle(robot, mgr, expect):
@@ -759,8 +791,9 @@ def test_direct_controller_paused_state_gates_job(tmp_path):
     mgr.start()
     wait_state(mgr, JobState.RUNNING.value)
 
-    # Controller hits Pause(0) at end of cycle 1 (program_state_raw=3 -> 'paused')
-    robot.feed(line=75, program_state=3)
+    # Controller hits Pause(0) at end of cycle 1 (program_state_raw=3 -> 'paused').
+    # The dwell was never sampled, so this reading is the cycle's only count.
+    robot.feed(line=PAST_MARKER + 1, program_state=3)
     wait_state(mgr, JobState.GATED.value)
     snap = mgr.snapshot()
     assert snap.cycles_done == 1
@@ -772,3 +805,238 @@ def test_direct_controller_paused_state_gates_job(tmp_path):
 
     mgr.shutdown()
 
+
+# ---------------- operator pause/resume vs. the program's own gate ----------------
+
+
+def test_resume_does_not_read_the_stale_pause_as_the_gate(tmp_path):
+    """After Resume the cache still says "paused" for a heartbeat (0.5 s on the Pi,
+    which has no 8083 feed). That reading used to bank a phantom cycle and put up
+    the swap-the-part prompt; on a 1-cycle run it then completed the job while the
+    robot was still moving."""
+    robot = FakeRobot()
+    mgr = make_manager(tmp_path, robot)
+    mgr.load("p1", "Bracket", [{"x": 1, "y": 1}], cycles=1, arm_mode="dry", gate_mode="pause")
+    mgr.start()
+    wait_state(mgr, JobState.RUNNING.value)
+    robot.feed(BODY)
+    time.sleep(MONITOR_INTERVAL_S * 2)
+
+    assert mgr.pause().state == JobState.PAUSED.value
+    robot.feed(BODY, program_state=3)           # the controller confirms the pause
+    time.sleep(MONITOR_INTERVAL_S * 2)
+    assert mgr.resume().state == JobState.RUNNING.value
+    time.sleep(MONITOR_INTERVAL_S * 4)          # cache still reads paused
+
+    snap = mgr.snapshot()
+    assert snap.state == JobState.RUNNING.value
+    assert snap.cycles_done == 0
+    mgr.shutdown()
+
+
+def test_operator_pause_mid_body_is_never_the_gate(tmp_path, monkeypatch):
+    """A pause away from the boundary is not the program's gate, whoever sent it —
+    even once the resume settle window has long passed."""
+    import job_manager as jm
+
+    monkeypatch.setattr(jm, "COMMAND_SETTLE_S", 0.1)
+    robot = FakeRobot()
+    mgr = make_manager(tmp_path, robot)
+    mgr.load("p1", "Bracket", [{"x": 1, "y": 1}], cycles=2, arm_mode="dry", gate_mode="pause")
+    mgr.start()
+    wait_state(mgr, JobState.RUNNING.value)
+
+    robot.feed(BODY, program_state=3)
+    time.sleep(MONITOR_INTERVAL_S * 4)
+    snap = mgr.snapshot()
+    # Followed as a plain pause (see the adoption tests), never as the gate.
+    assert snap.state != JobState.GATED.value
+    assert snap.cycles_done == 0
+    mgr.shutdown()
+
+
+def test_pause_landing_before_the_command_returns_is_not_the_gate(tmp_path):
+    """The session is still RUNNING while ProgramPause is on the wire. If the
+    controller reports paused before the call returns, that is the operator's
+    pause, not the gate — even at the boundary."""
+    robot = FakeRobot()
+    mgr = make_manager(tmp_path, robot)
+    mgr.load("p1", "Bracket", [{"x": 1, "y": 1}], cycles=2, arm_mode="dry", gate_mode="pause")
+    mgr.start()
+    wait_state(mgr, JobState.RUNNING.value)
+    robot.feed(BODY)
+    time.sleep(MONITOR_INTERVAL_S * 2)
+
+    def slow_pause():
+        robot.calls.append("pause_program")
+        robot.feed(BODY, program_state=3)
+        time.sleep(MONITOR_INTERVAL_S * 4)      # monitor ticks while the call is out
+
+    robot.pause_program = slow_pause
+    assert mgr.pause().state == JobState.PAUSED.value
+    assert mgr.snapshot().cycles_done == 0
+    mgr.shutdown()
+
+
+def test_a_gated_cycle_is_counted_once(tmp_path):
+    """The dwell banks the cycle; the program's Pause() a few seconds later must
+    not bank it again. Both used to count, so every gated cycle counted twice."""
+    robot = FakeRobot()
+    mgr = make_manager(tmp_path, robot)
+    mgr.load("p1", "Bracket", [{"x": 1, "y": 1}], cycles=3, arm_mode="dry", gate_mode="pause")
+    mgr.start()
+    wait_state(mgr, JobState.RUNNING.value)
+
+    robot.feed(BODY)
+    time.sleep(MONITOR_INTERVAL_S * 2)
+    robot.feed(PAST_MARKER)                     # the dwell: banks cycle 1
+    time.sleep(MONITOR_INTERVAL_S * 3)
+    robot.feed(PAST_MARKER + 1, program_state=3)   # Pause() at the gate
+    wait_state(mgr, JobState.GATED.value)
+
+    snap = mgr.snapshot()
+    assert snap.cycles_done == 1
+    assert len(snap.cycle_times) == 1
+    mgr.shutdown()
+
+
+# ---------------- the job follows the controller, like the vendor web app ----------------
+
+
+@pytest.fixture
+def fast_adopt(monkeypatch):
+    import job_manager as jm
+
+    monkeypatch.setattr(jm, "EXTERNAL_ADOPT_S", 0.3)
+    monkeypatch.setattr(jm, "COMMAND_SETTLE_S", 0.5)
+
+
+def running_job(tmp_path, robot, gate_mode="none", cycles=3):
+    mgr = make_manager(tmp_path, robot)
+    mgr.load("p1", "Bracket", [{"x": 1, "y": 1}], cycles=cycles, arm_mode="dry",
+             gate_mode=gate_mode)
+    mgr.start()
+    wait_state(mgr, JobState.RUNNING.value)
+    robot.feed(BODY)
+    time.sleep(MONITOR_INTERVAL_S * 2)
+    return mgr
+
+
+def test_a_pause_from_the_pendant_is_followed(tmp_path, fast_adopt):
+    robot = FakeRobot()
+    mgr = running_job(tmp_path, robot)
+    robot.feed(BODY, program_state=3)
+    wait_state(mgr, JobState.PAUSED.value)
+    assert "pause_program" not in robot.calls   # we sent nothing; we followed
+    assert mgr.snapshot().cycles_done == 0
+
+    # ...and so is the resume, and our own Resume button still works after.
+    robot.feed(BODY + 1, program_state=2)
+    wait_state(mgr, JobState.RUNNING.value)
+    assert "resume_program" not in robot.calls
+    mgr.shutdown()
+
+
+def test_a_single_stale_reading_is_not_adopted(tmp_path, monkeypatch):
+    """One "paused" reading shorter than EXTERNAL_ADOPT_S must not flip the job."""
+    import job_manager as jm
+
+    monkeypatch.setattr(jm, "EXTERNAL_ADOPT_S", 1.5)
+    robot = FakeRobot()
+    mgr = running_job(tmp_path, robot)
+    robot.feed(BODY, program_state=3)
+    time.sleep(MONITOR_INTERVAL_S * 2)
+    robot.feed(BODY + 1, program_state=2)
+    time.sleep(MONITOR_INTERVAL_S * 6)
+    assert mgr.snapshot().state == JobState.RUNNING.value
+    mgr.shutdown()
+
+
+def test_releasing_the_gate_from_the_pendant_is_followed(tmp_path, fast_adopt):
+    robot = FakeRobot()
+    mgr = running_job(tmp_path, robot, gate_mode="pause")
+    robot.feed(PAST_MARKER + 1, program_state=3)
+    wait_state(mgr, JobState.GATED.value)
+    robot.feed(BODY, program_state=2)
+    wait_state(mgr, JobState.RUNNING.value)
+    assert mgr.snapshot().cycles_done == 1
+    mgr.shutdown()
+
+
+def test_our_own_pause_is_not_undone_by_the_stale_running_reading(tmp_path, fast_adopt):
+    """After Pause the cache still says running. That must not read as a resume
+    from the pendant and flip the job straight back."""
+    robot = FakeRobot()
+    mgr = running_job(tmp_path, robot)
+    assert mgr.pause().state == JobState.PAUSED.value
+    time.sleep(0.45)                            # past EXTERNAL_ADOPT_S, inside the settle
+    assert mgr.snapshot().state == JobState.PAUSED.value
+    mgr.shutdown()
+
+
+def test_a_stop_from_the_pendant_while_paused_ends_the_job(tmp_path, fast_adopt):
+    robot = FakeRobot()
+    mgr = running_job(tmp_path, robot)
+    assert mgr.pause().state == JobState.PAUSED.value
+    robot.feed(BODY, program_state=3)
+    time.sleep(0.6)
+    robot.feed(BODY, program_state=0)
+    wait_state(mgr, JobState.STOPPED.value)
+    mgr.shutdown()
+
+
+def test_with_no_job_the_buttons_drive_the_controller_program(tmp_path):
+    """Any program, WeldFlex's or not: pause/resume/stop act on the controller."""
+    robot = FakeRobot()
+    mgr = make_manager(tmp_path, robot)
+
+    robot.feed(BODY, program_state=2)
+    assert mgr.pause().state == JobState.IDLE.value
+    assert robot.calls[-1] == "pause_program"
+    robot.feed(BODY, program_state=3)
+    with pytest.raises(JobError):
+        mgr.pause()
+    mgr.resume()
+    assert robot.calls[-1] == "resume_program"
+    mgr.stop()
+    assert robot.calls[-1] == "stop_program"
+    robot.feed(BODY, program_state=0)
+    with pytest.raises(JobError):
+        mgr.stop()
+
+
+def test_stop_reaches_a_program_a_finished_job_left_running(tmp_path, monkeypatch):
+    """"Lost connection" ends the job but not the robot program. Stop must still
+    be able to reach it."""
+    import job_manager as jm
+
+    monkeypatch.setattr(jm, "LINK_LOST_GRACE_S", 0.3)
+    robot = FakeRobot()
+    mgr = running_job(tmp_path, robot)
+    robot.snap.state = "faulted"
+    wait_state(mgr, JobState.INTERRUPTED.value)
+    robot.snap.state = "connected"
+    mgr.stop()
+    assert robot.calls[-1] == "stop_program"
+
+
+def test_events_for_run_reads_the_rotated_file_too(tmp_path):
+    """The events log rotates to `.1` at EVENTS_MAX_BYTES. A run's trail must
+    survive that, including a run that straddled the rotation."""
+    mgr = make_manager(tmp_path)
+    rotated = tmp_path / "run_events.jsonl.1"
+    live = tmp_path / "run_events.jsonl"
+    rotated.write_text(
+        json.dumps({"ts": "t1", "run_id": "old", "event": "load", "detail": {}}) + "\n"
+        + json.dumps({"ts": "t2", "run_id": "span", "event": "load", "detail": {}}) + "\n",
+        encoding="utf-8",
+    )
+    live.write_text(
+        json.dumps({"ts": "t3", "run_id": "span", "event": "completed", "detail": {}}) + "\n"
+        + "not json\n",
+        encoding="utf-8",
+    )
+
+    assert [e["event"] for e in mgr.events_for_run("old")] == ["load"]
+    assert [e["ts"] for e in mgr.events_for_run("span")] == ["t2", "t3"]
+    assert mgr.events_for_run("missing") == []

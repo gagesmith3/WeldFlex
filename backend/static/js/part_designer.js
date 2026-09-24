@@ -1133,7 +1133,7 @@ function pdOpenJobReportsModal() {
             const avgT = (run.cycle_times && run.cycle_times.length)
               ? (run.cycle_times.reduce((a, b) => a + b, 0) / run.cycle_times.length).toFixed(1) + 's'
               : '—';
-            const statusCls = run.status === 'completed' ? 'completed' : (run.status === 'error' ? 'error' : 'stopped');
+            const statusCls = ['completed', 'error', 'interrupted'].includes(run.status) ? run.status : 'stopped';
             return `
               <tr>
                 <td>${run.started_at ? run.started_at.replace('T', ' ') : '—'}</td>

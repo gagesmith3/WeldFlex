@@ -6,7 +6,15 @@
     </div>
     <div class="mgr-reports-actions">
       <div class="mgr-select-wrap">
-        <label for="mgr-report-part-filter" class="mgr-filter-label">Filter Part:</label>
+        <label for="mgr-report-kind-filter" class="mgr-filter-label">Runs:</label>
+        <select id="mgr-report-kind-filter" class="mgr-select-input" onchange="mgrFilterReportsByKind(this.value)">
+          <option value="part" selected>Part runs</option>
+          <option value="single_shot">Single Shot</option>
+          <option value="all">All</option>
+        </select>
+      </div>
+      <div class="mgr-select-wrap">
+        <label for="mgr-report-part-filter" class="mgr-filter-label">Part:</label>
         <select id="mgr-report-part-filter" class="mgr-select-input" onchange="mgrFilterReportsByPart(this.value)">
           <option value="all">All Parts</option>
           {% for r in recipes %}
@@ -32,7 +40,8 @@
     </div>
     <div class="mgr-stat-card">
       <span class="mgr-stat-label">Success Rate</span>
-      <strong class="mgr-stat-value" id="mgr-stat-success-rate">0%</strong>
+      <strong class="mgr-stat-value" id="mgr-stat-success-rate">—</strong>
+      <span class="mgr-stat-note" id="mgr-stat-success-note"></span>
     </div>
     <div class="mgr-stat-card">
       <span class="mgr-stat-label">Avg Cycle Time</span>
@@ -102,11 +111,12 @@
         <div class="mgr-params-row">
           <span><strong>Stud Type:</strong> <span id="mgr-modal-stud-type">—</span></span>
           <span><strong>Substrate:</strong> <span id="mgr-modal-substrate">—</span></span>
-          <span><strong>Pressure:</strong> <span id="mgr-modal-pressure">—</span> lbf</span>
-          <span><strong>Part Z:</strong> <span id="mgr-modal-part-z">—</span> mm</span>
-          <span><strong>Search:</strong> <span id="mgr-modal-retract-z">—</span> mm</span>
-          <span><strong>Safe Z:</strong> <span id="mgr-modal-safe-z">—</span> mm</span>
+          <span><strong>Pressure:</strong> <span id="mgr-modal-pressure">—</span></span>
+          <span><strong>Part Z:</strong> <span id="mgr-modal-part-z">—</span></span>
+          <span><strong>Search:</strong> <span id="mgr-modal-retract-z">—</span></span>
+          <span><strong>Safe Z:</strong> <span id="mgr-modal-safe-z">—</span></span>
           <span><strong>Studs:</strong> <span id="mgr-modal-stud-count">—</span></span>
+          <span><strong>Mode:</strong> <span id="mgr-modal-mode">—</span></span>
         </div>
       </div>
 
@@ -123,8 +133,8 @@
             <thead>
               <tr>
                 <th>Cycle #</th>
-                <th>Duration (s)</th>
-                <th>Status</th>
+                <th>Duration</th>
+                <th>Result</th>
               </tr>
             </thead>
             <tbody id="mgr-modal-cycles-tbody">
@@ -152,6 +162,55 @@
 (function() {
   let _allRuns = [];
   let _activePartFilter = 'all';
+  let _activeKindFilter = 'part';
+
+  // History is written by the app, but part names are operator-typed and event
+  // details carry controller error strings — never put either into innerHTML raw.
+  function esc(v) {
+    return String(v == null ? '' : v)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  // A field an older record never stored reads "—", never a plausible default.
+  function fmt(v, unit) {
+    if (v === undefined || v === null || v === '') return '—';
+    return unit ? `${v} ${unit}` : String(v);
+  }
+
+  const STATUS = {
+    completed:   { label: 'Completed',   cls: 'completed' },
+    error:       { label: 'Error',       cls: 'error' },
+    interrupted: { label: 'Interrupted', cls: 'interrupted' },
+    stopped:     { label: 'Stopped',     cls: 'stopped' },
+  };
+  function statusOf(r) {
+    return STATUS[r && r.status] || { label: (r && r.status) || 'unknown', cls: 'stopped' };
+  }
+
+  // Records from before run kinds existed carry no `kind`; they were all part runs.
+  function kindOf(r) { return r.kind || 'part'; }
+
+  function modeTags(r) {
+    const tags = [];
+    if (kindOf(r) === 'single_shot') tags.push('<span class="run-mode-tag is-neutral">single shot</span>');
+    if (r.arm_mode === 'live' || r.arm_mode === 'dry') {
+      tags.push(`<span class="run-mode-tag ${r.arm_mode === 'live' ? 'is-live' : 'is-dry'}">${r.arm_mode}</span>`);
+    }
+    if (r.di_check === false) tags.push('<span class="run-mode-tag is-warn">DI off</span>');
+    return tags.join(' ');
+  }
+
+  function avg(list) {
+    return list.length ? list.reduce((a, b) => a + b, 0) / list.length : null;
+  }
+
+  function durationOf(r) {
+    if (!r.started_at || !r.ended_at) return '—';
+    const diffSec = Math.round((new Date(r.ended_at) - new Date(r.started_at)) / 1000);
+    if (!(diffSec >= 0)) return '—';
+    return diffSec < 60 ? `${diffSec}s` : `${Math.floor(diffSec / 60)}m ${diffSec % 60}s`;
+  }
 
   window.mgrRefreshReports = function() {
     fetch('/api/reports/summary')
@@ -173,35 +232,41 @@
     mgrRenderReports();
   };
 
+  window.mgrFilterReportsByKind = function(kind) {
+    _activeKindFilter = kind;
+    mgrRenderReports();
+  };
+
   function mgrRenderReports() {
-    const filtered = _activePartFilter === 'all' 
-      ? _allRuns 
-      : _allRuns.filter(r => r.part_id === _activePartFilter);
+    const filtered = _allRuns.filter(r =>
+      (_activeKindFilter === 'all' || kindOf(r) === _activeKindFilter) &&
+      (_activePartFilter === 'all' || r.part_id === _activePartFilter));
 
-    // Compute stats
-    const totalRuns = filtered.length;
     let totalCycles = 0;
-    let completedRuns = 0;
-    let allCycleTimes = [];
-
+    const counts = { completed: 0, error: 0, interrupted: 0, stopped: 0 };
+    const allCycleTimes = [];
     filtered.forEach(r => {
       totalCycles += (r.cycles_done || 0);
-      if (r.status === 'completed') completedRuns++;
-      if (Array.isArray(r.cycle_times)) {
-        allCycleTimes.push(...r.cycle_times);
-      }
+      if (r.status in counts) counts[r.status]++;
+      if (Array.isArray(r.cycle_times)) allCycleTimes.push(...r.cycle_times);
     });
 
-    const successRate = totalRuns > 0 ? Math.round((completedRuns / totalRuns) * 100) : 0;
-    const avgCycle = allCycleTimes.length > 0 
-      ? (allCycleTimes.reduce((a, b) => a + b, 0) / allCycleTimes.length).toFixed(1) + 's'
-      : '—';
+    // An operator Stop or an app shutdown says nothing about whether the part
+    // runs well, so only runs that ended on their own count toward the rate.
+    const decided = counts.completed + counts.error;
+    const excluded = [];
+    if (counts.stopped) excluded.push(`${counts.stopped} stopped`);
+    if (counts.interrupted) excluded.push(`${counts.interrupted} interrupted`);
+    const avgCycle = avg(allCycleTimes);
 
-    document.getElementById('mgr-stat-total-runs').textContent = totalRuns;
+    document.getElementById('mgr-stat-total-runs').textContent = filtered.length;
     document.getElementById('mgr-stat-total-cycles').textContent = totalCycles;
-    document.getElementById('mgr-stat-success-rate').textContent = successRate + '%';
-    document.getElementById('mgr-stat-avg-cycle').textContent = avgCycle;
-    document.getElementById('mgr-history-count-badge').textContent = `${totalRuns} run${totalRuns !== 1 ? 's' : ''}`;
+    document.getElementById('mgr-stat-success-rate').textContent =
+      decided ? Math.round((counts.completed / decided) * 100) + '%' : '—';
+    document.getElementById('mgr-stat-success-note').textContent =
+      `${counts.completed} of ${decided} completed` + (excluded.length ? ` · ${excluded.join(', ')} not counted` : '');
+    document.getElementById('mgr-stat-avg-cycle').textContent = avgCycle === null ? '—' : avgCycle.toFixed(1) + 's';
+    document.getElementById('mgr-history-count-badge').textContent = `${filtered.length} run${filtered.length !== 1 ? 's' : ''}`;
 
     const tbody = document.getElementById('mgr-reports-tbody');
     if (!tbody) return;
@@ -212,35 +277,19 @@
     }
 
     tbody.innerHTML = filtered.map(r => {
-      const avgRunTime = (r.cycle_times && r.cycle_times.length)
-        ? (r.cycle_times.reduce((a, b) => a + b, 0) / r.cycle_times.length).toFixed(1) + 's'
-        : '—';
-      
-      let durationStr = '—';
-      if (r.started_at && r.ended_at) {
-        try {
-          const t1 = new Date(r.started_at).getTime();
-          const t2 = new Date(r.ended_at).getTime();
-          if (t2 > t1) {
-            const diffSec = Math.round((t2 - t1) / 1000);
-            durationStr = diffSec < 60 ? `${diffSec}s` : `${Math.floor(diffSec / 60)}m ${diffSec % 60}s`;
-          }
-        } catch(e){}
-      }
-
-      const statusClass = r.status === 'completed' ? 'completed' : (r.status === 'error' ? 'error' : 'stopped');
-      const startFmt = r.started_at ? r.started_at.replace('T', ' ') : 'Unknown';
-
+      const runAvg = avg(Array.isArray(r.cycle_times) ? r.cycle_times : []);
+      const st = statusOf(r);
+      const tags = modeTags(r);
       return `
         <tr>
-          <td>${startFmt}</td>
-          <td><strong>${r.part_name || 'Untitled Part'}</strong></td>
-          <td><span class="job-status-badge ${statusClass}">${r.status || 'unknown'}</span></td>
-          <td>${r.cycles_done || 0} / ${r.cycles_target || 1}</td>
-          <td>${avgRunTime}</td>
-          <td>${durationStr}</td>
+          <td>${esc(r.started_at ? r.started_at.replace('T', ' ') : 'Unknown')}</td>
+          <td><strong>${esc(r.part_name || 'Untitled Part')}</strong>${tags ? `<div class="mgr-run-tags">${tags}</div>` : ''}</td>
+          <td><span class="job-status-badge ${st.cls}">${esc(st.label)}</span></td>
+          <td>${esc(r.cycles_done || 0)} / ${esc(r.cycles_target || 1)}</td>
+          <td>${runAvg === null ? '—' : runAvg.toFixed(1) + 's'}</td>
+          <td>${durationOf(r)}</td>
           <td>
-            <button type="button" class="btn primary xs btn-blue" onclick="mgrOpenRunDetailModal('${r.run_id}')">
+            <button type="button" class="btn primary xs btn-blue" data-run-id="${esc(r.run_id)}">
               View Log
             </button>
           </td>
@@ -249,82 +298,120 @@
     }).join('');
   }
 
+  // Delegated so a run_id never has to be spliced into an inline handler.
+  document.getElementById('mgr-reports-tbody').addEventListener('click', e => {
+    const btn = e.target.closest('button[data-run-id]');
+    if (btn) mgrOpenRunDetailModal(btn.dataset.runId);
+  });
+
+  function formatDetail(detail) {
+    if (!detail || typeof detail !== 'object') return detail == null ? '' : String(detail);
+    return Object.entries(detail)
+      .filter(([, v]) => v !== null && v !== undefined && v !== '')
+      .map(([k, v]) => `${k.replace(/_/g, ' ')}: ${typeof v === 'object' ? JSON.stringify(v) : v}`)
+      .join(' · ');
+  }
+
+  function cycleRows(run) {
+    const times = Array.isArray(run.cycle_times) ? run.cycle_times : [];
+    const rows = times.map((t, idx) => `
+      <tr>
+        <td>Cycle ${idx + 1}</td>
+        <td>${Number(t).toFixed(2)} s</td>
+        <td><span class="job-status-badge completed">Done</span></td>
+      </tr>
+    `);
+    // cycle_times only ever holds cycles that finished. A run that ended short
+    // of its target ended inside the next one — show that cycle with the reason.
+    const done = run.cycles_done || 0;
+    if (run.status && run.status !== 'completed' && done < (run.cycles_target || 1)) {
+      const st = statusOf(run);
+      rows.push(`
+        <tr>
+          <td>Cycle ${done + 1}</td>
+          <td>—</td>
+          <td><span class="job-status-badge ${st.cls}">${esc(st.label)}</span></td>
+        </tr>
+      `);
+    }
+    return rows.join('');
+  }
+
+  function heights(run) {
+    // Records from before the 2026-09-22 height rework stored the search height
+    // as safe_z and derived travel height as safe_z + high_z_clearance (50 mm
+    // when unset — the same default the recipe migration used).
+    if (run.retract_z !== undefined) return { search: run.retract_z, safe: run.safe_z };
+    if (run.safe_z === undefined || run.safe_z === null) return { search: null, safe: null };
+    return { search: run.safe_z, safe: run.safe_z + (run.high_z_clearance ?? 50.0) };
+  }
+
   window.mgrOpenRunDetailModal = function(runId) {
-    const run = _allRuns.find(r => r.run_id === runId);
+    const run = _allRuns.find(r => r.run_id === runId) || {};
     const modal = document.getElementById('mgr-run-detail-modal');
     if (!modal) return;
+    const set = (id, text) => { document.getElementById(id).textContent = text; };
 
-    document.getElementById('mgr-modal-run-id').textContent = runId.substring(0, 8);
-    document.getElementById('mgr-modal-part-name').textContent = run ? (run.part_name || 'Untitled') : '—';
-    
+    set('mgr-modal-run-id', runId.substring(0, 8));
+    set('mgr-modal-part-name', run.part_name || 'Untitled');
+    const st = statusOf(run);
     const statusEl = document.getElementById('mgr-modal-status');
-    if (statusEl && run) {
-      statusEl.textContent = run.status || 'unknown';
-      statusEl.className = `job-status-badge ${run.status === 'completed' ? 'completed' : (run.status === 'error' ? 'error' : 'stopped')}`;
-    }
+    statusEl.textContent = st.label;
+    statusEl.className = `job-status-badge ${st.cls}`;
+    set('mgr-modal-started', run.started_at ? run.started_at.replace('T', ' ') : '—');
+    set('mgr-modal-ended', run.ended_at ? run.ended_at.replace('T', ' ') : '—');
 
-    document.getElementById('mgr-modal-started').textContent = run && run.started_at ? run.started_at.replace('T', ' ') : '—';
-    document.getElementById('mgr-modal-ended').textContent = run && run.ended_at ? run.ended_at.replace('T', ' ') : '—';
-
-    document.getElementById('mgr-modal-stud-type').textContent = run && run.stud_type ? run.stud_type : 'M4';
-    document.getElementById('mgr-modal-substrate').textContent = run && run.substrate ? run.substrate : 'Mild Steel';
-    document.getElementById('mgr-modal-pressure').textContent = run && run.pressure_setting !== undefined ? run.pressure_setting : '20';
-    const isNewHeightContract = run && run.retract_z !== undefined;
-    document.getElementById('mgr-modal-safe-z').textContent = run && run.safe_z !== undefined
-      ? (isNewHeightContract ? run.safe_z : run.safe_z + (run.high_z_clearance || 50.0)) : '60.0';
-    document.getElementById('mgr-modal-retract-z').textContent = run
-      ? (isNewHeightContract ? run.retract_z : (run.safe_z || 10.0)) : '10.0';
-    document.getElementById('mgr-modal-part-z').textContent = run && run.part_z !== undefined ? run.part_z : '0.0';
-    document.getElementById('mgr-modal-stud-count').textContent = run && run.stud_count !== undefined ? run.stud_count : '—';
+    const h = heights(run);
+    set('mgr-modal-stud-type', fmt(run.stud_type));
+    set('mgr-modal-substrate', fmt(run.substrate));
+    set('mgr-modal-pressure', fmt(run.pressure_setting, 'lbf'));
+    set('mgr-modal-part-z', fmt(run.part_z, 'mm'));
+    set('mgr-modal-retract-z', fmt(h.search, 'mm'));
+    set('mgr-modal-safe-z', fmt(h.safe, 'mm'));
+    set('mgr-modal-stud-count', fmt(run.stud_count));
+    const mode = [];
+    if (kindOf(run) === 'single_shot') mode.push('Single shot');
+    if (run.arm_mode) mode.push(run.arm_mode.toUpperCase());
+    if (run.di_check === true) mode.push('DI check on');
+    if (run.di_check === false) mode.push('DI check OFF');
+    if (run.gate_mode) mode.push(`gate: ${run.gate_mode}`);
+    set('mgr-modal-mode', mode.length ? mode.join(' · ') : '—');
 
     const errBox = document.getElementById('mgr-modal-error-box');
-    const errText = document.getElementById('mgr-modal-error-text');
-    if (run && run.error) {
-      errText.textContent = run.error;
+    if (run.error) {
+      set('mgr-modal-error-text', run.error);
       errBox.removeAttribute('hidden');
     } else {
       errBox.setAttribute('hidden', '');
     }
 
-    // Render cycles
     const cyclesTbody = document.getElementById('mgr-modal-cycles-tbody');
-    if (cyclesTbody) {
-      if (run && Array.isArray(run.cycle_times) && run.cycle_times.length > 0) {
-        cyclesTbody.innerHTML = run.cycle_times.map((t, idx) => `
-          <tr>
-            <td>Cycle ${idx + 1}</td>
-            <td>${t.toFixed(2)} s</td>
-            <td><span class="job-status-badge completed">OK</span></td>
-          </tr>
-        `).join('');
-      } else {
-        cyclesTbody.innerHTML = `<tr><td colspan="3" class="mgr-table-empty">No cycle timestamps logged</td></tr>`;
-      }
-    }
+    const rows = cycleRows(run);
+    cyclesTbody.innerHTML = rows || `<tr><td colspan="3" class="mgr-table-empty">No cycle timestamps logged</td></tr>`;
 
-    // Fetch events for event timeline
     const eventsList = document.getElementById('mgr-modal-events-list');
-    if (eventsList) {
-      eventsList.innerHTML = `<div class="mgr-table-empty">Loading events...</div>`;
-      fetch(`/api/reports/runs/${runId}`)
-        .then(res => res.json())
-        .then(data => {
-          if (!data || !data.events || data.events.length === 0) {
-            eventsList.innerHTML = `<div class="mgr-table-empty">No event logs recorded for this run</div>`;
-            return;
-          }
-          eventsList.innerHTML = data.events.map(ev => `
+    eventsList.innerHTML = `<div class="mgr-table-empty">Loading events...</div>`;
+    fetch(`/api/reports/runs/${encodeURIComponent(runId)}`)
+      .then(res => res.json())
+      .then(data => {
+        if (!data || !data.events || data.events.length === 0) {
+          eventsList.innerHTML = `<div class="mgr-table-empty">No event logs recorded for this run</div>`;
+          return;
+        }
+        eventsList.innerHTML = data.events.map(ev => {
+          const detail = formatDetail(ev.detail);
+          return `
             <div class="mgr-event-item">
-              <span class="mgr-event-time">${(ev.ts || '').replace('T', ' ')}</span>
-              <strong class="mgr-event-name">${ev.event}</strong>
-              <span class="mgr-event-detail">${ev.detail ? JSON.stringify(ev.detail) : ''}</span>
+              <span class="mgr-event-time">${esc((ev.ts || '').replace('T', ' '))}</span>
+              <strong class="mgr-event-name">${esc(String(ev.event || '').replace(/_/g, ' '))}</strong>
+              <span class="mgr-event-detail" title="${esc(detail)}">${esc(detail)}</span>
             </div>
-          `).join('');
-        })
-        .catch(() => {
-          eventsList.innerHTML = `<div class="mgr-table-empty error">Failed to load events</div>`;
-        });
-    }
+          `;
+        }).join('');
+      })
+      .catch(() => {
+        eventsList.innerHTML = `<div class="mgr-table-empty error">Failed to load events</div>`;
+      });
 
     modal.removeAttribute('hidden');
   };

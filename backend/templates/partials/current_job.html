@@ -8,12 +8,22 @@
   state-driven — only the commands that are legal right now are enabled, and that
   can only stay true if they re-render with the state.
 
+  Like the controller's own web app, Pause/Resume/Stop follow the controller's
+  program state. With a job active that is the job's state (the job manager
+  follows the controller, including pauses made from the pendant); with none,
+  it is the controller program itself — one started elsewhere, or one a
+  finished job left running — and the same routes act on it directly.
+
   The poll rate adapts: 750 ms while something is happening, 3 s when idle,
   instead of a flat 1500 ms forever. Meaningful on a Pi kiosk.
 #}
 {% from "components/ui.html" import action_button, panel_shell with context %}
 {% set state = job.state %}
-{% set poll_ms = 750 if job.active else 3000 %}
+{% set program = conn.program_state %}
+{% set external = (not job.active) and program in ('running', 'paused') %}
+{% set can_pause = (state == 'running') if job.active else (program == 'running') %}
+{% set can_resume = (state == 'paused') if job.active else (program == 'paused') %}
+{% set poll_ms = 750 if (job.active or external) else 3000 %}
 {% set tgt = '#operator-current-job-mount' %}
 
 <div hidden
@@ -35,7 +45,7 @@
 
     {{ action_button('Pause', variant='pause', icon='pause',
                      hx_post='/ui/job/pause', hx_target=tgt, hx_swap='innerHTML',
-                     disabled=(state != 'running')) }}
+                     disabled=(not can_pause)) }}
 
     {% if state == 'gated' %}
       {{ action_button('Continue', variant='run', icon='play',
@@ -43,12 +53,12 @@
     {% else %}
       {{ action_button('Resume', variant='run', icon='play',
                        hx_post='/ui/job/resume', hx_target=tgt, hx_swap='innerHTML',
-                       disabled=(state != 'paused')) }}
+                       disabled=(not can_resume)) }}
     {% endif %}
 
     {{ action_button('Stop', variant='stop', icon='square',
                      hx_post='/ui/job/stop', hx_target=tgt, hx_swap='innerHTML',
-                     disabled=(not job.active)) }}
+                     disabled=(not job.active and not external)) }}
   </div>
 {% endcall %}
 
@@ -61,6 +71,10 @@
   <p class="current-job-ready-hint">Uploading and loading program…</p>
   {% elif state == 'gated' %}
   <p class="current-job-gate-hint">Cycle complete — swap the part, then press <strong>Continue</strong></p>
+  {% elif state == 'paused' %}
+  <p class="current-job-ready-hint">Paused — press <strong>Resume</strong> to carry on</p>
+  {% elif external %}
+  <p class="current-job-gate-hint">Controller program {{ program }} — not a WeldFlex job</p>
   {% endif %}
 
   {# Closes the long-standing gap where a failure set an error nobody could see. #}
@@ -102,21 +116,4 @@
       </strong>
     </div>
   </div>
-
-  {% if job.cycles_target %}
-  <div class="current-job-progress" aria-label="Cycle completion progress">
-    <div class="current-job-progress-meta">
-      <span id="job-progress-label">
-        Cycle Progress
-        {%- if job.avg_cycle_s %} · avg {{ '%.1f'|format(job.avg_cycle_s) }}s{% endif %}
-        {%- if job.current_cycle_s is not none %} · now {{ '%.0f'|format(job.current_cycle_s) }}s{% endif %}
-      </span>
-      <strong>{{ '%.0f'|format(job.progress_pct) }}%</strong>
-    </div>
-    <progress class="current-job-progress-track"
-              value="{{ job.cycles_done }}"
-              max="{{ job.cycles_target }}"
-              aria-labelledby="job-progress-label"></progress>
-  </div>
-  {% endif %}
 {% endcall %}

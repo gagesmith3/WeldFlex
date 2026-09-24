@@ -11,6 +11,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable
 
+import command_port
 import frame_8083 as f8
 from robot_link import (
     ConnSnapshot,
@@ -732,22 +733,44 @@ class WeldFlexRobotService:
         return -1, response
 
     def pause_program(self) -> None:
-        err = self._call(lambda r: r.ProgramPause())
-        err_code, _ = self._unpack(err)
-        if err_code != 0:
-            raise RuntimeError(f"ProgramPause failed (code {err_code})")
+        self._program_control("ProgramPause", lambda r: r.ProgramPause(), command_port.CMD_PAUSE)
 
     def resume_program(self) -> None:
-        err = self._call(lambda r: r.ProgramResume())
-        err_code, _ = self._unpack(err)
-        if err_code != 0:
-            raise RuntimeError(f"ProgramResume failed (code {err_code})")
+        self._program_control("ProgramResume", lambda r: r.ProgramResume(), command_port.CMD_RESUME)
 
     def stop_program(self) -> None:
-        err = self._call(lambda r: r.ProgramStop())
-        err_code, _ = self._unpack(err)
-        if err_code != 0:
-            raise RuntimeError(f"ProgramStop failed (code {err_code})")
+        self._program_control("ProgramStop", lambda r: r.ProgramStop(), command_port.CMD_STOP)
+
+    def _program_control(self, label: str, fn: Callable[[Any], Any], cmd_id: int) -> None:
+        """Pause/resume/stop, over XML-RPC while it answers and port 8080 when not.
+
+        The controller stops answering XML-RPC for the whole of a force
+        operation, which left these buttons dead through the search, press and
+        hold (see `command_port`). XML-RPC stays first because it is the path
+        with a track record; 8080 is only the way through that outage. A
+        *refusal* from an answering controller is final — only a transport
+        failure falls through, so a real "can't pause now" is never overridden.
+        """
+        rpc_error = None
+        if self.snapshot().connected:
+            try:
+                err = self._call(fn, retries=1)
+            except Exception as exc:  # noqa: BLE001 - transport failure: try 8080
+                rpc_error = str(exc)
+            else:
+                err_code, _ = self._unpack(err)
+                if err_code != 0:
+                    raise RuntimeError(f"{label} failed (code {err_code})")
+                return
+        else:
+            rpc_error = "XML-RPC not answering"
+
+        logger.warning("%s over XML-RPC unavailable (%s) — sending on the command port",
+                    label, rpc_error)
+        try:
+            command_port.send_command(self.robot_ip, cmd_id)
+        except command_port.CommandPortError as exc:
+            raise RuntimeError(f"{label} failed: {rpc_error}; command port: {exc}") from exc
 
     def upload_program(self, local_path: str, replace: bool = False) -> str:
         """Upload a Lua file to the robot. Returns the program name as stored on the robot."""

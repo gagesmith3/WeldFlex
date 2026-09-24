@@ -3417,48 +3417,6 @@ pre {
   text-align: center;
 }
 
-.current-job-progress {
-  margin-top: 10px;
-}
-
-.current-job-progress-meta {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 8px;
-  font-size: 0.78rem;
-  margin-bottom: 5px;
-}
-
-.current-job-progress-meta span {
-  color: var(--muted);
-}
-
-.current-job-progress-track {
-  width: 100%;
-  height: 12px;
-  border: none;
-  border-radius: 999px;
-  overflow: hidden;
-  -webkit-appearance: none;
-  appearance: none;
-}
-
-.current-job-progress-track::-webkit-progress-bar {
-  background: #e5eef7;
-  border-radius: 999px;
-}
-
-.current-job-progress-track::-webkit-progress-value {
-  background: linear-gradient(90deg, #0ea5e9, #22c55e);
-  border-radius: 999px;
-}
-
-.current-job-progress-track::-moz-progress-bar {
-  background: linear-gradient(90deg, #0ea5e9, #22c55e);
-  border-radius: 999px;
-}
-
 .run-modal-label {
   display: block;
   font-size: 0.82rem;
@@ -3594,7 +3552,7 @@ pre {
    the remaining space, its metric cards stretching to fill it — the job details
    are what the operator reads from a step back. Fixed 120px buttons plus a 2x2
    metric grid overflowed 800x500 by ~120px and put a scrollbar on the home page.
-   When a hint, an error and the progress bar all show at once, the buttons give
+   When a hint and an error both show at once, the buttons give
    up height (down to a 48px floor) before the page would scroll. */
 /* min-height: 0 lets the panel actually give up height; the buttons' own
    min-height below is the floor that stops them spilling out of it. */
@@ -3737,24 +3695,6 @@ pre {
 
   .operator-current-job .current-job-error {
     padding: 4px 8px;
-  }
-
-  /* Label and bar share one row — a whole text line back. */
-  .operator-current-job .current-job-progress {
-    margin-top: 8px;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-
-  .operator-current-job .current-job-progress-meta {
-    margin-bottom: 0;
-    flex: none;
-  }
-
-  .operator-current-job .current-job-progress-track {
-    flex: 1;
-    min-width: 0;
   }
 }
 
@@ -5723,7 +5663,7 @@ body.kiosk .pd-part-delete-btn { opacity: 1; }
   margin: 0 0 4px 0;
   font-size: 1.5rem;
   font-weight: 700;
-  color: var(--text);
+  color: var(--ink);
 }
 
 .mgr-reports-subtitle {
@@ -5754,20 +5694,20 @@ body.kiosk .pd-part-delete-btn { opacity: 1; }
   padding: 6px 12px;
   border-radius: 6px;
   border: 1px solid var(--line);
-  background: var(--surface);
-  color: var(--text);
+  background: var(--panel);
+  color: var(--ink);
   font-size: 0.88rem;
 }
 
 .mgr-stats-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 16px;
   margin-bottom: 24px;
 }
 
 .mgr-stat-card {
-  background: var(--surface);
+  background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 10px;
   padding: 16px 20px;
@@ -5788,11 +5728,65 @@ body.kiosk .pd-part-delete-btn { opacity: 1; }
 .mgr-stat-value {
   font-size: 1.6rem;
   font-weight: 800;
-  color: var(--text);
+  color: var(--ink);
+}
+
+.mgr-stat-note {
+  margin-top: 2px;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.mgr-run-tags {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+}
+
+.mgr-run-tags .run-mode-tag {
+  margin-top: 3px;
+}
+
+.run-mode-tag.is-neutral {
+  background: #e3ebf3;
+  color: var(--muted);
+}
+
+.job-status-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: #eef3f8;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.mgr-modal-summary-item .job-status-badge {
+  align-self: flex-start;
+}
+
+.job-status-badge.completed {
+  background: var(--ok-bg);
+  border-color: var(--ok-line);
+  color: var(--run);
+}
+
+.job-status-badge.error {
+  background: var(--err-bg);
+  border-color: var(--err-line);
+  color: var(--stop);
+}
+
+.job-status-badge.interrupted {
+  background: #fdf6e6;
+  border-color: #e2c07a;
+  color: #6b4a00;
 }
 
 .mgr-card {
-  background: var(--surface);
+  background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 10px;
   overflow: hidden;
@@ -5811,7 +5805,7 @@ body.kiosk .pd-part-delete-btn { opacity: 1; }
   margin: 0;
   font-size: 1.1rem;
   font-weight: 700;
-  color: var(--text);
+  color: var(--ink);
 }
 
 .mgr-badge {
@@ -5849,7 +5843,7 @@ body.kiosk .pd-part-delete-btn { opacity: 1; }
 .mgr-table td {
   padding: 12px 16px;
   border-bottom: 1px solid var(--line);
-  color: var(--text);
+  color: var(--ink);
 }
 
 .mgr-table tr:last-child td {
@@ -5921,8 +5915,8 @@ body.kiosk .pd-part-delete-btn { opacity: 1; }
   flex-wrap: wrap;
   gap: 16px;
   font-size: 0.85rem;
-  color: var(--text);
-  background: var(--surface);
+  color: var(--ink);
+  background: var(--panel);
   border: 1px solid var(--line);
   padding: 10px 14px;
   border-radius: 6px;
@@ -5944,7 +5938,7 @@ body.kiosk .pd-part-delete-btn { opacity: 1; }
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 8px 12px;
-  background: var(--surface);
+  background: var(--panel);
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -5964,6 +5958,8 @@ body.kiosk .pd-part-delete-btn { opacity: 1; }
 }
 
 .mgr-event-time {
+  flex-shrink: 0;
+  white-space: nowrap;
   color: var(--muted);
   font-family: monospace;
   font-size: 0.75rem;

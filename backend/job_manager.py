@@ -69,6 +69,20 @@ COMPLETION_FALLBACK_S = 4.0
 # cover the whole dwell first — this is only the margin for the poll interval and
 # the controller's own reporting lag.
 GATE_PAUSE_GRACE_S = 1.5
+# How long the link may read "faulted" before a run is written off as lost. The
+# link drops and reconnects XML-RPC at program start and during force operations,
+# and with no 8083 feed to cover the gap each of those blips reads "faulted".
+LINK_LOST_GRACE_S = 10.0
+# After our own Pause/Resume/Continue the cached program state keeps reporting
+# the old state for a heartbeat or two (0.5 s apart with no 8083 feed). Until the
+# expected state is seen, or this long has passed, a contradicting reading is
+# taken as stale: it is neither the gate nor a pause/resume from elsewhere.
+COMMAND_SETTLE_S = 2.0
+# The job follows the controller, like the vendor web app: a pause, resume or
+# stop made from the pendant or web app is adopted once the controller has
+# reported it steadily for this long. One reading is not enough on the Pi —
+# a stale "paused" is exactly what banked phantom cycles before.
+EXTERNAL_ADOPT_S = 1.0
 
 EVENTS_MAX_BYTES = 512 * 1024
 HISTORY_TAIL_LINES = 500
@@ -191,9 +205,23 @@ class CycleTracker:
             self._counted_this_cycle = False
         return False
 
-    def bank_cycle(self) -> bool:
-        """Explicitly bank a cycle (e.g., when the controller reports paused at a gate)."""
+    def bank_if_uncounted(self) -> bool:
+        """Bank the cycle the program just paused at the gate of, unless the
+        boundary dwell already banked it. The dwell is sampled first on any
+        healthy run, so an unconditional bank here counted every gated cycle
+        twice."""
+        if self._counted_this_cycle:
+            return False
         return self._bank()
+
+    def at_or_past_marker(self, line: Any) -> bool:
+        """Whether `line` is the boundary dwell or the gate after it, in the
+        caller program rather than an aliased `NewDofile` sub-file line."""
+        if not isinstance(line, int) or isinstance(line, bool):
+            return False
+        if self.program_max_line is not None and line > self.program_max_line:
+            return False
+        return line >= self.cycle_marker_line
 
     def _bank(self) -> bool:
         self._counted_this_cycle = True
@@ -302,6 +330,16 @@ class _Session:
     completed_since: float | None = None
     gate_pending: bool = False
     gate_since: float | None = None
+    link_lost_since: float | None = None
+    # A "paused" reading is only the cycle gate when nobody else explains it: not
+    # while the operator's ProgramPause is in flight, and not while the cached
+    # program state still shows the pause that Resume/Continue just released.
+    pause_in_flight: bool = False
+    expect_program: str | None = None
+    expect_until: float | None = None
+    # How long the controller has reported its current program state.
+    observed_program: str | None = None
+    observed_since: float | None = None
 
     @property
     def cycles_done(self) -> int:
@@ -465,11 +503,15 @@ class JobManager:
         return snap
 
     def pause(self) -> JobSnapshot:
+        if not self._has_active_job():
+            return self._program_command("pause", "running", self._robot.pause_program)
         return self._command(
             "pause", (JobState.RUNNING.value,), JobState.PAUSED.value, self._robot.pause_program
         )
 
     def resume(self) -> JobSnapshot:
+        if not self._has_active_job():
+            return self._program_command("resume", "paused", self._robot.resume_program)
         return self._command(
             "resume", (JobState.PAUSED.value,), JobState.RUNNING.value, self._robot.resume_program
         )
@@ -481,6 +523,10 @@ class JobManager:
         )
 
     def stop(self) -> JobSnapshot:
+        if not self._has_active_job():
+            return self._program_command(
+                "stop", ("running", "paused"), self._robot.stop_program
+            )
         with self._lock:
             sess = self._session
             state = self._state_locked()
@@ -528,6 +574,31 @@ class JobManager:
             self._event(run_id, "clear", {"error": error})
         return replace(snap, error=error) if error else snap
 
+    def _has_active_job(self) -> bool:
+        with self._lock:
+            return self._session is not None and self._state_locked() in ACTIVE_STATES
+
+    def _program_command(
+        self, name: str, from_program: str | tuple[str, ...], call: Callable[[], None]
+    ) -> JobSnapshot:
+        """Pause/resume/stop whatever program the controller is running, with no
+        WeldFlex job behind it — one started from the pendant or web app, or one
+        a finished job left running (a run written off as "Lost connection" does
+        not stop the robot). Checked against the controller's own program state,
+        so the button cannot fire at a program that is not there.
+        """
+        allowed = (from_program,) if isinstance(from_program, str) else from_program
+        program_state = self._program_state(self._robot.get_universal_state())
+        if program_state not in allowed:
+            raise JobError(f"Cannot {name}: the controller program is {program_state}")
+        try:
+            call()
+        except Exception as exc:  # noqa: BLE001 - shown to the operator as the panel note
+            log.warning("controller %s failed: %s", name, exc)
+            raise JobError(f"{name.capitalize()} failed: {exc}") from exc
+        log.info("controller program %s (no active job)", name)
+        return self.snapshot()
+
     def _command(
         self, name: str, from_states: tuple[str, ...], to_state: str, call: Callable[[], None]
     ) -> JobSnapshot:
@@ -541,6 +612,10 @@ class JobManager:
             if sess is None or state not in from_states:
                 raise JobError(f"Cannot {name} from state {state!r}")
             run_id = sess.run_id
+            # The session is still RUNNING while ProgramPause is on the wire, and
+            # the monitor would otherwise read the pause landing as the gate.
+            if to_state == JobState.PAUSED.value:
+                sess.pause_in_flight = True
         try:
             call()
             error = None
@@ -550,6 +625,7 @@ class JobManager:
         with self._lock:
             sess = self._session
             if sess is not None and sess.run_id == run_id:
+                sess.pause_in_flight = False
                 if error:
                     sess.error = error
                 else:
@@ -561,6 +637,8 @@ class JobManager:
                         # cycle time is machine time, not machine time plus however
                         # long the operator took to swap the part.
                         sess.cycle_start_ts = time.time()
+                    sess.expect_program = "paused" if to_state == JobState.PAUSED.value else "running"
+                    sess.expect_until = time.time() + COMMAND_SETTLE_S
             snap = self._snapshot_locked()
         self._event(run_id, name, {"error": error})
         return snap
@@ -824,35 +902,51 @@ class JobManager:
         self, sess: _Session, snap: Any, program_state: str, events: list
     ) -> tuple | None:
         """One monitor tick. Returns a deferred action for the caller to run unlocked."""
-        # The link is degraded or faulted. Allow a 10s grace period for transient RPC stalls during motion.
+        # The session times the outage itself: UniversalRobotState carries no
+        # `since_ts`, and reading one off it made every single faulted tick an
+        # instant interrupt (live on the Pi, 2026-09-23, 1.8 s into a run).
         if getattr(snap, "state", None) == "faulted":
-            since = getattr(snap, "since_ts", None)
-            fault_duration = (time.time() - since) if since is not None else 999.0
-            if fault_duration >= 10.0:
+            now = time.time()
+            if sess.link_lost_since is None:
+                sess.link_lost_since = now
+            if now - sess.link_lost_since >= LINK_LOST_GRACE_S:
                 return ("finish", JobState.INTERRUPTED.value, "Lost connection to the robot")
             return None
+        sess.link_lost_since = None
 
         if program_state == "running":
             sess.seen_running = True
 
+        now = time.time()
+        if program_state != sess.observed_program:
+            sess.observed_program = program_state
+            sess.observed_since = now
+        steady = now - (sess.observed_since or now) >= EXTERNAL_ADOPT_S
+        if sess.expect_program is not None and (
+            program_state == sess.expect_program or now >= (sess.expect_until or 0.0)
+        ):
+            sess.expect_program = None
+        settling = sess.expect_program is not None
+
         if sess.state == JobState.RUNNING.value and sess.tracker is not None:
             # Direct controller state gating: when the controller hits Pause(0) at the
             # cycle gate, program_state becomes "paused". Transition to GATED directly.
-            if program_state == "paused" and sess.gate_mode == "pause":
-                sess.tracker.bank_cycle()
-                now = time.time()
-                if sess.cycle_start_ts:
-                    sess.cycle_times.append(round(now - sess.cycle_start_ts, 2))
-                sess.cycle_start_ts = now
-                done, target = sess.cycles_done, sess.cycles_target
+            if self._paused_at_gate_locked(sess, snap, program_state):
+                if sess.tracker.bank_if_uncounted():
+                    # The dwell went unsampled, so this is the cycle's only count.
+                    now = time.time()
+                    if sess.cycle_start_ts:
+                        sess.cycle_times.append(round(now - sess.cycle_start_ts, 2))
+                    sess.cycle_start_ts = now
+                    events.append(("cycle", {
+                        "cycles_done": sess.cycles_done,
+                        "cycles_target": sess.cycles_target,
+                        "cycle_s": sess.cycle_times[-1] if sess.cycle_times else None,
+                    }))
                 sess.state = JobState.GATED.value
                 sess.gate_pending = False
-                log.info("job gated at cycle %d/%d run_id=%s", done, target, sess.run_id)
-                events.append(("cycle", {
-                    "cycles_done": done,
-                    "cycles_target": target,
-                    "cycle_s": sess.cycle_times[-1] if sess.cycle_times else None,
-                }))
+                log.info("job gated at cycle %d/%d run_id=%s",
+                         sess.cycles_done, sess.cycles_target, sess.run_id)
                 events.append(("gated", {"error": None, "held_by": "program"}))
             else:
                 banked = sess.tracker.observe(
@@ -881,6 +975,9 @@ class JobManager:
         if gate_action is not None:
             return gate_action
 
+        if steady and not settling and not sess.pause_in_flight:
+            self._adopt_external_locked(sess, program_state, now, events)
+
         done, target = sess.cycles_done, sess.cycles_target
         if target and done >= target:
             if sess.completed_since is None:
@@ -892,8 +989,14 @@ class JobManager:
             return None
         sess.completed_since = None
 
-        # The program ended before the target count was reached.
-        if sess.seen_running and program_state == "stopped" and sess.state == JobState.RUNNING.value:
+        # The program ended before the target count was reached. From RUNNING
+        # that is immediate, as it always was; from a hold it has to be steady,
+        # since nothing here stops a held program except someone else's Stop.
+        if sess.seen_running and program_state == "stopped" and (
+            sess.state == JobState.RUNNING.value
+            or (sess.state in (JobState.PAUSED.value, JobState.GATED.value)
+                and steady and not settling)
+        ):
             return ("finish", JobState.STOPPED.value,
                     f"Program ended after {done} of {target} cycles")
 
@@ -905,6 +1008,49 @@ class JobManager:
             return ("finish", JobState.ERROR.value, "Program never reported running")
 
         return None
+
+    def _adopt_external_locked(
+        self, sess: _Session, program_state: str, now: float, events: list
+    ) -> None:
+        """Follow a pause or resume made somewhere other than this app.
+
+        The controller is the source of truth, as it is for the vendor web app:
+        paused from the pendant reads PAUSED here, resumed from the pendant
+        reads RUNNING. A pause *at the boundary* never reaches this — the gate
+        check has already made it GATED.
+        """
+        if sess.state == JobState.RUNNING.value and program_state == "paused":
+            sess.state = JobState.PAUSED.value
+            sess.gate_pending = False
+            log.info("job paused from the controller run_id=%s", sess.run_id)
+            events.append(("pause_external", {"error": None}))
+        elif (
+            sess.state in (JobState.PAUSED.value, JobState.GATED.value)
+            and program_state == "running"
+        ):
+            was = sess.state
+            sess.state = JobState.RUNNING.value
+            sess.gate_pending = False
+            sess.cycle_start_ts = now
+            log.info("job resumed from the controller run_id=%s (was %s)", sess.run_id, was)
+            events.append(("resume_external", {"error": None, "from": was}))
+
+    def _paused_at_gate_locked(self, sess: _Session, snap: Any, program_state: str) -> bool:
+        """Whether a "paused" reading is the program holding at its own gate.
+
+        It used to be any "paused" while RUNNING, which also matched the
+        operator's own Pause landing before `_command` could record it, and the
+        stale "paused" the cache still holds for a heartbeat after Resume — each
+        of which banked a phantom cycle and put up the swap-the-part prompt.
+        """
+        if program_state != "paused" or sess.gate_mode != "pause" or sess.pause_in_flight:
+            return False
+        if sess.expect_program == "running":
+            return False  # the cache still shows the pause Resume/Continue released
+        # Mid-body is never the gate; that is a pause from somewhere else.
+        return sess.gate_pending or sess.tracker.at_or_past_marker(
+            getattr(snap, "current_line", None)
+        )
 
     def _gate_pending_locked(
         self, sess: _Session, program_state: str, events: list
@@ -932,7 +1078,7 @@ class JobManager:
         if not sess.gate_pending or sess.state != JobState.RUNNING.value:
             return None
 
-        if program_state == "paused":
+        if program_state == "paused" and not sess.pause_in_flight:
             sess.state = JobState.GATED.value
             events.append(("gated", {"error": None, "held_by": "program"}))
             return None
@@ -983,6 +1129,10 @@ class JobManager:
                 return
             if sess.state == JobState.RUNNING.value:
                 sess.state = JobState.GATED.value
+                # Our own ProgramPause: the cache's "running" is stale, not a
+                # resume from the pendant.
+                sess.expect_program = "paused"
+                sess.expect_until = time.time() + COMMAND_SETTLE_S
         self._event(run_id, "gated", {"error": None, "held_by": held_by})
 
     def _finish(self, run_id: str, status: str, error: str | None = None) -> JobSnapshot:
@@ -1077,18 +1227,26 @@ class JobManager:
         return out
 
     def events_for_run(self, run_id: str) -> list[dict]:
-        """Fetch all logged events matching a given run_id."""
+        """Every logged event for run_id, oldest first.
+
+        Reads the rotated `.1` file before the live one: `_append_line` rotates at
+        EVENTS_MAX_BYTES, so an older run's trail — or the start of a run that
+        straddled the rotation — lives only in `.1`.
+        """
         if not run_id:
             return []
+        lines: list[str] = []
+        with self._file_lock:
+            for path in (Path(str(self._events_path) + ".1"), self._events_path):
+                try:
+                    with open(path, encoding="utf-8") as f:
+                        lines.extend(f.readlines())
+                except OSError:
+                    continue
         out = []
-        try:
-            with open(self._events_path, encoding="utf-8") as f:
-                lines = f.readlines()
-        except OSError:
-            return []
         for line in lines:
             line = line.strip()
-            if not line:
+            if not line or run_id not in line:
                 continue
             try:
                 item = json.loads(line)

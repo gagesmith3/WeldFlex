@@ -155,9 +155,11 @@ systemctl reload-or-restart nginx
 # backend/wifi.py needs. It uses polkit's JavaScript .rules format (Bookworm
 # ships polkit 122). polkitd picks up the file without a restart.
 echo "==> Installing Wi-Fi polkit rule..."
-sed "s/KIOSK_USER/$KIOSK_USER/g" "$DEPLOY_DIR/50-weldflex-wifi.rules" \
-    > /etc/polkit-1/rules.d/50-weldflex-wifi.rules
-chmod 644 /etc/polkit-1/rules.d/50-weldflex-wifi.rules
+# Numbered 10 so it runs before Debian's 49-polkit-pkla-compat (see the rule file).
+rm -f /etc/polkit-1/rules.d/50-weldflex-wifi.rules
+sed "s/KIOSK_USER/$KIOSK_USER/g" "$DEPLOY_DIR/10-weldflex-wifi.rules" \
+    > /etc/polkit-1/rules.d/10-weldflex-wifi.rules
+chmod 644 /etc/polkit-1/rules.d/10-weldflex-wifi.rules
 
 # ── 5. Session scripts + device access ────────────────────────────────────────
 echo "==> Setting permissions..."

@@ -72,10 +72,16 @@ hand-editing installed copies.
      Loopback only: `:8081` proxies the controller's web app for Admin → Robot
      Web App, and `:9999` proxies its websocket. The conf's comments explain
      the header, cookie and websocket rewrites.
-   - **4c. Wi-Fi polkit rule**: installs `50-weldflex-wifi.rules` to
+   - **4c. Wi-Fi polkit rule**: installs `10-weldflex-wifi.rules` to
      `/etc/polkit-1/rules.d/` with `KIOSK_USER` substituted. It grants the kiosk
      user four NetworkManager actions (network-control, settings.modify.system,
      wifi.scan, enable-disable-wifi) so Settings → Wi-Fi works without root.
+     **The `10` prefix matters.** Debian's `49-polkit-pkla-compat.rules` runs the
+     vendor `.pkla`, which answers "no" to `settings.modify.system` for sudo/netdev
+     users outside an active session, and the first rule with an answer wins. A
+     `50-` rule never ran for that action. Check it with
+     `sudo systemd-run --uid=<kiosk user> --wait --pipe nmcli general permissions`.
+     A normal SSH shell is an active session, so it shows "yes" regardless.
 5. **Session scripts**: `chmod +x` on both, and `usermod -aG video,input,render`
    for the kiosk user. logind normally grants wlroots its DRM/input access via
    the seat; the group membership is belt-and-braces and harmless on X11.

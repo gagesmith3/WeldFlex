@@ -1,6 +1,13 @@
 // Lets the WeldFlex backend (running as the kiosk user, not root) change Wi-Fi
 // from Settings → Wi-Fi. Installed to /etc/polkit-1/rules.d/ by
-// install_rpi_kiosk.sh, which substitutes KIOSK_USER.
+// install_rpi_kiosk.sh, which fills in the kiosk user's name below.
+//
+// Why the filename starts with 10: polkit runs the rules from /etc and
+// /usr/share together in filename order, and the first rule that returns a
+// result decides. Debian's 49-polkit-pkla-compat.rules applies the vendor .pkla,
+// which answers "no" to settings.modify.system for sudo/netdev users outside an
+// active login session. A system service is never in an active session. A rule
+// named 50-... never ran for that action (found on the kiosk 2026-09-24).
 //
 // Only the NetworkManager actions backend/wifi.py uses are granted. polkit cannot
 // limit these to Wi-Fi profiles: settings.modify.system also covers the robot's

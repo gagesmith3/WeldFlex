@@ -22,7 +22,7 @@ Connecting takes up to `CONNECT_TIMEOUT_S` seconds, so `start_connect()` runs it
 on a thread and the card polls `operation()`. Only one operation runs at a time.
 
 Privilege: the backend runs as the kiosk user, not root. The installer's polkit
-rule (`deploy/rpi/50-weldflex-wifi.rules`) grants that user the NetworkManager
+rule (`deploy/rpi/10-weldflex-wifi.rules`) grants that user the NetworkManager
 actions this module needs. Without it every change fails with "Not authorized".
 
 The Wi-Fi password is passed to `nmcli` on its command line, because

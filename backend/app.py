@@ -1365,6 +1365,20 @@ def ui_ft_reading():
             age_s=None,
         )
 
+@app.route("/ui/ft/value")
+def ui_ft_value():
+    """Just the operator home page's force figure, polled fast. Pure cache read.
+
+    The Current Job panel only re-renders every 750 ms / 3 s; this keeps its
+    force number live between those swaps without re-rendering the panel.
+    """
+    try:
+        fz = robot.ft_read()["fz"]
+    except Exception:
+        fz = None
+    text = "—" if fz is None else f"{fz * FT_FZ_DISPLAY_SIGN * N_TO_LBF:+.1f} lbf"
+    return Response(text, mimetype="text/plain", headers={"Cache-Control": "no-store"})
+
 @app.route("/ui/ft/stream")
 def ui_ft_stream():
     """Push cached force readings without consuming the robot command queue."""

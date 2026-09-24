@@ -21,3 +21,25 @@
   {% endcall %}
 </div>
 {% endblock %}
+
+{% block scripts %}
+<script>
+// The force figure refreshes on its own, faster than the job panel around it.
+// The panel swap replaces the element, so look it up fresh every tick.
+(function () {
+  var pending = false;
+  setInterval(function () {
+    if (pending || document.hidden || !document.getElementById('operator-force-value')) return;
+    pending = true;
+    fetch('/ui/ft/value', { cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.text() : null; })
+      .then(function (text) {
+        var el = document.getElementById('operator-force-value');
+        if (el && text !== null) el.textContent = text;
+      })
+      .catch(function () {})
+      .finally(function () { pending = false; });
+  }, 250);
+})();
+</script>
+{% endblock %}

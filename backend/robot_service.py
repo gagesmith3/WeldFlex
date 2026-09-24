@@ -927,6 +927,32 @@ class WeldFlexRobotService:
             raise RuntimeError(f"GetActualTCPPose failed (code {err_code})")
         return [float(v) for v in pose]
 
+    def teach_point_pose(self, name: str) -> list:
+        """A taught point's Cartesian pose [x, y, z, rx, ry, rz].
+
+        GetRobotTeachingPoint returns 20 fields; the SDK's own examples read
+        0-5 as the pose and 6-11 as the joints. The rest are not relied on.
+        """
+        resp = self._call(lambda r: r.GetRobotTeachingPoint(name), retries=1)
+        err_code, data = self._unpack(resp)
+        if err_code != 0 or not data or len(data) < 6:
+            raise RuntimeError(f"Can't read taught point {name!r} (code {err_code})")
+        return [float(v) for v in data[:6]]
+
+    def active_tool_wobj(self) -> tuple[int, int]:
+        """The controller's active tool and work-object numbers.
+
+        Raw XML-RPC: the SDK wrappers return the CNDE state cache, which is
+        dead on this firmware and would report a stale or zero frame.
+        """
+        tool_code, tool = self._unpack(self._call(lambda r: r.robot.GetActualTCPNum(1), retries=1))
+        wobj_code, wobj = self._unpack(self._call(lambda r: r.robot.GetActualWObjNum(1), retries=1))
+        if tool_code != 0 or wobj_code != 0 or tool is None or wobj is None:
+            raise RuntimeError(
+                f"Can't read the active tool/wobj (codes {tool_code}/{wobj_code})"
+            )
+        return int(tool), int(wobj)
+
     def tcp_enable_drag(self) -> None:
         """Enter drag teach mode so the operator can physically position the robot."""
         err = self._call(lambda r: r.DragTeachSwitch(1))

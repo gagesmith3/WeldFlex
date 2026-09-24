@@ -1,0 +1,23 @@
+{# The confirm modal's body: the planned legs, fetched fresh each time the modal
+   opens. Heights are above zerozero. A frame mismatch shows up here as
+   impossible distances, before anything moves. #}
+{% if error %}
+<p class="points-plan-error">{{ error }}</p>
+{% else %}
+<ol class="points-plan">
+  <li>
+    <span>Up to {{ '%.0f' % plan.travel_z }} mm, head squared</span>
+    <strong>{{ '%.0f' % plan.lift_mm }} mm</strong>
+  </li>
+  <li>
+    <span>Level to above {{ point.label }}</span>
+    <strong>{{ '%.0f' % plan.travel_mm }} mm</strong>
+  </li>
+  <li>
+    <span>Down into {{ point.label }}</span>
+    <strong>{{ '%.0f' % plan.descend_mm }} mm</strong>
+  </li>
+</ol>
+<p class="points-plan-note">{{ speeds[0] }}% travel, {{ speeds[1] }}% descent. Collision detection on.</p>
+<input type="hidden" id="points-plan-ok" value="1">
+{% endif %}

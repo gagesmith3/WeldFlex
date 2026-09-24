@@ -12,15 +12,10 @@
     <h2>Force Sensor</h2>
     <p>Initialize the sensor and view the live force readout (lbs)</p>
   </a>
-  <a class="calib-menu-card" href="/operator/tcp-calibrate">
-    <div class="calib-menu-icon">{{ icon_safe('wrench', fallback='tool', width=48, height=48) }}</div>
-    <h2>Tool Calibration</h2>
-    <p>Calibrate the tool center point offset</p>
-  </a>
-  <a class="calib-menu-card" href="/operator/calibrate">
-    <div class="calib-menu-icon">{{ icon_safe('crosshair', fallback='target', width=48, height=48) }}</div>
-    <h2>Work Area Calibration</h2>
-    <p>Recalibrate robot to align zerozero point</p>
+  <a class="calib-menu-card" href="/operator/points">
+    <div class="calib-menu-icon">{{ icon_safe('map_pin', fallback='crosshair', width=48, height=48) }}</div>
+    <h2>Points</h2>
+    <p>Send the tool to zerozero, home and other taught points</p>
   </a>
 </div>
 {% endblock %}

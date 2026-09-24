@@ -1,8 +1,8 @@
 # Coordinate-system calibration (TCP & work-object)
 
-**Status**: the TCP (tool) 4-point flow is implemented and working in
-production. Work-object 3-point calibration (`/operator/calibrate`) is linked
-from the UI but **not yet implemented** — it's the next planned feature. Mirror
+**Status**: the TCP (tool) 4-point flow is implemented and working, but
+since 2026-09-24 its page is no longer on the calibration menu. Work-object 3-point calibration (`/operator/calibrate`) is
+no longer linked from the UI (2026-09-24) and is **not yet implemented** — it's the next planned feature. Mirror
 the working TCP flow rather than designing from scratch: `tcp_calibrate.html`
 + `partials/tcp_calibrate_steps.html` on the frontend, `app.py`'s
 `_tcp_calib`/`_tcp_lock`/`_tcp_render()` state-dict pattern, and
@@ -14,13 +14,13 @@ themselves.
 
 ## Tool/TCP 4-point flow (working reference)
 
-1. **`SetTcp4RefPoint(self, point_num)`** — `Robot.py:4760`. `point_num ∈ [1,4]`.
+1. **`SetTcp4RefPoint(self, point_num)`** — `Robot.py`. `point_num ∈ [1,4]`.
    Bare int return. Call once per physically-touched reference point.
-2. **`ComputeTcp4(self)`** — `Robot.py:4783`. No params. Computes from the 4
+2. **`ComputeTcp4(self)`** — `Robot.py`. No params. Computes from the 4
    recorded points. Returns `(0, [x,y,z,rx,ry,rz])` on success, `(err, None)`
    on failure.
 3. **`SetToolCoord(self, id, t_coord, type, install, toolID, loadNum)`** —
-   `Robot.py:4813`. This is the "apply" step, fed the pose `ComputeTcp4`
+   `Robot.py`. This is the "apply" step, fed the pose `ComputeTcp4`
    returned.
    - `id ∈ [1,15]` — **1-indexed** tool-coord slot.
    - `t_coord` = `[x,y,z,rx,ry,rz]` in mm/°.
@@ -37,8 +37,8 @@ directly — is also available.
 
 ## Work-object 3-point flow (to build)
 
-1. **`SetWObjCoordPoint(self, point_num)`** — `Robot.py:4970`. `point_num ∈ [1,3]`.
-2. **`ComputeWObjCoord(self, method, refFrame)`** — `Robot.py:4994`.
+1. **`SetWObjCoordPoint(self, point_num)`** — `Robot.py`. `point_num ∈ [1,3]`.
+2. **`ComputeWObjCoord(self, method, refFrame)`** — `Robot.py`.
    - `method`: `0` = origin→x-axis→z-axis, `1` = origin→x-axis→xy-plane
      (confirmed identically in the Chinese docstring and English PDF
      §2.1.6.16/§2.4.6.16).
@@ -46,7 +46,7 @@ directly — is also available.
      either doc; every official SDK example passes `refFrame=0` (base
      coordinate system) uniformly. Treat `0` as the safe default.
    - Returns `(0, [x,y,z,rx,ry,rz])` / `(err, None)`.
-3. **`SetWObjCoord(self, id, coord, refFrame)`** — `Robot.py:5023`.
+3. **`SetWObjCoord(self, id, coord, refFrame)`** — `Robot.py`.
    - `id ∈ [0,14]` — **0-indexed**. This is the opposite convention from
      `SetToolCoord`'s 1–15 — an easy off-by-one if you're used to the tool
      flow.
@@ -54,7 +54,7 @@ directly — is also available.
 
 A points-based alternative that skips `SetWObjCoordPoint`'s physical-move
 step — **`ComputeWObjCoordWithPoints(self, method, pos, refFrame)`**
-(`Robot.py:13775`) — takes `pos` as a list of 3 `[x,y,z,rx,ry,rz]` TCP poses
+(`Robot.py`) — takes `pos` as a list of 3 `[x,y,z,rx,ry,rz]` TCP poses
 directly, with the same `method`/`refFrame` meaning and return shape as
 `ComputeWObjCoord`.
 
@@ -67,7 +67,7 @@ production Lua program on the robot already expects — writing a new work
 object to a different slot would silently decouple calibration from what the
 weld programs actually use.
 
-## `DragTeachSwitch(self, state)` — `Robot.py:2846`
+## `DragTeachSwitch(self, state)` — `Robot.py`
 
 `state`: `0`=exit, `1`=enter drag-teach mode. This is how you physically move
 the robot to touch each reference point without fighting its motors: enter

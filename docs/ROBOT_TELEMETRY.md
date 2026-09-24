@@ -11,12 +11,13 @@ skills or any inline comment that disagrees.
 
 ## Transports
 
-Three separate channels reach the controller. They fail independently, and that
+Four separate channels reach the controller. They fail independently, and that
 independence is now load-bearing rather than incidental.
 
 | Channel | Port | Direction | Carries |
 |---|---|---|---|
 | XML-RPC | `20003` | request/response | **All commands**, plus a liveness heartbeat |
+| Command port | `8080` | request/response | Pause/Resume/Stop **only when XML-RPC is not answering** (`backend/command_port.py`) |
 | Status feed | `8083` | controller push | Program state, line, fault codes, DI/DO, F/T, TCP pose, e-stop, robot mode |
 | CNDE | `WELDFLEX_CNDE_PORT` | controller push | Force only (legacy — see below) |
 
@@ -41,9 +42,17 @@ two channels separately and never lets one imply the other:
 When the feed is live but XML-RPC is not, the connection state becomes
 `telemetry` (amber chip, `TELEMETRY`, detail "no commands"). This is deliberately
 neither `ONLINE` nor `OFFLINE`: the arm is plainly moving, so red is a lie the
-operator can see through — but green would imply Stop works, and it would
-silently do nothing. An operator `disconnect` is an intent, not a failure, and a
-live feed never overrides it.
+operator can see through — but green would imply every command works, and most
+would not. An operator `disconnect` is an intent, not a failure, and a live feed
+never overrides it.
+
+Pause, Resume and Stop are the exception. `RobotService._program_control` sends
+them over XML-RPC while it answers and falls back to vendor frames on port 8080
+(102 STOP, 103 PAUSE, 104 RESUME) on a transport failure or a disconnected link;
+a *refusal* from an answering controller is final and never retried on 8080.
+They are deliberately not gated on `commands_available`. Everything else —
+fault reset included — still is. The fallback is unit-tested but unproven on
+hardware, and nothing documents how 102–104 differ from the `Program*` calls.
 
 ## Ownership
 
@@ -72,7 +81,7 @@ live feed never overrides it.
 |---|---|---|
 | Program state | 8083 `program_state` (offset 0) | `1` stop, `2` run, `3` paused, `4` drag. `f8.PROGRAM_STATES` and `robot_service.STATE_MAP` agree exactly, so the cutover changed source, not meaning. Falls back to `GetProgramState()` raw XML-RPC when no fresh frame. |
 | Current line | 8083 `prog_cur_line` (offset 172) | Drives the **cycle tracker** as well as the display, since `f41dd0a`. Falls back to the XML-RPC `current_line` when no fresh frame. The `program_max_line` ceiling still applies either way — a `NewDofile`'d sub-program reports its own line numbers, and the source change did not alter that. |
-| Controller fault | 8083 `main_errcode` / `sub_errcode` (412/416) | The frame reports `0` for "no fault"; `ConnSnapshot` uses `None`. Do not conflate — `get_universal_state()` normalises `0` to `None`. |
+| Controller fault | 8083 `main_errcode` / `sub_errcode` (412/416) | The frame reports `0` for "no fault"; `ConnSnapshot` uses `None`. Do not conflate — `get_universal_state()` normalises `0` to `None`. The pendant's text for the pair is `backend/fault_codes.py`. |
 | Connection liveness | `GetCurrentLine()` raw XML-RPC | The heartbeat's single mandatory round trip — see "The heartbeat proves XML-RPC" below. A failed transport is an XML-RPC failure, not necessarily a robot failure. Check `feed_streaming` before calling it offline. |
 | Force/torque | 8083 `FT_data[0..5]` (offset 179) | Primary source for `ft_read()` and the F/T page. The push survives controller-side force operations. CNDE `FtSensorData` is the compatibility fallback. **`ft_read()` reads no further than those two caches** — its old raw `FT_GetForceTorqueRCS(0)` fallback was removed, so a stale cache is now reported as no reading rather than answered with an RPC that returns code `14` for the whole of a force move. |
 | Lua phase/return values | `GetSysVarValue()` XML-RPC | 8083 carries no system variables, so slots 1–5 and 8–10 stay on XML-RPC permanently. The Job Manager starts the detailed sampler while a weld program runs; these values are the only window into the controller-applied press target and other Lua state. `weld_probe` issues **one bounded call per slot** rather than one batched dispatch — see "Sampling is interruptible" below. |

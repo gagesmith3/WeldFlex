@@ -165,15 +165,37 @@ flow.
 
 ## Networking — robot subnet
 
-The robot lives on `192.168.58.0/24` (controller at `.2`). `eth0` needs a static
-IP on that subnet:
+The controller has one address per network card, and which one the HMI reaches
+depends on where the cable is plugged in (FAIRINO user manual, pp. 182, 1449):
+
+| Where the cable goes | Card | Factory IP |
+|---|---|---|
+| Button box / e-stop pendant port | network card 1 | `192.168.58.2` |
+| User port on the control box itself | network card 0 | `192.168.57.2` |
+
+The control box also has an internal port for the arm's own link; the manual
+says not to plug anything into it. The repo's defaults (`.env*.example`, the
+installer, `app.py`) assume the pendant port. **The production cell uses the
+box's user port** (moved 2026-09-24): HMI `eth0` at `192.168.57.100/24` and
+`WELDFLEX_ROBOT_IP=192.168.57.2`. XML-RPC `20003` and the 8083 feed both work on
+that port. The controller's own web app (port 80) listens on only one card,
+picked under WebApp System Settings → General Settings → Network Settings. Until
+it is moved to card 0, Admin → Robot Web App returns 502 over the user port.
+
+`eth0` needs a static IP on the controller's subnet (swap `57` for `58` if the
+cable is on the pendant port):
 
 ```bash
 sudo nmcli con add type ethernet ifname eth0 con-name robot-net \
-    ipv4.method manual ipv4.addresses 192.168.58.100/24 \
+    ipv4.method manual ipv4.addresses 192.168.57.100/24 \
     ipv4.never-default yes ipv6.method disabled
 sudo nmcli con up robot-net
 ```
+
+On the production unit the profile is named `robot-eth0`, not `robot-net`. To
+change the subnet, run `nmcli con mod robot-eth0 ipv4.addresses …`, then `con up`.
+Also update `.env` and regenerate the nginx site (step 4b), because the proxy
+saves the robot IP when it is installed.
 
 `ipv4.never-default yes` keeps the robot link from ever owning the default
 route, so internet (updates, apt) stays on Wi-Fi. The first ED-HMI3020

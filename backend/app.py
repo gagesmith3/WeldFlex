@@ -17,6 +17,7 @@ load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
 from flask import Flask, Response, jsonify, make_response, redirect, render_template, request, stream_with_context
 from markupsafe import Markup
+import fault_codes
 import frame_8083 as f8
 from job_manager import JobError, JobManager
 from lua_builder import (
@@ -37,6 +38,7 @@ from lua_builder import (
     STUD_RELOAD_MS_MIN,
 )
 import part_origin
+import point_moves
 import wifi
 from robot_service import STATE_MAP as ROBOT_STATE_MAP, WeldFlexRobotService
 
@@ -425,6 +427,7 @@ _ICONS = {
     "shield_check":     '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/>',
     "octagon_x":        '<path d="M2.586 16.726A2 2 0 0 1 2 15.312V8.688a2 2 0 0 1 .586-1.414l4.688-4.688A2 2 0 0 1 8.688 2h6.624a2 2 0 0 1 1.414.586l4.688 4.688A2 2 0 0 1 22 8.688v6.624a2 2 0 0 1-.586 1.414l-4.688 4.688a2 2 0 0 1-1.414.586H8.688a2 2 0 0 1-1.414-.586z"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/>',
     "rotate_ccw":       '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>',
+    "map_pin":          '<path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/>',
 }
 
 def icon_safe(name, fallback="circle", width=14, height=14, class_=""):
@@ -1227,6 +1230,108 @@ def ui_jog_stop():
 def force_sensor():
     return render_template("force_sensor.html", page_title="Force Sensor")
 
+# Named points taught on the controller that the Points page can send the TCP to.
+# `name` is the controller's point name, as the Lua programs reference it.
+# `taught=False` shows the card but disables it, until the point exists on the
+# controller.
+POINTS = [
+    {"name": "zerozero", "label": "Zero Zero", "icon": "crosshair", "taught": True,
+     "desc": "Front-left bed corner, the part origin"},
+    {"name": "homewf",   "label": "Home",      "icon": "home",      "taught": True,
+     "desc": "WeldFlex home, where every run starts and ends"},
+    {"name": "pitstop",  "label": "Pit Stop",  "icon": "map_pin",   "taught": False,
+     "desc": "Service position"},
+]
+_POINTS_BY_NAME = {p["name"]: p for p in POINTS}
+
+@app.route("/operator/points")
+def points_page():
+    return render_template("points.html", page_title="Points", points=POINTS,
+                           status_interval_ms=int(os.getenv("WELDFLEX_STATUS_INTERVAL_MS", "1000")))
+
+def _plan_point_move(point_name, mode):
+    """Plan a Points-page move from the robot's live state. Raises PointMoveError.
+
+    Reads the pose and frames fresh every time, so the plan the modal showed
+    and the move that runs are computed the same way from the same checks.
+    """
+    point = _POINTS_BY_NAME.get(point_name or "")
+    if point is None:
+        raise point_moves.PointMoveError("Unknown point.")
+    if not point["taught"]:
+        raise point_moves.PointMoveError(f"{point['label']} is not taught on the controller yet.")
+    if job.snapshot().active:
+        raise point_moves.PointMoveError("A job is running — stop the active job first.")
+    if not robot.get_universal_state().commands_available:
+        raise point_moves.PointMoveError("The robot isn't accepting commands right now.")
+    try:
+        tool, wobj = robot.active_tool_wobj()
+        if (tool, wobj) != (point_moves.MOVE_TOOL, point_moves.MOVE_WOBJ):
+            raise point_moves.PointMoveError(
+                f"The controller has tool {tool} / wobj {wobj} active; point moves need "
+                f"tool {point_moves.MOVE_TOOL} / wobj {point_moves.MOVE_WOBJ}. "
+                "Select them on the pendant first."
+            )
+        current = robot.jog_pose()
+        zerozero = robot.teach_point_pose("zerozero")
+        target = zerozero if point["name"] == "zerozero" else robot.teach_point_pose(point["name"])
+    except point_moves.PointMoveError:
+        raise
+    except Exception as exc:
+        raise point_moves.PointMoveError(str(exc)) from exc
+    return point, point_moves.plan_move(point["name"], mode, current, zerozero, target)
+
+@app.route("/ui/points/plan")
+def ui_points_plan():
+    """The planned legs for the confirm modal, so the operator sees the distances first."""
+    try:
+        point, plan = _plan_point_move(request.args.get("point"), "to")
+        return render_template("partials/points_plan.html", point=point, plan=plan, error=None,
+                               speeds=(point_moves.TRAVEL_SPEED_PCT, point_moves.DESCEND_SPEED_PCT))
+    except point_moves.PointMoveError as exc:
+        return render_template("partials/points_plan.html", point=None, plan=None, error=str(exc))
+
+@app.route("/ui/points/move", methods=["POST"])
+def ui_points_move():
+    """Send the TCP to a named point: straight up, level, then straight down (see point_moves)."""
+    title = "Move to Point"
+    try:
+        point, plan = _plan_point_move(request.form.get("point"), request.form.get("mode", ""))
+    except point_moves.PointMoveError as exc:
+        return render_template("partials/command_result.html", ok=False, title=title,
+                               payload={"error": str(exc)})
+    if not (plan.do_lift or plan.do_travel or plan.do_descend):
+        return render_template("partials/command_result.html", ok=True, title=title,
+                               payload={"message": f"Already above {point['label']}"})
+    try:
+        with tempfile.NamedTemporaryFile("w", suffix=".lua", delete=False, encoding="utf-8") as tf:
+            tf.write(point_moves.build_program(plan))
+            tmp_path = tf.name
+        try:
+            robot.upload_and_run(tmp_path)
+            where = "to" if plan.mode == "to" else "above"
+            ok, payload = True, {"message": f"Moving {where} {point['label']}"}
+        finally:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+    except Exception as e:
+        ok, payload = False, {"error": str(e)}
+    return render_template("partials/command_result.html", ok=ok, title=title, payload=payload)
+
+@app.route("/ui/points/stop", methods=["POST"])
+def ui_points_stop():
+    """Stop whatever is moving. A stop never refuses: a running job is stopped through
+    the job manager so it finalizes, as the diagnostics Stop does."""
+    try:
+        try:
+            job.stop()
+        except JobError:
+            robot.stop_program()
+        ok, payload = True, {}
+    except Exception as e:
+        ok, payload = False, {"error": str(e)}
+    return render_template("partials/command_result.html", ok=ok, title="Stop", payload=payload)
+
 @app.route("/operator/tcp-calibrate")
 def tcp_calibrate_page():
     return render_template("tcp_calibrate.html", page_title="Tool Calibration")
@@ -1757,6 +1862,7 @@ def _fault_view(ustate) -> dict:
     code = None
     if ustate.fault_main:
         code = f"{ustate.fault_main}/{ustate.fault_sub or 0}"
+    text = fault_codes.describe(ustate.fault_main, ustate.fault_sub)
 
     reset_blocker = None
     if not ustate.commands_available:
@@ -1770,6 +1876,9 @@ def _fault_view(ustate) -> dict:
         "main": ustate.fault_main,
         "sub": ustate.fault_sub,
         "label": ustate.fault_label,
+        "description": text.description if text else None,
+        "category": text.category if text else None,
+        "resettable": text.resettable if text else None,
         "source": ustate.fault_source,
         "program_state": ustate.program_state,
         "can_reset": reset_blocker is None,

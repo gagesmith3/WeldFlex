@@ -57,6 +57,8 @@ git clone https://github.com/gagesmith3/WeldFlex.git ~/WeldFlex
 cd ~/WeldFlex
 cp deploy/rpi/.env.rpi.example .env          # installer only warns, won't do this
 
+# 192.168.58.x = pendant port; the control box's own user port is 192.168.57.2
+# (then use 192.168.57.100/24 here and WELDFLEX_ROBOT_IP=192.168.57.2 in .env)
 sudo nmcli con add type ethernet ifname eth0 con-name robot-net \
     ipv4.method manual ipv4.addresses 192.168.58.100/24 \
     ipv4.never-default yes ipv6.method disabled   # else eth0 steals the default route

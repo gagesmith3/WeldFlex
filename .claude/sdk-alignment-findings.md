@@ -174,8 +174,8 @@ consequence).
 
 **Area**: both · **Status**: planned, not started
 
-`/operator/calibrate` + 6 `/ui/calibrate/*` routes are linked from
-`calibration.html` and have working frontend templates
+`/operator/calibrate` + 6 `/ui/calibrate/*` routes (unlinked from
+`calibration.html` since 2026-09-24) have working frontend templates
 (`calibrate.html`/`partials/calibrate_steps.html` already hx-target all 6
 endpoints), but no backend route or `robot_service.py` method exists yet. This
 session confirmed:

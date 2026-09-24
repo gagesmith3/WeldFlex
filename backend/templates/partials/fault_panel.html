@@ -19,9 +19,13 @@
     <span>{{ heading }}</span>
   </p>
 
+  {% if fault.status == 'fault' and fault.description %}
+    <p class="fault-panel-detail">{{ fault.description }}</p>
+  {% endif %}
+
   <dl class="fault-panel-rows">
     {% if fault.status == 'fault' %}
-    <div><dt>Type</dt><dd>{{ fault.label or 'not reported' }}</dd></div>
+    <div><dt>Type</dt><dd>{{ fault.category or fault.label or 'not reported' }}</dd></div>
     <div><dt>Code</dt><dd>{{ fault.code or '—' }}</dd></div>
     {% endif %}
     <div><dt>Program</dt><dd>{{ fault.program_state }}</dd></div>
@@ -35,12 +39,17 @@
       reset (drive power, E-stop cycle) or clearing on the pendant.</p>
   {% elif fault.status == 'fault' and recent_reset %}
     <p class="fault-panel-note">Reset sent — waiting for the controller…</p>
-  {% elif fault.status == 'fault' %}
+  {% elif fault.status == 'fault' and fault.resettable != false %}
     <p class="fault-panel-note">Reset clears resettable faults only. It does not move the robot or restart the job.</p>
   {% elif fault.status == 'clear' and recent_reset %}
     <p class="fault-panel-note fault-panel-ok">Cleared. Reload or re-run the job when ready.</p>
   {% elif fault.status == 'unknown' %}
     <p class="fault-panel-note">Neither the status feed nor XML-RPC is answering, so a fault can't be ruled out.</p>
+  {% endif %}
+
+  {% if fault.status == 'fault' and fault.resettable == false %}
+    <p class="fault-panel-note fault-panel-warn">FAIRINO lists this fault as not resettable. Reset probably won't clear it;
+      it usually needs a controller restart or a physical reset.</p>
   {% endif %}
 
   {% if fault.reset_blocker %}

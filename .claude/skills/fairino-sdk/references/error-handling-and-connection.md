@@ -77,7 +77,7 @@ visible. Pinned by `test_probe_fails_when_xmlrpc_is_dead_even_though_cnde_answer
 ### `FRCNDEClient._robot_state_run_flag` latches True — it is not a liveness signal
 
 When the CNDE receive loop hits a socket error it sets `_sock_com_err[0]`,
-spawns a reconnect thread, `break`s and closes the socket (`Robot.py:1826-1849`)
+spawns a reconnect thread, `break`s and closes the socket (`FRCNDEClient`'s receive loop in `Robot.py`)
 — but it never clears `_robot_state_run_flag`, and it closes `_tcp_socket`
 without nulling it. Both stay truthy over a dead stream forever, while
 `robot_state_pkg` keeps whatever values arrived last. Anything testing either
@@ -91,7 +91,7 @@ live `_recv_thread`, which does exit on that `break`. (WeldFlex's own
 
 ### `CloseRPC()` always raises `AttributeError`
 
-`Robot.py:13737` does `if self.thread.is_alive()`, and **`self.thread` is never
+`Robot.py`'s `CloseRPC` does `if self.thread.is_alive()`, and **`self.thread` is never
 assigned anywhere in `Robot.py`** — the only assignment in `RPC.__init__` is
 commented out, and was a local `thread` rather than an attribute. Every call
 therefore throws, and "RPC connection closed." never prints.
@@ -124,7 +124,7 @@ telemetry) and leave the default `priority=0` for anything the operator
 explicitly triggers (Run, Stop, Reconnect). Use `coalesce_key` for a detail
 read that multiple browser polls might trigger concurrently.
 
-## The `xmlrpc_timeout` decorator — `Robot.py:536`
+## The `xmlrpc_timeout` decorator — `Robot.py`
 
 ```python
 def xmlrpc_timeout(func):
@@ -143,17 +143,17 @@ method returns bare `-4` immediately, with no RPC attempt, whenever
 `RPC.is_connect` is `False`.
 
 **Not universal.** Several methods have this decorator commented out
-(`GetDI` and a few motion-status getters, ~lines 3324/3403/4329/4360) or
-omitted entirely (`GetSafetyCode`, `LuaUpload`, `LuaDelete`). Don't assume
+(`GetDI` and `GetToolDI`) or
+omitted entirely (`GetSafetyCode`, `LuaUpload`). Don't assume
 every SDK call will short-circuit to `-4` when disconnected — some will
 instead hang, error differently, or silently serve stale local-cache data.
 
-`RPC.is_connect` is set in `RPC.__init__` (`Robot.py:2238-2308`) based on a
+`RPC.is_connect` is set in `RPC.__init__` (`class RPC` in `Robot.py`) based on a
 successful `GetControllerIP()` XML-RPC probe (CNDE/port-20005 connectivity is
 optional and does *not* block `is_connect=True`), and re-set by `reconnect()`
-(`Robot.py:2370`).
+(`def reconnect`).
 
-## Error code convention — `RobotError` class, `Robot.py:548`
+## Error code convention — `RobotError` class, `Robot.py`
 
 | Code | Constant | Meaning |
 |---|---|---|
@@ -190,7 +190,7 @@ end. `weld_probe()` returns the code as `ft_err` rather than raising, and the
 weld-test page renders running+14 as "sensor busy" while a latched fault still
 surfaces via `fault_main` (`FT_RPC_BUSY_CODE`, `backend/app.py`).
 
-## `GetSafetyCode(self)` — `Robot.py:2762`
+## `GetSafetyCode(self)` — `Robot.py`
 
 **No decorators at all** — no `@log_call`, no `@xmlrpc_timeout`, no
 `reconnect_flag` wait. Pure local read, runs unconditionally even while
@@ -205,12 +205,12 @@ Called internally as a pre-flight gate by `StartJOG`, `ProgramRun`, and
 stop is latched (see `motion-and-jog.md` and
 `program-and-file-management.md`).
 
-## `ResetAllError(self)` — `Robot.py:5298`
+## `ResetAllError(self)` — `Robot.py`
 
 No params, real RPC call, bare int. Docstring: only clears **resettable**
 errors — some fault states require a physical reset, not just this call.
 
-## `GetRobotErrorCode(self)` — `Robot.py:6143`
+## `GetRobotErrorCode(self)` — `Robot.py`
 
 **This is the correct/only name.** `GetRobotErrCode` (a plausible-looking
 alternate spelling) **does not exist anywhere in `Robot.py`** — calling it

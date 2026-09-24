@@ -4,10 +4,10 @@
 
 | Call | Location | Notes |
 |---|---|---|
-| `Mode(self, state)` | `Robot.py:2822` | `state`: `0`=auto, `1`=manual. Bare int. |
-| `ProgramLoad(self, program_name)` | `Robot.py:7027` | e.g. `"/fruser/movej.lua"` — `/fruser/` is a fixed path prefix. Bare int. |
-| `ProgramRun(self)` | `Robot.py:7075` | No params. **`GetSafetyCode()`-gated** — returns `99` instead of running if a safety stop is latched. Bare int. |
-| `ProgramPause(self)` / `ProgramResume(self)` / `ProgramStop(self)` | `Robot.py:7098` / `7119` / `7142` | No params, bare int. `ProgramResume` is also `GetSafetyCode()`-gated. |
+| `Mode(self, state)` | `Robot.py` | `state`: `0`=auto, `1`=manual. Bare int. |
+| `ProgramLoad(self, program_name)` | `Robot.py` | e.g. `"/fruser/movej.lua"` — `/fruser/` is a fixed path prefix. Bare int. |
+| `ProgramRun(self)` | `Robot.py` | No params. **`GetSafetyCode()`-gated** — returns `99` instead of running if a safety stop is latched. Bare int. |
+| `ProgramPause(self)` / `ProgramResume(self)` / `ProgramStop(self)` | `Robot.py` | No params, bare int. `ProgramResume` is also `GetSafetyCode()`-gated. |
 
 **Sequencing**: official PDF §2.4.10.10's example does `Mode(0)` →
 `ProgramLoad(path)` → `ProgramRun()` with **no sleep** between `Mode(0)` and
@@ -18,7 +18,7 @@ though it's not SDK-mandated.
 
 ## Reading program state
 
-- **`GetProgramState(self)`** — `Robot.py:7164`. The **SDK method itself** is a
+- **`GetProgramState(self)`** — `Robot.py`. The **SDK method itself** is a
   local-cache read, not RPC (`return 0, self.robot_state_pkg.robot_state`; the
   real RPC call is commented out just above it), always error `0`. **Don't
   call the SDK method** — as of the telemetry rewrite, `robot_link.py`'s core
@@ -38,7 +38,7 @@ though it's not SDK-mandated.
   `4`=drag(teach) mode, that `GetProgramState`'s own docstring never mentions.
   If you poll this while the robot is in drag-teach mode, expect `4`, not one
   of the documented three.
-- **`GetCurrentLine(self)`** — `Robot.py:7050`. Real RPC call. Returns
+- **`GetCurrentLine(self)`** — `Robot.py`. Real RPC call. Returns
   `(0, line_num)` / `(err, None)`. Used for line-based progress tracking (see
   the `weldflex-app` skill's `state-and-session.md`, cycle tracking).
   **Inside a `NewDofile`'d chunk it reports the *sub-file's* line numbers**
@@ -58,7 +58,7 @@ though it's not SDK-mandated.
 
 ## Lua file upload/delete
 
-- **`LuaUpload(self, filePath)`** — `Robot.py:9579`. **Not decorated** with
+- **`LuaUpload(self, filePath)`** — `Robot.py`. **Not decorated** with
   `@log_call`/`@xmlrpc_timeout` — it delegates to a private `__FileUpLoad`
   helper with its own reconnect wait. Genuinely heavyweight and blocking:
   XML-RPC `FileUpload(fileType, file_name)` handshake → raw TCP socket to
@@ -93,7 +93,7 @@ though it's not SDK-mandated.
     `transfer_file()` retries a refusal for `FILE_CONNECT_RETRY_S` (3 s).
     Don't drop that retry and go back to calling `LuaUpload` on the kiosk.
   - **`-1` has two distinct sources — read the detail before touching the Lua.**
-    `-1` is `RobotError.ERR_OTHER` (`:570`). `__FileUpLoad` (`9477-9539`)
+    `-1` is `RobotError.ERR_OTHER`. `__FileUpLoad`
     returns it bare from **five raw-socket points** on :20010 (refused
     `FileUpload` RPC, failed connect, short `send()`, non-`"SUCCESS"` reply) —
     nothing parsed yet. But `LuaUpLoadUpdate` failure *also* surfaces as `-1`,
@@ -111,8 +111,8 @@ though it's not SDK-mandated.
     ~6 KB file uploads and runs fine once gated. `lua_builder.strip_lua_comments()`
     is kept anyway (blanking, not deleting, so `GetCurrentLine` line numbers
     still match the repo file).
-- **`LuaDelete(self, fileName)`** — `Robot.py:9600`. Same undecorated-wrapper
-  pattern (delegates to `__FileDelete`). Bare int.
-- **`GetLuaList(self)`** — `Robot.py:9616`. Returns
+- **`LuaDelete(self, fileName)`** — `Robot.py`. Unlike `LuaUpload` it *is*
+  decorated with `@xmlrpc_timeout`; delegates to `__FileDelete`. Bare int.
+- **`GetLuaList(self)`** — `Robot.py`. Returns
   `(0, lua_num, luaNames_list)` on success or `(err, None, None)` on failure —
   a **3-tuple**, not the usual 2-tuple.

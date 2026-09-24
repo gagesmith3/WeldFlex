@@ -110,7 +110,7 @@ Two channels actually work:
 
 | Channel | Lua side | Host side |
 |---|---|---|
-| **System variables** (best) | `SetSysVarvalue(name, value)`, ids 1–20 | `GetSysVarValue(id)` — a **real RPC call** (`Robot.py:5460`), not a `robot_state_pkg` cache read |
+| **System variables** (best) | `SetSysVarvalue(name, value)`, ids 1–20 | `GetSysVarValue(id)` — a **real RPC call** (`Robot.py`), not a `robot_state_pkg` cache read |
 | **Line number** | park on a dwell line unique to the site | `GetCurrentLine`, which does cross into `NewDofile`'d sub-file lines |
 
 System variables are the only channel that keeps reporting while force control
@@ -148,7 +148,7 @@ SDK uses `SetSysVarValue`, so `pub()` resolves the spelling with `type(...) ==
 The argument form is the unresolved part. The manual calls `s_var` a "system
 variable **name**" (Table 3-12) and its Code 3-4 example passes an unquoted
 `s_var_3`; the SDK's `SetSysVarValue(id, value)` takes `id ∈ [1,20]`
-(`Robot.py:4689`). Most likely `s_var_3` is a predefined global equal to `3` and
+(`def SetSysVarValue` in `Robot.py`). Most likely `s_var_3` is a predefined global equal to `3` and
 the two agree. **Pass the slot as a bare number**: Lua's C API coerces a number
 argument to a string for `luaL_checkstring`, so a number satisfies a name-taking
 binding too, while the string `"s_var_1"` would throw against an id-taking one.
@@ -195,7 +195,7 @@ asserts the ban against the **stripped** text for that reason.
   having to land a `ProgramPause` inside a dwell (which failed on hardware
   2026-08-06 — see the `weldflex-app` skill's `state-and-session.md`).
   - **Watch DO across the pause.** `SetOutputResetCtlBoxDO(resetFlag, reloadFlag)`
-    (`Robot.py:11828`, protocol §3.5.9) is a persistent controller setting for
+    (`def SetOutputResetCtlBoxDO` in `Robot.py`, protocol §3.5.9) is a persistent controller setting for
     whether control-box DO is reset on stop/**pause** and reloaded on resume.
     No WeldFlex program holds an output through the gate today (the faceplate
     program that held DO1 there was removed 2026-09-14), but anything that does

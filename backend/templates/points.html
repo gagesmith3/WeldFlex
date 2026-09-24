@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+
+{% block body %}
+<div class="points-page">
+
+  <div class="jog-pos-bar"
+       hx-get="/ui/jog/status"
+       hx-trigger="load, every {{ status_interval_ms or 1000 }}ms"
+       hx-swap="innerHTML"></div>
+
+  <div class="points-grid">
+    {% for p in points %}
+    <button type="button" class="fp-menu-btn points-card"
+            data-point="{{ p.name }}" data-label="{{ p.label }}"
+            onclick="openPointModal(this)"
+            {% if not p.taught %}disabled{% endif %}>
+      <div class="fp-menu-btn-icon">
+        {{ icon_safe(p.icon, fallback='map_pin', width=32, height=32) }}
+      </div>
+      <div class="fp-menu-btn-content">
+        <strong class="fp-menu-btn-title">{{ p.label }}</strong>
+        <span class="points-card-name">{{ p.name }}</span>
+        <span class="fp-menu-btn-desc">
+          {% if p.taught %}{{ p.desc }}{% else %}Not taught yet{% endif %}
+        </span>
+      </div>
+    </button>
+    {% endfor %}
+  </div>
+
+  <button type="button" class="btn stop points-stop"
+          hx-post="/ui/points/stop" hx-target="#toast-rack" hx-swap="innerHTML">
+    {{ icon_safe('square', width=18, height=18) }}
+    <span>Stop</span>
+  </button>
+
+</div>
+
+<!-- Move confirm modal. The plan is fetched fresh on open; both move buttons stay
+     disabled until it arrives without an error. -->
+<div id="points-modal" class="wf-modal-overlay" hidden onclick="if (event.target === this) closePointModal()">
+  <div class="wf-modal points-modal">
+    <p class="wf-modal-msg">Move to <span id="points-modal-label"></span>?</p>
+    <div id="points-plan" hx-on::after-swap="pointPlanLoaded()"></div>
+    <p class="points-modal-warn">The robot will move. Keep the cell clear.</p>
+    <form hx-post="/ui/points/move" hx-target="#toast-rack" hx-swap="innerHTML"
+          hx-disabled-elt="#points-modal .points-move-btn"
+          hx-on::after-request="closePointModal()">
+      <input type="hidden" id="points-modal-point" name="point" value="">
+      <div class="wf-modal-actions points-modal-actions">
+        <button type="button" class="btn wf-cancel" onclick="closePointModal()">Cancel</button>
+        <button type="submit" class="btn points-move-btn" name="mode" value="above" disabled>Above point</button>
+        <button type="submit" class="btn run points-move-btn" name="mode" value="to" disabled>To point</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function setMoveButtons(enabled) {
+  document.querySelectorAll('#points-modal .points-move-btn').forEach(function (b) {
+    b.disabled = !enabled;
+  });
+}
+function openPointModal(btn) {
+  document.getElementById('points-modal-point').value = btn.dataset.point;
+  document.getElementById('points-modal-label').textContent = btn.dataset.label;
+  var plan = document.getElementById('points-plan');
+  plan.innerHTML = '<p class="points-plan-note">Planning…</p>';
+  setMoveButtons(false);
+  document.getElementById('points-modal').removeAttribute('hidden');
+  htmx.ajax('GET', '/ui/points/plan?point=' + encodeURIComponent(btn.dataset.point),
+            { target: '#points-plan', swap: 'innerHTML' });
+}
+function pointPlanLoaded() {
+  setMoveButtons(!!document.getElementById('points-plan-ok'));
+}
+function closePointModal() {
+  document.getElementById('points-modal').setAttribute('hidden', '');
+  setMoveButtons(false);
+}
+document.addEventListener('keydown', function (e) {
+  if (e.key === 'Escape') closePointModal();
+});
+</script>
+{% endblock %}

@@ -84,3 +84,24 @@ def test_fault_reset_sends_reset_all_error(fault_app, monkeypatch):
     html = fault_app.app.test_client().post("/ui/fault/reset").get_data(as_text=True)
     assert sent == [True]
     assert "Reset Errors: OK" in html
+
+
+def test_fault_panel_names_the_specific_fault(fault_app, monkeypatch):
+    _use_frame(fault_app, monkeypatch, error_code=3, main_errcode=4, sub_errcode=3)
+    html = fault_app.app.test_client().get("/ui/fault/status").get_data(as_text=True)
+    assert "Axis 3 collision fault" in html
+    assert "4/3" in html
+    assert "not resettable" not in html
+
+
+def test_fault_panel_warns_when_fault_is_not_resettable(fault_app, monkeypatch):
+    _use_frame(fault_app, monkeypatch, error_code=1, main_errcode=2, sub_errcode=5)
+    html = fault_app.app.test_client().get("/ui/fault/status").get_data(as_text=True)
+    assert "Axis 5 drive fault" in html
+    assert "not resettable" in html
+
+
+def test_fault_panel_falls_back_for_undocumented_pairs(fault_app, monkeypatch):
+    _use_frame(fault_app, monkeypatch, error_code=3, main_errcode=4, sub_errcode=99)
+    html = fault_app.app.test_client().get("/ui/fault/status").get_data(as_text=True)
+    assert "Collision fault (sub-code 99)" in html

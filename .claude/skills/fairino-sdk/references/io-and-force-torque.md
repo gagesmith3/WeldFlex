@@ -50,7 +50,7 @@ safe; writing them is not.
 **`robot_service.py` doesn't call `GetDI` at all any more** (see the DI section
 below for what replaced it); this table stays a brief inventory of the raw IO
 calls, not deep detail. Expand it when a feature actually needs the call.
-Section starts ~`Robot.py:4209`. Standard shape: `SetXX` → bare int; `GetXX` →
+Section starts at `def SetDO` in `Robot.py`. Standard shape: `SetXX` → bare int; `GetXX` →
 `(0, value)`, usually bit-packed across multiple channels.
 
 | Call | Location | Notes |
@@ -75,7 +75,7 @@ calls the controller-side Lua `GetDI(id, thread)` instruction (a different
 instruction set from the Python SDK — see `controller-lua-api.md`) and
 publishes the level through `SetSysVarValue`/`SetSysVarvalue` to slots 6
 (`SV_STUD_ON_WORK`) and 7 (`SV_WELD_READY`). The host reads those slots back
-with `GetSysVarValue` (`Robot.py:5460`) — a **real RPC call**, not another
+with `GetSysVarValue` (`Robot.py`) — a **real RPC call**, not another
 `robot_state_pkg` read, which is exactly what makes it work while a program is
 running and every raw force/DI read is refused. `robot_service.weld_probe()`
 polls these slots instead of ever calling `GetDI` itself.
@@ -182,7 +182,7 @@ the flat `[err, fx..mz]` response shape and newton scale. (The earlier
 2026-07-24 "live readout" was FAIRINO's own web UI, not WeldFlex — see the
 audit log.) That settles both questions this file previously listed as open:
 the cable mates to the M12 8-core end plate, and the controller's XJC driver
-does talk to this model even though `Robot.py:7455` documents `device 0` as the
+does talk to this model even though `FT_SetConfig`'s docstring in `Robot.py` documents `device 0` as the
 different `XJC-6F-D82`. Keep sending `FT_SetConfig(24, 0)`.
 
 **Sign convention (observed live 2026-07-28)**: pressing the tool against the
@@ -243,22 +243,22 @@ distinct faults all present as plausible-looking numbers. Check in order:
 
 Don't go looking for an analog workaround if something here fails: the robot
 exposes three analog inputs total (`cl_analog_input[2]`, `tl_anglog_input`,
-`Robot.py:224-225`), they can't represent six axes, and they're generic IO reads
-(`GetAI`, `:4475`) that never feed the FT pipeline.
+`RobotStatePkg` in `Robot.py`), they can't represent six axes, and they're generic IO reads
+(`GetAI`) that never feed the FT pipeline.
 
 ## Force-torque sensor — currently used, validated
 
 - **`FT_SetConfig(self, company, device, softversion=0, bus=0)`** —
-  `Robot.py:7463`. `company`: `17`=Kunwei, `19`=Aerospace-11th-Academy,
+  `Robot.py`. `company`: `17`=Kunwei, `19`=Aerospace-11th-Academy,
   `20`=ATI, `21`=Zhongke MiDian, `22`=Weihang Minxin, `23`=NBIT,
   **`24`=XJC (鑫精诚) — the sensor in use on WeldFlex**, `26`=NSR. `device`:
   vendor-specific model index (`0` in all examples). `softversion`/`bus`:
   unused, default `0`.
-- **`FT_Activate(self, state)`** — `Robot.py:7488`. `state`: `0`=reset,
+- **`FT_Activate(self, state)`** — `Robot.py`. `state`: `0`=reset,
   `1`=activate.
-- **`FT_SetZero(self, state)`** — `Robot.py:7510`. `state`: `0`=remove zero
+- **`FT_SetZero(self, state)`** — `Robot.py`. `state`: `0`=remove zero
   offset, `1`=apply zero correction.
-- **`FT_SetRCS(self, ref, coord=[0,0,0,0,0,0])`** — `Robot.py:7533`. Selects the
+- **`FT_SetRCS(self, ref, coord=[0,0,0,0,0,0])`** — `Robot.py`. Selects the
   frame `FT_GetForceTorqueRCS` reports in: `ref` `0`=tool, `1`=base; `coord`
   optionally supplies a custom frame. `ft_setup()` sets `FT_SetRCS(0)` (tool
   frame) so the reported frame is asserted rather than inherited from whatever
@@ -266,15 +266,14 @@ exposes three analog inputs total (`cl_analog_input[2]`, `tl_anglog_input`,
   weld contact force acts along the torch approach axis, which is fixed in the
   tool frame but smears across base-frame axes as the robot reorients — and a
   single tool-frame component is what `FT_Control`'s `select` mask will want.
-- **`FT_GetForceTorqueRCS(self)`** — `Robot.py:7655`. **Local-cache read, not
-  RPC** (real call commented out at line 7659; body just returns
-  `0, [robot_state_pkg.ft_sensor_data[0..5]]`). Don't call the SDK method
-  directly either way — `ft_read()` never calls it. As of the telemetry
-  rewrite, `ft_read()`'s primary source is the CNDE-fed `ForceSnapshot` (see
-  above); it falls back to raw XML-RPC `r.robot.FT_GetForceTorqueRCS(0)` only
-  when that snapshot has gone stale (flat `[err, fx, fy, fz, tx, ty, tz]`
-  response, per the commented-out code — the SDK method's local-cache body is
-  never the one running). **The raw fallback read returns error 14 for the
+- **`FT_GetForceTorqueRCS(self)`** — `Robot.py`. **Local-cache read, not
+  RPC** (the real call is commented out at the top of the method body, which
+  just returns `0, [robot_state_pkg.ft_sensor_data[0..5]]`). Don't call the SDK method
+  directly either way — `ft_read()` never calls it. `ft_read()` reads the
+  port-8083 feed first and the CNDE-fed `ForceSnapshot` (see above) second, and
+  reports no reading when both are stale. Its old raw XML-RPC
+  `r.robot.FT_GetForceTorqueRCS(0)` fallback (flat `[err, fx, fy, fz, tx, ty, tz]`
+  response, per the commented-out code) was removed. **That raw read returns error 14 for the
   whole time a force-control move (`FT_FindSurface`) is executing** (live
   2026-07-28) — the controller's force-control task owns the sensor. That is
   routine, not a fault. The same code also appears when a latched controller
@@ -286,13 +285,13 @@ exposes three analog inputs total (`cl_analog_input[2]`, `tl_anglog_input`,
   `app.py` but nothing reads it — a leftover of the deleted weld-test page,
   like the rest of that block. Any new code that reaches for this call inherits
   the problem the removal solved, so don't.
-- **`FT_GetForceTorqueOrigin(self)`** — `Robot.py:7679`. Same dead local-cache
+- **`FT_GetForceTorqueOrigin(self)`** — `Robot.py`. Same dead local-cache
   pattern; the raw RPC is `r.robot.FT_GetForceTorqueOrigin(0)`. Useful as a
   cross-check: if RCS and Origin are identical, decoupling/zeroing is not being
   applied.
-- **`FT_GetConfig(self)`** — `Robot.py:7435`. **Not a trustworthy readback.** Its
+- **`FT_GetConfig(self)`** — `Robot.py`. **Not a trustworthy readback.** Its
   docstring promises `[number, company, device, softversion, bus]` (5 values) but
-  the body returns 4, with `+1` added to the first two (`:7448`). Don't compare
+  the body returns 4, with `+1` added to the first two. Don't compare
   its output against what you passed to `FT_SetConfig` without accounting for
   that. **Actively used** via `robot_service.ft_config()` — a plain, idle-safe
   XML-RPC read (subject to the same code-14-during-force-control caveat as

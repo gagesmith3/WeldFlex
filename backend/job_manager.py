@@ -46,6 +46,7 @@ from lua_builder import (
     build_weldflex_lua,
     strip_lua_comments,
 )
+import fault_codes
 from part_origin import DEFAULT_CORNER, parse_corner, resolve_studs
 
 log = logging.getLogger("weldflex.job")
@@ -969,7 +970,8 @@ class JobManager:
                         sess.gate_since = time.time()
 
         if getattr(snap, "fault_main", None):
-            sess.error = f"Controller fault {snap.fault_main}/{snap.fault_sub}"
+            text = fault_codes.describe(snap.fault_main, snap.fault_sub)
+            sess.error = f"Controller fault {snap.fault_main}/{snap.fault_sub}: {text.description}"
 
         gate_action = self._gate_pending_locked(sess, program_state, events)
         if gate_action is not None:

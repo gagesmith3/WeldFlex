@@ -14,6 +14,7 @@ Page routes (`app.py`) — verified against the code 2026-09-09:
 /operator/calibration               calibration.html   (menu page)
 /operator/jog                       jog.html
 /operator/calibration/force-sensor  force_sensor.html
+/operator/points                    points.html   (calibration menu — send the TCP to a taught point, see `points` below)
 /operator/tcp-calibrate             tcp_calibrate.html
 /operator/robot-diagnostics         robot_diagnostics.html
 /operator/settings                  settings.html   (Wi-Fi card only — partials/wifi_card.html, /ui/wifi/*)
@@ -54,8 +55,8 @@ rather than a standalone runner.
 `/ui/tcp-calibrate/enable-drag`, `/ui/job/start`, `/ui/jog/move`).
 Multi-word features are hyphenated (`tcp-calibrate`, `studs-preview`), never
 nested further (never `/ui/tcp/calibrate`). Live features: `connection`,
-`diagnostics`, `fault`, `ft`, `job`, `jog`, `manager`, `parts`, `recipes`,
-`settings`, `single-shot`, `tcp-calibrate`, `wifi`.
+`diagnostics`, `fault`, `ft`, `job`, `jog`, `manager`, `parts`, `points`,
+`recipes`, `settings`, `single-shot`, `tcp-calibrate`, `wifi`.
 
 `wifi` is `/ui/wifi/{card,connect,forget,radio-on}`. Each one re-renders the whole
 card, and errors show inside it. `backend/wifi.py` does the work through `nmcli`.
@@ -131,6 +132,35 @@ app. It has no `/ui/*` routes; everything load-bearing is outside Flask:
   `_reset_errors_result()`, and `robot.reset_errors()` refuses up front when
   `commands_available` is false or the E-stop is engaged. A 0 return means the
   request was accepted, not that the fault cleared; the next frame shows that.
+- **The fault text comes from `backend/fault_codes.py`.** `describe(main, sub)`
+  maps the controller's main/sub pair to the sentence the pendant and web app
+  show ("Axis 3 collision fault"), transcribed from the V3.9.8 manual's
+  appendix. `_fault_view()` passes its `description`, `category` and
+  `resettable` to the panel, which warns when FAIRINO lists the fault as not
+  resettable; `JobManager` appends the same description to the job's error. A
+  pair the manual does not list still renders, as the category plus the
+  sub-code. Don't key anything on `fault.label`: that is the feed's coarse 0-12
+  `error_code` (`frame_8083.ERROR_CODES`), a different numbering.
+
+`points` is `/ui/points/{plan,move,stop}` behind `/operator/points`, a card per
+taught point in `app.POINTS` (a card with `taught: False` is shown disabled).
+`plan` renders `partials/points_plan.html` for the confirm modal; `move`
+re-plans from fresh reads and uploads a generated Lua program; `stop` goes
+through `job.stop()` so a running job still finalizes. Load-bearing:
+
+- **`backend/point_moves.py` owns the move.** Three `Lin` legs as offsets from
+  `zerozero` (straight up, level, straight down), never a joint sweep, and it
+  resets collision detection first because a stop mid-press skips weld.lua's
+  restore. The program is branch-free straight-line code: the host plans and
+  checks everything, because the upload check executes top-level Lua.
+- **Every refusal happens before upload**, in `_plan_point_move()`: unknown or
+  untaught point, an active job, `commands_available` false, or an active
+  tool/wobj other than `point_moves.MOVE_TOOL`/`MOVE_WOBJ`. It is **not
+  commissioned**: the frame assumption behind the pose read is unverified on
+  hardware, which is why the modal shows the planned distances first.
+- It is the only page that calls `robot.teach_point_pose()` and
+  `robot.active_tool_wobj()`. The second reads the raw XML-RPC
+  `GetActualTCPNum`/`GetActualWObjNum`, not the SDK's dead cached getters.
 
 `single-shot` is the Admin page's one-stud tool (replaced `faceplate`
 2026-09-14): `POST /ui/single-shot/{fire,move-position,move-home,feed}` behind
@@ -198,7 +228,7 @@ still in the code (see the audit log).
 |---|---|---|
 | `partials/recipe_library.html` | Not included/rendered anywhere. References `/ui/recipes/load`, `/ui/recipes/delete`, `GET /ui/recipes` — none exist. | `parts.html` + `partials/parts_editor.html` + `partials/parts_recipe_list.html` |
 | `partials/status.html` + `live_status_mount` macro (`components/ui.html`, default endpoint `/ui/status`) | Neither the macro nor the partial is invoked from any template; `/ui/status` doesn't exist. | `partials/connection_chips.html` via `/ui/connection`, or `partials/diagnostics_readout.html` via `/ui/diagnostics` |
-| `/operator/calibrate` + `/ui/calibrate/status\|enable-drag\|record-pin\|goto-clearance\|apply\|reset` | Linked from `calibration.html`; `calibrate.html`/`partials/calibrate_steps.html` exist and target all 6 endpoints — **none of these routes exist in `app.py` yet.** | This is the next planned feature — see `state-and-session.md` and the `fairino-sdk` skill's `coordinate-calibration.md` |
+| `/operator/calibrate` + `/ui/calibrate/status\|enable-drag\|record-pin\|goto-clearance\|apply\|reset` | Unlinked since 2026-09-24 (the calibration menu is Jog, Force Sensor and Points); `calibrate.html`/`partials/calibrate_steps.html` exist and target all 6 endpoints — **none of these routes exist in `app.py` yet.** | This is the next planned feature — see `state-and-session.md` and the `fairino-sdk` skill's `coordinate-calibration.md` |
 
 `home.html` and `partials/home_current_run.html` have since been deleted —
 earlier revisions of this file listed them as orphans. (`liberty.html` and
@@ -216,7 +246,7 @@ Only `.home-body`, `.home-hero` and `.home-nav-panel` went with `home.html`.
 ## `icon_safe()` / `_ICONS`
 
 ```python
-# app.py — _ICONS = { ... }, 32 entries of raw SVG <path>/<circle> inner markup
+# app.py — _ICONS = { ... }, one entry per icon name: raw SVG <path>/<circle> inner markup
 _ICONS = { "home": '...', "link_2": '...', ... }
 
 # app.py — def icon_safe(...), right after _ICONS

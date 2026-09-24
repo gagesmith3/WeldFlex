@@ -2379,6 +2379,14 @@ pre {
 .fault-panel-clear .fault-panel-title { color: var(--run); }
 .fault-panel-unknown .fault-panel-title { color: var(--pause); }
 
+.fault-panel-detail {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
 .fault-panel-rows {
   margin: 0;
   display: grid;
@@ -2656,7 +2664,7 @@ pre {
 /* ── Calibration landing menu ── */
 .calib-menu-body {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, 1fr);
   gap: 16px;
   padding: 16px;
   height: 100%;
@@ -6286,3 +6294,113 @@ body.kiosk .pd-part-delete-btn { opacity: 1; }
 
 .btn.wifi-pw-toggle { min-height: 44px; }
 .btn.wifi-forget { align-self: flex-start; min-height: 44px; }
+
+/* ── Points page ──
+   Same frame as .jog-page: pose bar on top, the point cards take the rest. */
+.points-page {
+  padding: 16px;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+}
+
+.points-grid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.points-card {
+  flex-direction: column;
+  justify-content: center;
+  text-align: center;
+}
+
+.points-card .fp-menu-btn-content {
+  align-items: center;
+}
+
+.points-card .fp-menu-btn-icon {
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.2), rgba(37, 99, 235, 0.1));
+  color: #60a5fa;
+  border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
+.points-card-name {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.fp-menu-btn.points-card:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.points-modal-warn {
+  margin: 0;
+  font-size: 0.88rem;
+  color: var(--stop);
+  text-align: center;
+}
+
+.btn.points-stop {
+  flex-shrink: 0;
+  min-height: 52px;
+  font-size: 1.05rem;
+  font-weight: 700;
+  justify-content: center;
+  gap: 8px;
+}
+
+.wf-modal.points-modal {
+  width: 420px;
+  gap: 12px;
+}
+
+.points-plan {
+  margin: 0;
+  padding-left: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.92rem;
+}
+
+.points-plan li span {
+  color: var(--ink);
+}
+
+.points-plan li strong {
+  float: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.points-plan-note {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+  text-align: center;
+}
+
+.points-plan-error {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--stop);
+  text-align: center;
+}
+
+.points-modal-actions .btn {
+  min-height: 44px;
+}
+
+@media (max-width: 820px), (max-height: 520px) {
+  .points-page { padding: 10px; gap: 10px; }
+  .points-grid { gap: 10px; }
+  .points-card { padding: 12px; }
+}

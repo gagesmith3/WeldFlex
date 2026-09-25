@@ -111,9 +111,21 @@ POST /ui/job/clear    → idle        (dismiss a terminal result; refused while 
 GET  /ui/job/status   → read-only re-render. Advances nothing.
 ```
 
+With **no active job**, pause, resume and stop still work: they act on
+whatever program the controller is running (one started from the pendant or web
+app, or one a lost run left going), through `JobManager._program_command`, and
+refuse unless the controller's own program state allows it.
+
 Plus the states the **monitor thread** drives on its own: `gated` (cycle
 boundary reached in `pause` gate mode), `completed`, `stopped`, `error`, and
-`interrupted` (the link died mid-run).
+`interrupted` (the link has read faulted for `LINK_LOST_GRACE_S`, timed by the
+session itself). The job also **follows the controller**, like the vendor web
+app: a pause or resume made at the pendant or web app moves it to `paused` or
+`running` once the controller has reported it steadily for `EXTERNAL_ADOPT_S`
+(`_adopt_external_locked`), and a held job whose program steadily reads
+`stopped` finishes as `stopped`. For `COMMAND_SETTLE_S` after our own
+Pause/Resume/Continue, a contradicting cached state is treated as stale rather
+than adopted.
 
 **`clear` is also the mode handoff.** `run_program` puts the controller into
 auto (`Mode(0)`) and nothing takes it out when the program ends, so
@@ -150,6 +162,9 @@ The generated program's line numbers are the signal. `lua_builder` returns
 
 - **boundary dwell** — a sample at or past `cycle_marker_line`. The marker is a
   `WaitMs(BOUNDARY_MS)` long enough that a 250 ms poll cannot step over it.
+
+The one exception is the `pause`-mode gate, which banks a cycle whose dwell no
+sample landed in (see the gate section below).
 
 A later sample *below* the marker but at or above `loop_start_line` re-arms the
 counter for the next cycle. That re-arm is level-triggered, not edge-triggered,
@@ -211,9 +226,15 @@ aliasing" section.
 emits the controller's own `Pause()` instruction (FR Lua manual §3.1.3) at the
 gate line, wrapped in `if cycleIndex < cycleCount then` so the last cycle does
 *not* hold — nothing would release it, and the run still has its home return to
-do after the loop. `job_manager._gate_pending_locked` then just watches for
-`program_state == "paused"` and moves the job to `gated`; `/ui/job/continue` →
-`ProgramResume` releases it.
+do after the loop. `job_manager._paused_at_gate_locked` then decides whether a
+`paused` reading is that gate and moves the job to `gated`; `/ui/job/continue` →
+`ProgramResume` releases it. Not every `paused` is the gate: it must not be the
+operator's own Pause still in flight, the stale `paused` the cache holds for a
+heartbeat after Resume/Continue, or a pause mid-body (the line must be at or past
+the marker, or the gate already armed). Each of those once banked a phantom
+cycle and put up the part-swap prompt. If the dwell went unsampled, the gate
+banks the cycle itself (`CycleTracker.bank_if_uncounted`); otherwise it doesn't,
+or every gated cycle would count twice.
 
 **Do not go back to gating by host-issued `ProgramPause`.** That was the original
 design and it failed on hardware 2026-08-06: the manager could only *send* the

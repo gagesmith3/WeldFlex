@@ -242,8 +242,8 @@ be physically plugged in before the connection comes up).
 - The password goes on nmcli's command line, so it is briefly visible in `ps` to
   local users. It is never logged.
 
-**Hotspot (trade shows).** "Create a hotspot…" makes the panel an access point
-on `wlan0` (profile `weldflex-hotspot`, 2.4 GHz, WPA2-PSK/CCMP, PMF off,
+**Hotspot (trade shows).** Settings → Hotspot → "Start hotspot…" makes the panel
+an access point on `wlan0` (profile `weldflex-hotspot`, 2.4 GHz, WPA2-PSK/CCMP, PMF off,
 `ipv4.method shared` at `10.42.0.1/24`, no IPv6). A laptop that joins it reaches
 the app at `http://10.42.0.1:<PORT>` and SSH at `10.42.0.1`. It has no internet,
 because eth0 is the robot and carries no default route.
@@ -261,7 +261,9 @@ because eth0 is the robot and carries no default route.
 - The card reads `/proc/sys/net/ipv4/conf/wlan0/forwarding`. It shows a red
   warning when that is not 0 (step 4d missing).
 - The password is shown on the card in plain text, by design. Anyone who joins
-  gets the full operator UI, including Run.
+  gets the full operator UI, including Run. Until a hotspot profile is saved, the
+  start sheet offers `wifi.DEFAULT_HOTSPOT_PASSWORD` (`iloveiwt`). Once one is
+  saved, it offers the saved password instead, even if that start failed.
 
 **Not yet run on hardware.** Only the fake-nmcli tests in `tests/test_wifi.py`
 have run. Verify the polkit rule and one real join and rollback on the Pi. For

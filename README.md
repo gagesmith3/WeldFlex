@@ -77,5 +77,6 @@ pkill cage   # supervising loop relaunches it — no reboot
 ```
 
 A pull that changes what the installer copies into the system (the nginx
-proxy conf, the touch rule, the service unit) only takes effect after re-running
+proxy conf, the touch rule, the service unit, the Wi-Fi polkit rule and
+no-forward dispatcher) only takes effect after re-running
 `sudo bash deploy/rpi/install_rpi_kiosk.sh`.

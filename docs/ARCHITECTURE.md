@@ -126,7 +126,8 @@ Consequences worth knowing:
   the controller has no model of the weld head to catch that.
   `backend/base_keepout.py` checks each resolved stud, and each level move
   between consecutive studs, against a circle around J1, both in
-  `build_weldflex_lua` and at `JobManager.load` for parts. It is off unless
+  `build_weldflex_lua` and at `JobManager.load` for parts. Host moves (Goto and
+  the Points page) check their target and level leg the same way. It is off unless
   `WELDFLEX_BASE_X_MM`, `_Y_MM` and `_KEEPOUT_MM` are all set, because a guessed
   base position would refuse good studs or pass bad ones, and `.env.example`
   ships them commented out. The legs to and from `homewf` and Single Shot's
@@ -149,7 +150,9 @@ Consequences worth knowing:
 
 `idle → queued → starting → running → completed`, plus `paused` (operator),
 `gated` (holding at a cycle boundary for a part swap), and the terminal failures
-`stopped`, `error`, `interrupted` (the link died mid-run).
+`stopped`, `error`, `interrupted` (the link died mid-run). The job follows the
+controller: a pause, resume or stop made at the pendant or in the vendor web app
+is adopted once the controller reports it steadily, rather than ignored.
 
 `gated` comes from `gate_mode`, which controls what happens *between* cycles:
 

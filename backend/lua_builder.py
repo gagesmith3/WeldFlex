@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Sequence
 
 from base_keepout import check_studs as check_base_keepout
-from part_origin import DEFAULT_CORNER, BedSpan, resolve_studs
+from part_origin import DEFAULT_CORNER, CornerRef, resolve_studs
 
 PROGRAM_NAME = "WeldFlex.lua"
 TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "programs" / PROGRAM_NAME
@@ -423,7 +423,7 @@ def build_weldflex_lua(
     dsc_enabled: bool = False,
     stud_reload_ms: int | float | None = None,
     origin_corner: str = DEFAULT_CORNER,
-    bed_span: BedSpan | None = None,
+    corner_ref: CornerRef | None = None,
 ) -> BuiltProgram:
     """Substitute the template's markers and report the generated line numbers.
 
@@ -432,7 +432,8 @@ def build_weldflex_lua(
     `studs` are as the part stores them, measured inward from `origin_corner`.
     They are resolved to offsets from zerozero here, once, so the program's
     `weldX`/`weldY` (and weld.lua's retract, which reuses them) are already
-    bed coordinates. `bed_span` defaults to the measured stops in .env.
+    bed coordinates. `corner_ref` is the corner's taught point relative to
+    zerozero (part_origin.read_corner_ref); only front-left may omit it.
     """
     if not isinstance(run_mode, RunMode):
         raise TypeError(f"run_mode must be a RunMode, got {run_mode!r}")
@@ -441,7 +442,7 @@ def build_weldflex_lua(
     cycles = int(cycles)
     if cycles < 1:
         raise ValueError(f"cycles must be >= 1, got {cycles}")
-    studs = resolve_studs(studs, origin_corner, bed_span)
+    studs = resolve_studs(studs, origin_corner, corner_ref)
     check_base_keepout(studs)
 
     path = Path(template_path) if template_path else TEMPLATE_PATH

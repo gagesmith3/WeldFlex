@@ -85,7 +85,10 @@ it and the operator Parts editor's save must not re-corner a part. An unknown
 value is refused, not defaulted. **Stored studs are therefore not robot
 offsets.** Anything that moves to a stud must resolve it through
 `part_origin.resolve_studs()`/`resolve_point()` first, as `lua_builder`,
-`JobManager.load` and `/ui/parts/goto` do. The Single Shot record ignores the
+`JobManager.load` and `/ui/parts/goto` do. A corner other than front-left is
+measured from its taught controller point (`part_origin.CORNER_POINTS`):
+`JobManager.load` reads it once, keeps the `CornerRef` on the session, and the
+build uses that same ref. The Single Shot record ignores the
 field; its target is always measured from `zerozero`.
 
 `_recipes_load()` auto-migrates any recipe missing an `id` by assigning a fresh

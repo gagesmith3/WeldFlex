@@ -48,7 +48,14 @@ from lua_builder import (
 )
 import fault_codes
 from base_keepout import check_studs as check_base_keepout
-from part_origin import DEFAULT_CORNER, parse_corner, resolve_studs
+from part_origin import (
+    DEFAULT_CORNER,
+    ZERO_REF,
+    CornerRef,
+    parse_corner,
+    read_corner_ref,
+    resolve_studs,
+)
 
 log = logging.getLogger("weldflex.job")
 
@@ -315,6 +322,9 @@ class _Session:
     dsc_enabled: bool = False
     stud_reload_ms: int | None = None
     origin_corner: str = DEFAULT_CORNER
+    # The corner's taught point relative to zerozero, read once at load so the
+    # build uses the same numbers the load checked.
+    corner_ref: CornerRef = ZERO_REF
     started_at: str | None = None
     started_ts: float | None = None
     ended_at: str | None = None
@@ -432,8 +442,12 @@ class JobManager:
             raise JobError(f"DI check must be true or false, got {di_check!r}")
         try:
             origin_corner = parse_corner(origin_corner, strict=True)
+            corner_ref = ZERO_REF
             if kind == "part":
-                check_base_keepout(resolve_studs(studs, origin_corner))
+                # Front-left reads nothing; any other corner reads its taught point.
+                corner_ref = read_corner_ref(origin_corner,
+                                             lambda name: self._robot.teach_point_pose(name))
+                check_base_keepout(resolve_studs(studs, origin_corner, corner_ref))
         except ValueError as exc:
             raise JobError(str(exc)) from None
         cycles = max(1, int(cycles))
@@ -463,12 +477,13 @@ class JobManager:
                 dsc_enabled=bool(dsc_enabled),
                 stud_reload_ms=stud_reload_ms,
                 origin_corner=origin_corner,
+                corner_ref=corner_ref,
             )
             snap = self._snapshot_locked()
         log.info("job loaded run_id=%s kind=%s part=%r cycles=%d gate=%s arm=%s di_check=%s "
-                 "origin=%s studs=%d",
+                 "origin=%s corner_ref=(%.1f, %.1f) studs=%d",
                  run_id, kind, part_name, cycles, gate_mode, arm_mode, di_check,
-                 origin_corner, len(studs))
+                 origin_corner, corner_ref.x_mm, corner_ref.y_mm, len(studs))
         self._event(run_id, "load", {"part_id": part_id, "part_name": part_name,
                                      "kind": kind, "cycles": cycles, "gate_mode": gate_mode,
                                      "arm_mode": arm_mode, "di_check": di_check,
@@ -752,6 +767,7 @@ class JobManager:
                 dsc_enabled = sess.dsc_enabled
                 stud_reload_ms = sess.stud_reload_ms
                 origin_corner = sess.origin_corner
+                corner_ref = sess.corner_ref
 
             ft_config = self._robot.ft_config()
             if ft_config.get("company") != 24 or ft_config.get("device") != 0:
@@ -798,6 +814,7 @@ class JobManager:
                     dsc_enabled=dsc_enabled,
                     stud_reload_ms=stud_reload_ms,
                     origin_corner=origin_corner,
+                    corner_ref=corner_ref,
                 )
 
             tmp_dir = tempfile.mkdtemp()

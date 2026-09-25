@@ -76,6 +76,17 @@ class FakeRobot:
         self._maybe_fail("ft_config")
         return {"number": 7, "company": 24, "device": 0}
 
+    # Taught corner points as offsets from zerozero, which sits at 400, -200.
+    taught = {"zerozero": (0.0, 0.0), "zerozero_fr": (736.6, 1.5),
+              "zerozero_bl": (0.0, 740.0), "zerozero_br": (736.6, 740.0)}
+
+    def teach_point_pose(self, name):
+        self._maybe_fail("teach_point_pose")
+        if name not in self.taught:
+            raise RuntimeError(f"Can't read taught point {name!r} (code -1)")
+        dx, dy = self.taught[name]
+        return [400.0 + dx, -200.0 + dy, 50.0, 180.0, 0.0, 90.0]
+
     def start_job_telemetry(self):
         self._maybe_fail("start_job_telemetry")
 
@@ -244,7 +255,7 @@ def test_load_passes_the_origin_corner_to_the_builder_and_the_load_event(tmp_pat
     seen = []
 
     def spy(studs, cycles, **kwargs):
-        seen.append((studs, kwargs.get("origin_corner")))
+        seen.append((studs, kwargs.get("origin_corner"), kwargs.get("corner_ref")))
         return real_build(studs, cycles, **kwargs)
 
     monkeypatch.setattr(jm, "build_weldflex_lua", spy)
@@ -254,8 +265,9 @@ def test_load_passes_the_origin_corner_to_the_builder_and_the_load_event(tmp_pat
              arm_mode="dry", gate_mode="none", origin_corner="back_left")
     mgr.start()
     wait_state(mgr, JobState.RUNNING.value)
-    # The builder gets the part's own numbers; resolving them is its job.
-    assert seen == [([{"x": 1, "y": 2}], "back_left")]
+    # The builder gets the part's own numbers, and the taught corner read at
+    # load; resolving them is its job.
+    assert seen == [([{"x": 1, "y": 2}], "back_left", jm.CornerRef(0.0, 740.0))]
     events = [
         json.loads(line)
         for line in (tmp_path / "run_events.jsonl").read_text(encoding="utf-8").splitlines()
@@ -267,17 +279,34 @@ def test_load_passes_the_origin_corner_to_the_builder_and_the_load_event(tmp_pat
 
 @pytest.mark.parametrize("corner, studs, error", [
     ("top_right", [{"x": 1, "y": 2}], "Unknown origin corner"),
-    ("front_right", [{"x": 1, "y": 2}, {"x": 900, "y": 2}], "Stud 2"),
+    ("front_right", [{"x": 1, "y": 2}, {"x": 740, "y": 2}], "Stud 2"),
 ])
 def test_load_refuses_a_bad_corner_or_a_stud_that_would_flip_across_the_bed(
-    tmp_path, monkeypatch, corner, studs, error
+    tmp_path, corner, studs, error
 ):
     """At load, not when Run is pressed: the builder only runs at start()."""
-    monkeypatch.delenv("WELDFLEX_BED_X_MM", raising=False)
     mgr = make_manager(tmp_path, FakeRobot())
     with pytest.raises(JobError, match=error):
         mgr.load("p1", "Bracket", studs, cycles=1, arm_mode="dry",
                  gate_mode="none", origin_corner=corner)
+    mgr.shutdown()
+
+
+def test_load_refuses_a_corner_whose_point_is_not_taught(tmp_path):
+    robot = FakeRobot()
+    robot.taught = {"zerozero": (0.0, 0.0)}
+    mgr = make_manager(tmp_path, robot)
+    with pytest.raises(JobError, match="Teach zerozero_br"):
+        mgr.load("p1", "Bracket", [{"x": 1, "y": 2}], cycles=1, arm_mode="dry",
+                 gate_mode="none", origin_corner="back_right")
+    mgr.shutdown()
+
+
+def test_a_front_left_load_never_reads_a_taught_point(tmp_path):
+    robot = FakeRobot()
+    mgr = make_manager(tmp_path, robot)
+    mgr.load("p1", "Bracket", [{"x": 1, "y": 2}], cycles=1, arm_mode="dry", gate_mode="none")
+    assert "teach_point_pose" not in robot.calls
     mgr.shutdown()
 
 

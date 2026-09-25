@@ -111,12 +111,15 @@ Consequences worth knowing:
   tooled against, and its X/Y run inward from that corner so they are never
   negative. Before inlining, `lua_builder` resolves them through
   `backend/part_origin.py` into offsets from the one taught point, `zerozero`,
-  at the bed's front-left. A right corner mirrors X against `WELDFLEX_BED_X_MM`
-  and a back corner mirrors Y against `WELDFLEX_BED_Y_MM`; both default to the
-  nominal 762 mm. Front-left studs are inlined unchanged. The other three corners
-  are computed, not taught, so they are only as accurate as the measured
-  stop-to-stop distances and how square wobj 2 sits to the bed edges; teaching a
-  point at each corner is the likely next step. Mirroring the studs is safe
+  at the bed's front-left. Each other corner is its own taught point
+  (`zerozero_fr`, `zerozero_bl`, `zerozero_br`), read from the controller at job
+  load and at Goto; a stud is that point's X/Y offset from `zerozero` plus its
+  own X/Y, with X mirrored for a right corner and Y for a back one. A corner
+  point that isn't taught, sits on the wrong side of `zerozero`, or is more than
+  25 mm off `zerozero`'s bed edge is refused. The corner point's Z is not used.
+  Front-left studs are inlined unchanged and read no point. This replaced
+  stop-to-stop spans in .env (`WELDFLEX_BED_X_MM`/`_Y_MM`), which were never
+  measured and put the first front-right Goto ~3 in off (2026-09-25). Mirroring the studs is safe
   where mirroring a frame would not be: a user frame has to stay right-handed
   with +Z up, but a stud is a point welded with the tool vertical, and DSC only
   uses the distances between studs. `JobManager.load` resolves the studs too,

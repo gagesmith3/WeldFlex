@@ -39,7 +39,7 @@ class Keepout:
 
 def keepout_from_env() -> Keepout | None:
     """The configured zone, or None when none is set. Read on every call, like
-    part_origin.bed_span_from_env(), so tests can monkeypatch it."""
+    lua_builder.default_dsc_calibration(), so tests can monkeypatch it."""
     raw = {name: os.getenv(name, "").strip() for name in (BASE_X_ENV, BASE_Y_ENV, RADIUS_ENV)}
     if not any(raw.values()):
         return None

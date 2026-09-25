@@ -187,12 +187,20 @@ def test_job_load_takes_the_origin_corner_from_the_part(run_app):
 @pytest.fixture
 def goto(run_app, monkeypatch):
     """Posts to the designer's Goto and returns the Lua it would upload."""
-    monkeypatch.delenv("WELDFLEX_BED_X_MM", raising=False)
-    monkeypatch.delenv("WELDFLEX_BED_Y_MM", raising=False)
     uploaded = []
     robot = run_app.module.robot
     zerozero = [400.0, -200.0, 50.0, 180.0, 0.0, 90.0]
+    # The taught corner points, as offsets from zerozero. Not nominal and not
+    # square, so a hard-coded 762 or a dropped skew shows up.
+    taught = {"zerozero": (0.0, 0.0), "zerozero_fr": (736.6, 1.5),
+              "zerozero_bl": (-2.0, 740.0), "zerozero_br": (762.0, 762.0)}
     frames = {"tool_wobj": (2, 2)}
+
+    def teach_point_pose(name):
+        if name not in taught:
+            raise RuntimeError(f"Can't read taught point {name!r} (code -1)")
+        dx, dy = taught[name]
+        return [zerozero[0] + dx, zerozero[1] + dy, zerozero[2] + 3.0] + zerozero[3:]
     monkeypatch.setattr(robot, "upload_and_run",
                         lambda path: uploaded.append(Path(path).read_text(encoding="utf-8")))
     monkeypatch.setattr(robot, "get_universal_state",
@@ -200,13 +208,14 @@ def goto(run_app, monkeypatch):
     monkeypatch.setattr(robot, "active_tool_wobj", lambda: frames["tool_wobj"])
     # The head starts 60 mm straight above zerozero, square to the bed.
     monkeypatch.setattr(robot, "jog_pose", lambda: [400.0, -200.0, 110.0, 180.0, 0.0, 90.0])
-    monkeypatch.setattr(robot, "teach_point_pose", lambda name: list(zerozero))
+    monkeypatch.setattr(robot, "teach_point_pose", teach_point_pose)
 
     def post(**form):
         response = run_app.client.post("/ui/parts/goto", data={"safe_z": "60", "part_z": "0", **form})
         return response.get_data(as_text=True), uploaded
 
     post.frames = frames
+    post.taught = taught
     return post
 
 
@@ -214,6 +223,29 @@ def test_goto_moves_to_the_stud_measured_from_the_parts_corner(goto):
     _, uploaded = goto(x="100", y="50", origin_corner="back_right")
     (program,) = uploaded
     assert "PointsOffsetEnable(0, 662.000, 712.000, 127.000, 0, 0, 0)" in program
+
+
+def test_goto_to_a_corners_0_0_lands_on_its_taught_point(goto):
+    """A front-right 0,0 went ~3 in past zerozero_fr when the corner came from an
+    unmeasured 762 in .env (2026-09-25). It is the taught point now, skew and all."""
+    _, uploaded = goto(x="0", y="0", origin_corner="front_right")
+    (program,) = uploaded
+    assert "PointsOffsetEnable(0, 736.600, 1.500, 127.000, 0, 0, 0)" in program
+
+
+def test_goto_refuses_a_corner_whose_point_is_not_taught(goto):
+    del goto.taught["zerozero_bl"]
+    html, uploaded = goto(x="10", y="10", origin_corner="back_left")
+    assert "Teach zerozero_bl" in html
+    assert uploaded == []
+
+
+def test_goto_refuses_a_corner_point_on_the_wrong_side_of_zerozero(goto):
+    """What a point taught in another frame, or at the wrong stop, looks like."""
+    goto.taught["zerozero_fr"] = (-736.6, 0.0)
+    html, uploaded = goto(x="10", y="10", origin_corner="front_right")
+    assert "should be right of zerozero" in html
+    assert uploaded == []
 
 
 def test_goto_parks_at_safe_z_not_the_search_height(goto):

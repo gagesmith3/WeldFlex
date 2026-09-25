@@ -330,11 +330,11 @@ def _preview_data(studs, origin_corner=part_origin.DEFAULT_CORNER):
     nominal bed and refuses nothing — the job load is where a stud is checked.
     """
     corner = part_origin.parse_corner(origin_corner)
-    span = part_origin.BedSpan(BED_MM, BED_MM)
+    ref = part_origin.nominal_ref(corner)
     scale = _PREVIEW_PX / BED_MM
     points = []
     for i, s in enumerate(studs):
-        bed_x, bed_y = part_origin.to_bed(s['x'], s['y'], corner, span)
+        bed_x, bed_y = part_origin.to_bed(s['x'], s['y'], corner, ref)
         points.append({'x_plot': round(bed_x * scale, 2),
                        'y_plot': round((BED_MM - bed_y) * scale, 2),
                        'index': i + 1})
@@ -1067,7 +1067,7 @@ def ui_parts_goto():
     Takes x/y/safe_z/part_z/origin_corner straight from the request (the
     designer's in-memory state, which may be unsaved) rather than the persisted
     recipe. X/Y are measured from the part's corner and resolved to zerozero
-    offsets the same way a run's studs are.
+    offsets the same way a run's studs are, from that corner's taught point.
 
     The move is point_moves' straight up, level, straight down, never a PTP:
     a joint-space sweep here swung the head into the arm (2026-09-25).
@@ -1080,24 +1080,20 @@ def ui_parts_goto():
             "partials/command_result.html", ok=False, title="Goto",
             payload={"error": "Missing or invalid stud X/Y."},
         )
-    try:
-        bed_x, bed_y = part_origin.resolve_point(x, y, request.form.get("origin_corner"),
-                                                 what="Stud")
-    except ValueError as exc:
-        return render_template(
-            "partials/command_result.html", ok=False, title="Goto",
-            payload={"error": str(exc)},
-        )
     safe_z = float(request.form.get("safe_z") or 60.0)
     part_z = float(request.form.get("part_z") or 0.0)
     high_z = part_z + safe_z
 
     try:
         current, zerozero = _live_move_poses()
+        corner = part_origin.parse_corner(request.form.get("origin_corner"), strict=True)
+        ref = part_origin.read_corner_ref(
+            corner, lambda name: zerozero if name == "zerozero" else robot.teach_point_pose(name))
+        bed_x, bed_y = part_origin.resolve_point(x, y, corner, ref, what="Stud")
         plan = point_moves.plan_offset_move(f"stud at x={x:g}, y={y:g}", current, zerozero,
                                             (bed_x, bed_y, high_z))
         _check_base_keepout(plan, "This stud")
-    except point_moves.PointMoveError as exc:
+    except ValueError as exc:  # PointMoveError, or a corner point missing/mis-taught
         return render_template(
             "partials/command_result.html", ok=False, title="Goto",
             payload={"error": str(exc)},
@@ -1113,6 +1109,8 @@ def ui_parts_goto():
         try:
             robot.upload_and_run(tmp_path)
             ok, payload = True, {"target": f"x={x}, y={y}, z={high_z:g}"}
+            log.info("goto stud x=%g y=%g corner=%s ref=(%.1f, %.1f) -> offset (%.1f, %.1f)",
+                     x, y, corner, ref.x_mm, ref.y_mm, bed_x, bed_y)
         finally:
             if os.path.exists(tmp_path):
                 os.unlink(tmp_path)

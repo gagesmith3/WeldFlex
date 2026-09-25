@@ -17,7 +17,8 @@ Page routes (`app.py`) — verified against the code 2026-09-09:
 /operator/points                    points.html   (calibration menu — send the TCP to a taught point, see `points` below)
 /operator/tcp-calibrate             tcp_calibrate.html
 /operator/robot-diagnostics         robot_diagnostics.html
-/operator/settings                  settings.html   (Wi-Fi card only — partials/wifi_card.html, /ui/wifi/*)
+/operator/settings                  settings.html   (menu: 3×2 grid of calib-menu-card tiles; an href-less tile is a dimmed placeholder)
+/operator/settings/connection       settings_connection.html   (Wi-Fi card — partials/wifi_card.html, /ui/wifi/*)
 /manager                            redirects to /manager/part-designer (see bug note below)
 /manager/part-designer               manager.html (active_tab=part-designer)
 /manager/settings                    manager.html (active_tab=settings)
@@ -66,7 +67,7 @@ eth0 profile is never touched. Connect and hotspot start run on a thread, and
 the card polls `/ui/wifi/card` every second while they run. Every change is
 refused while a job is active. While the hotspot is on, the card shows its name,
 password and address in place of the network list. The hotspot sheet
-(`#hotspot-modal`) lives in `settings.html` next to the join sheet.
+(`#hotspot-modal`) lives in `settings_connection.html` next to the join sheet.
 
 `ft` is `/ui/ft/{reading,stream,inspect}` — that's the whole route set;
 `setup` and `zero` don't exist as routes (an earlier revision of this file

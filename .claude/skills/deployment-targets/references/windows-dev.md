@@ -44,15 +44,13 @@ UI cannot be visually verified on this machine** without either setting
 assume a change "looks fine" on Windows dev implies it's fine at 800×480
 touch scale.
 
-## `/operator/settings` has no OS-integration routes to test here
+## Settings → Connection (Wi-Fi) needs the Pi
 
-The NTP/timezone/wifi-scan/wifi-connect/reboot/shutdown routes this section
-used to describe were removed in `d446c3a` ("Refactor settings page and remove
-unused components", 2026-07-28). `/operator/settings` now renders
-`settings.html`, a static "Settings are coming soon" page — there's nothing
-platform-gated to test on either machine. If that functionality is rebuilt,
-document its actual shape here rather than assuming it returns to the old
-`sys.platform != "win32":`-wrapped-subprocess pattern.
+`/operator/settings` is a menu of tiles; its Connection tile opens
+`/operator/settings/connection`, the Wi-Fi card. The card drives NetworkManager
+through `nmcli` (`backend/wifi.py`), which Windows doesn't have, so here it only
+shows its unavailable state. `tests/test_wifi.py` covers the logic with a fake
+`nmcli` host; real joins and the hotspot can only be tried on the kiosk.
 
 ## The Chinese-debug-print / UTF-8 fix
 

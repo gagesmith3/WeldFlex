@@ -2057,6 +2057,10 @@ def ui_diagnostics_reconnect():
 def settings():
     return render_template("settings.html", page_title="Settings")
 
+@app.route("/operator/settings/connection")
+def settings_connection():
+    return render_template("settings_connection.html", page_title="Connection")
+
 # ── Wi-Fi card (Settings page) ────────────────────────────────────────────────
 # backend/wifi.py does the work and owns the rule that the robot's eth0 link is
 # never touched. Routes follow the in-state inline-error convention: every

@@ -363,11 +363,18 @@ def wifi_app(monkeypatch, host):
 
 
 def test_settings_page_and_card_render(wifi_app):
-    page = wifi_app.client.get("/operator/settings").get_data(as_text=True)
+    page = wifi_app.client.get("/operator/settings/connection").get_data(as_text=True)
     assert 'hx-get="/ui/wifi/card"' in page and 'id="wifi-modal"' in page
     card = wifi_app.client.get("/ui/wifi/card").get_data(as_text=True)
     assert "HomeNet" in card and "ShopNet" in card and "Other network" in card
     assert "Not affected by Wi-Fi changes" in card
+
+
+def test_settings_menu_links_to_the_connection_page(wifi_app):
+    page = wifi_app.client.get("/operator/settings").get_data(as_text=True)
+    assert page.count('class="calib-menu-card') == 6
+    assert 'href="/operator/settings/connection"' in page
+    assert 'id="wifi-card"' not in page
 
 
 def test_connect_is_refused_while_a_job_is_active(wifi_app):
@@ -383,7 +390,7 @@ def test_connect_starts_when_idle(wifi_app):
 
 
 def test_card_offers_hotspot_and_page_has_its_sheet(wifi_app):
-    page = wifi_app.client.get("/operator/settings").get_data(as_text=True)
+    page = wifi_app.client.get("/operator/settings/connection").get_data(as_text=True)
     assert 'id="hotspot-modal"' in page and 'hx-post="/ui/wifi/hotspot/start"' in page
     card = wifi_app.client.get("/ui/wifi/card").get_data(as_text=True)
     assert 'data-hotspot="1"' in card and "Create a hotspot" in card

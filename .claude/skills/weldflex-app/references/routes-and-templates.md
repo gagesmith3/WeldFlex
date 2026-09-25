@@ -63,7 +63,7 @@ nested further (never `/ui/tcp/calibrate`). Live features: `connection`,
 `wifi` is `/ui/wifi/{card,connect,forget,radio-on}` for the Wi-Fi page and
 `/ui/wifi/hotspot/{card,start,stop}` for the Hotspot page (`radio-on?card=hotspot`
 answers with the hotspot card). Each one re-renders its page's whole card, and
-errors show inside it; `partials/wifi_status.html` is the links/banners block
+errors show inside it; `partials/wifi_status.html` is the banners block
 both cards include. `backend/wifi.py` does the work through `nmcli`. It is host-OS
 code outside the robot chain, and its docstring has the rule that the robot's
 eth0 profile is never touched. Connect and hotspot start run on a thread, and

@@ -81,8 +81,11 @@ hand-editing installed copies.
      on 2026-09-25.
    - **4c. Wi-Fi polkit rule**: installs `10-weldflex-wifi.rules` to
      `/etc/polkit-1/rules.d/` with `KIOSK_USER` substituted. It grants the kiosk
-     user four NetworkManager actions (network-control, settings.modify.system,
-     wifi.scan, enable-disable-wifi) so Settings → Wi-Fi works without root.
+     user five NetworkManager actions (network-control, settings.modify.system,
+     wifi.scan, enable-disable-wifi, wifi.share.protected) so Settings → Wi-Fi
+     and Settings → Hotspot work without root. Without `wifi.share.protected`,
+     the hotspot fails with "Not authorized to share connections via wifi"
+     (found 2026-09-25).
      **The `10` prefix matters.** Debian's `49-polkit-pkla-compat.rules` runs the
      vendor `.pkla`, which answers "no" to `settings.modify.system` for sudo/netdev
      users outside an active session, and the first rule with an answer wins. A

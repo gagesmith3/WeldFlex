@@ -412,7 +412,7 @@ def test_settings_page_and_card_render(wifi_app):
     assert 'id="hotspot-modal"' not in page
     card = wifi_app.client.get("/ui/wifi/card").get_data(as_text=True)
     assert "HomeNet" in card and "ShopNet" in card and "Other network" in card
-    assert "Not affected by Wi-Fi changes" in card
+    assert "Robot link" not in card
 
 
 def test_settings_menu_links_to_the_wifi_and_hotspot_pages(wifi_app):

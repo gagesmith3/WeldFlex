@@ -30,6 +30,7 @@
   {% include "partials/wifi_status.html" %}
 
   {% if not wifi.radio_on %}
+    <p class="wifi-note">Wi-Fi is off.</p>
     <button type="button" class="btn primary wifi-btn" hx-post="/ui/wifi/radio-on"
       hx-target="#wifi-card" hx-swap="outerHTML" hx-disabled-elt="this">Turn Wi-Fi on</button>
   {% else %}

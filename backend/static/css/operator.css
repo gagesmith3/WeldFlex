@@ -6111,46 +6111,6 @@ body.kiosk .pd-part-delete-btn { opacity: 1; }
   font-size: 0.85rem;
 }
 
-/* Wi-Fi and robot link side by side, so it is obvious they are separate. */
-.wifi-links {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-
-.wifi-link {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  min-width: 0;
-  padding: 6px 10px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--drawer);
-}
-
-.wifi-link.is-ok { background: var(--ok-bg); border-color: var(--ok-line); }
-.wifi-link.is-warn { background: var(--err-bg); border-color: var(--err-line); }
-
-.wifi-link-label {
-  font-size: 0.7rem;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--muted);
-}
-
-.wifi-link strong,
-.wifi-link-detail {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.wifi-link-detail {
-  font-size: 0.78rem;
-  color: var(--muted);
-}
-
 .wifi-banner {
   display: flex;
   align-items: center;

@@ -1,0 +1,28 @@
+#!/bin/sh
+# NetworkManager dispatcher script: never forward packets that arrive on Wi-Fi.
+# Installed to /etc/NetworkManager/dispatcher.d/ by install_rpi_kiosk.sh.
+# NetworkManager runs it as root with $1 = interface and $2 = action.
+#
+# Why: Settings -> Wi-Fi can turn the panel into a hotspot (backend/wifi.py). The
+# hotspot uses NetworkManager's "shared" mode, which sets net.ipv4.ip_forward=1
+# and NATs its clients. Without this script, any phone or laptop on the hotspot
+# could route through the panel to the robot controller on eth0. The panel is
+# never meant to be a router, so this runs for every Wi-Fi interface, hotspot or
+# not. A per-interface forwarding flag of 0 stops the kernel from forwarding
+# packets received on that interface, and the kiosk's own app and SSH still work.
+#
+# NetworkManager writes ip_forward while it activates the shared connection, and
+# that resets every per-interface flag. The "up" event comes after that, so this
+# write wins. The Wi-Fi card reads the flag back and warns when it is not 0.
+
+case "$1" in
+    wlan*) ;;
+    *) exit 0 ;;
+esac
+
+case "$2" in
+    up|reapply|dhcp4-change)
+        echo 0 > "/proc/sys/net/ipv4/conf/$1/forwarding"
+        ;;
+esac
+exit 0

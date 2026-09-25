@@ -161,6 +161,18 @@ sed "s/KIOSK_USER/$KIOSK_USER/g" "$DEPLOY_DIR/10-weldflex-wifi.rules" \
     > /etc/polkit-1/rules.d/10-weldflex-wifi.rules
 chmod 644 /etc/polkit-1/rules.d/10-weldflex-wifi.rules
 
+# ── 4d. No forwarding from Wi-Fi (Settings → Wi-Fi → hotspot) ────────────────
+# The hotspot's "shared" mode turns IP forwarding on. This dispatcher script
+# turns it off for Wi-Fi, so a device on the hotspot cannot reach the robot.
+# NetworkManager only runs dispatcher scripts owned by root and not writable by
+# group or others.
+echo "==> Installing Wi-Fi no-forward dispatcher script..."
+install -o root -g root -m 755 "$DEPLOY_DIR/90-weldflex-wifi-noforward" \
+    /etc/NetworkManager/dispatcher.d/90-weldflex-wifi-noforward
+for dev in /proc/sys/net/ipv4/conf/wlan*; do
+    if [ -e "$dev/forwarding" ]; then echo 0 > "$dev/forwarding"; fi
+done
+
 # ── 5. Session scripts + device access ────────────────────────────────────────
 echo "==> Setting permissions..."
 chmod +x "$DEPLOY_DIR/kiosk-session-cage.sh" "$DEPLOY_DIR/kiosk-session-x11.sh"

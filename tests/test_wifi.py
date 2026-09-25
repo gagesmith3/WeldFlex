@@ -29,8 +29,11 @@ class FakeHost:
         self.scan = [("*", "HomeNet", "70", "WPA2"), ("", "ShopNet", "82", "WPA2"),
                      ("", "ShopNet", "40", "WPA2"), ("", "Guest", "30", ""),
                      ("", "", "90", "WPA2"), ("", "Corp:5G", "50", "WPA2 802.1X")]
+        self.names = {ETH_UUID: "robot-eth0"}     # uuid -> NAME; defaults to the SSID
+        self.settings = {}                        # uuid -> {property: value} from add/modify
         self.wlan_addr = ("192.168.1.132", 24)
         self.connect_result = "ok"        # "ok" | "fail" | ("addr", ip, prefix)
+        self.hotspot_up_fails = False
         self.robot_dev_after = "eth0"
 
     # subprocess.run replacement
@@ -45,7 +48,7 @@ class FakeHost:
     def _answer(self, a):
         if a[:3] == ["ip", "-j", "route"]:
             dev = "eth0"
-            if any(c[:1] == ["nmcli"] and "connect" in c for c in self.calls[:-1]):
+            if any(c[:1] == ["nmcli"] and ("connect" in c or "up" in c) for c in self.calls[:-1]):
                 dev = self.robot_dev_after
             return json.dumps([{"dst": ROBOT_IP, "dev": dev}]), 0, ""
         if a[:4] == ["ip", "-j", "-4", "addr"]:
@@ -58,21 +61,43 @@ class FakeHost:
             a = a[2:]
         if a == ["radio", "wifi"]:
             return "enabled\n", 0, ""
-        if a[:4] == ["-t", "-f", "UUID,TYPE", "connection"]:
-            return "".join(f"{u}:{t}\n" for u, (t, _, _) in self.profiles.items()), 0, ""
+        esc = lambda s: s.replace("\\", "\\\\").replace(":", "\\:")
+        if a[:4] == ["-t", "-f", "UUID,TYPE,NAME", "connection"]:
+            return "".join(f"{u}:{t}:{esc(self.names.get(u, s))}\n"
+                           for u, (t, s, _) in self.profiles.items()), 0, ""
         if a[:4] == ["-t", "-f", "UUID,TYPE,DEVICE", "connection"]:
             return "".join(f"{u}:{t}:{d}\n" for u, (t, _, d) in self.profiles.items() if d), 0, ""
         if a[:2] == ["-g", "802-11-wireless.ssid"]:
-            return self.profiles[a[-1]][1] + "\n", 0, ""
+            return esc(self.profiles[a[-1]][1]) + "\n", 0, ""
+        if a[:3] == ["-s", "-g", "802-11-wireless-security.psk"]:
+            return esc(self.settings[a[-1]]["802-11-wireless-security.psk"]) + "\n", 0, ""
         if a[:2] == ["-g", "connection.type"]:
             return self.profiles[a[-1]][0] + "\n", 0, ""
+        if a[:4] == ["connection", "add", "type", "wifi"]:
+            uuid = "hotspot-uuid"
+            props = dict(zip(a[8::2], a[9::2]))
+            self.names[uuid] = a[a.index("con-name") + 1]
+            self.settings[uuid] = props
+            self.profiles[uuid] = ("802-11-wireless", props["802-11-wireless.ssid"], None)
+            return "", 0, ""
+        if a[:3] == ["connection", "modify", "uuid"]:
+            uuid = a[3]
+            self.settings.setdefault(uuid, {}).update(zip(a[4::2], a[5::2]))
+            t, s, d = self.profiles[uuid]
+            self.profiles[uuid] = (t, self.settings[uuid].get("802-11-wireless.ssid", s), d)
+            return "", 0, ""
+        if a[:3] == ["connection", "down", "uuid"]:
+            t, s, _ = self.profiles[a[3]]
+            self.profiles[a[3]] = (t, s, None)
+            return "", 0, ""
         if a[:3] == ["-t", "-f", "IN-USE,SSID,SIGNAL,SECURITY"]:
-            esc = lambda s: s.replace("\\", "\\\\").replace(":", "\\:")
             return "".join(":".join(esc(x) for x in row) + "\n" for row in self.scan), 0, ""
         if a[:3] == ["connection", "delete", "uuid"]:
             self.profiles.pop(a[3])
             return "", 0, ""
         if a[:3] == ["connection", "up", "uuid"]:
+            if a[3] == "hotspot-uuid" and self.hotspot_up_fails:
+                return "", 4, "Error: Connection activation failed: No suitable device found."
             self._activate(a[3])
             return "", 0, ""
         if a[:3] == ["device", "wifi", "connect"]:
@@ -209,6 +234,109 @@ def test_only_one_operation_at_a_time(host, monkeypatch):
         wifi.start_connect("Guest", "", False, ROBOT_IP)
 
 
+# ── hotspot ───────────────────────────────────────────────────────────────────
+
+@pytest.fixture
+def no_forward(monkeypatch):
+    monkeypatch.setattr(wifi, "_forwarding", lambda dev: "0")
+
+
+def test_hotspot_creates_ap_profile_and_goes_up(host, no_forward):
+    ok, msg = wifi._start_hotspot("WeldFlex-AB12", "booth2026x", ROBOT_IP)
+    assert ok, msg
+    props = host.settings["hotspot-uuid"]
+    assert props["802-11-wireless.mode"] == "ap" and props["ipv4.method"] == "shared"
+    assert props["ipv4.addresses"] == "10.42.0.1/24" and props["connection.autoconnect"] == "yes"
+    assert host.profiles["hotspot-uuid"][2] == "wlan0"
+    assert "home-uuid" in host.profiles              # the shop network stays saved
+    add = next(c for c in host.calls if "add" in c)
+    assert add[add.index("ifname") + 1] == "wlan0"
+    _no_eth_changes(host)
+
+
+def test_status_while_hotspot_is_on_shows_credentials_and_skips_scan(host, no_forward):
+    wifi._start_hotspot("Booth:1", "booth2026x", ROBOT_IP)
+    host.calls.clear()
+    st = wifi.status(ROBOT_IP)
+    assert st.hotspot.on and st.hotspot.ssid == "Booth:1" and st.hotspot.password == "booth2026x"
+    assert st.hotspot.isolated and st.address == "10.42.0.1" and st.ssid == "Booth:1"
+    assert st.networks == []
+    assert not any("list" in c for c in host.calls)   # an access point does not scan
+
+
+def test_status_warns_when_forwarding_is_not_blocked(host, monkeypatch):
+    wifi._start_hotspot("Booth", "booth2026x", ROBOT_IP)
+    monkeypatch.setattr(wifi, "_forwarding", lambda dev: "1")
+    assert not wifi.status(ROBOT_IP).hotspot.isolated
+
+
+def test_hotspot_is_not_a_saved_network(host, no_forward):
+    wifi._start_hotspot("Booth", "booth2026x", ROBOT_IP)
+    assert ("hotspot-uuid", "Booth") not in wifi._wifi_profiles()
+    assert wifi.forget("Booth") == "Booth was not saved."
+    assert "hotspot-uuid" in host.profiles
+
+
+def test_status_when_off_suggests_a_password(host):
+    st = wifi.status(ROBOT_IP)
+    assert not st.hotspot.saved and not st.hotspot.on
+    assert len(st.hotspot.password) == 10 and st.hotspot.ssid.startswith("WeldFlex")
+
+
+def test_restart_reuses_the_saved_profile(host, no_forward):
+    wifi._start_hotspot("Booth", "booth2026x", ROBOT_IP)
+    wifi.stop_hotspot()
+    ok, _ = wifi._start_hotspot("Booth2", "newpass123", ROBOT_IP)
+    assert ok
+    assert sum(1 for c in host.calls if "add" in c) == 1
+    assert host.profiles["hotspot-uuid"][1] == "Booth2"
+
+
+def test_stop_hotspot_turns_off_autoconnect(host, no_forward):
+    wifi._start_hotspot("Booth", "booth2026x", ROBOT_IP)
+    wifi.stop_hotspot()
+    assert host.settings["hotspot-uuid"]["connection.autoconnect"] == "no"
+    assert host.profiles["hotspot-uuid"][2] is None
+
+
+def test_failed_hotspot_restores_previous_wifi(host):
+    host.hotspot_up_fails = True
+    ok, msg = wifi._start_hotspot("Booth", "booth2026x", ROBOT_IP)
+    assert not ok and "Could not start the hotspot" in msg
+    assert host.settings["hotspot-uuid"]["connection.autoconnect"] == "no"
+    assert host.profiles["home-uuid"][2] == "wlan0"
+    _no_eth_changes(host)
+
+
+def test_hotspot_moving_robot_route_is_rolled_back(host):
+    host.robot_dev_after = "wlan0"
+    ok, msg = wifi._start_hotspot("Booth", "booth2026x", ROBOT_IP)
+    assert not ok and "moved the robot route" in msg
+    assert host.profiles["hotspot-uuid"][2] is None
+    assert host.profiles["home-uuid"][2] == "wlan0"
+
+
+def test_hotspot_refused_when_robot_subnet_overlaps(host, monkeypatch):
+    real = wifi._iface_network
+    monkeypatch.setattr(wifi, "_iface_network", lambda dev: (
+        wifi.ipaddress.IPv4Interface("10.42.0.50/24") if dev == "eth0" else real(dev)))
+    ok, msg = wifi._start_hotspot("Booth", "booth2026x", ROBOT_IP)
+    assert not ok and "overlaps" in msg
+    assert "hotspot-uuid" not in host.profiles
+
+
+def test_join_is_refused_while_hotspot_is_on(host, no_forward):
+    wifi._start_hotspot("Booth", "booth2026x", ROBOT_IP)
+    with pytest.raises(wifi.WifiError, match="Stop it"):
+        wifi.start_connect("ShopNet", "hunter2hunter2", False, ROBOT_IP)
+
+
+@pytest.mark.parametrize("ssid,pw", [("", "booth2026x"), ("Booth", ""), ("Booth", "short"), ("x" * 33, "booth2026x")])
+def test_start_hotspot_validates(host, ssid, pw):
+    with pytest.raises(wifi.WifiError):
+        wifi.start_hotspot(ssid, pw, ROBOT_IP)
+
+
 def test_timeout_is_reported_not_raised(host, monkeypatch):
     def slow(args, **kw):
         raise subprocess.TimeoutExpired(args, kw.get("timeout"))
@@ -252,3 +380,29 @@ def test_connect_is_refused_while_a_job_is_active(wifi_app):
 def test_connect_starts_when_idle(wifi_app):
     wifi_app.client.post("/ui/wifi/connect", data={"ssid": "Secret", "password": "x" * 8, "hidden": "1"})
     assert wifi_app.started == [("Secret", "x" * 8, True, wifi_app.robot_ip)]
+
+
+def test_card_offers_hotspot_and_page_has_its_sheet(wifi_app):
+    page = wifi_app.client.get("/operator/settings").get_data(as_text=True)
+    assert 'id="hotspot-modal"' in page and 'hx-post="/ui/wifi/hotspot/start"' in page
+    card = wifi_app.client.get("/ui/wifi/card").get_data(as_text=True)
+    assert 'data-hotspot="1"' in card and "Create a hotspot" in card
+
+
+def test_card_while_hotspot_on_shows_how_to_join(wifi_app, host, monkeypatch):
+    monkeypatch.setattr(wifi, "_forwarding", lambda dev: "0")
+    wifi._start_hotspot("Booth", "booth2026x", ROBOT_IP)
+    card = wifi_app.client.get("/ui/wifi/card").get_data(as_text=True)
+    assert "booth2026x" in card and "http://10.42.0.1:" in card and "Stop hotspot" in card
+    assert "Other network" not in card and "can reach the robot network" not in card
+
+
+def test_hotspot_start_is_refused_while_a_job_is_active(wifi_app, monkeypatch):
+    started = []
+    monkeypatch.setattr(wifi, "start_hotspot", lambda *a: started.append(a))
+    wifi_app.job_state.active = True
+    card = wifi_app.client.post("/ui/wifi/hotspot/start", data={"ssid": "Booth", "password": "booth2026x"})
+    assert "A job is running" in card.get_data(as_text=True) and started == []
+    wifi_app.job_state.active = False
+    wifi_app.client.post("/ui/wifi/hotspot/start", data={"ssid": "Booth", "password": "booth2026x"})
+    assert started == [("Booth", "booth2026x", wifi_app.robot_ip)]

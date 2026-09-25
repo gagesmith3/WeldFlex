@@ -82,6 +82,11 @@ hand-editing installed copies.
      `50-` rule never ran for that action. Check it with
      `sudo systemd-run --uid=<kiosk user> --wait --pipe nmcli general permissions`.
      A normal SSH shell is an active session, so it shows "yes" regardless.
+   - **4d. Wi-Fi no-forward dispatcher**: installs `90-weldflex-wifi-noforward`
+     to `/etc/NetworkManager/dispatcher.d/` (root, 755) and sets
+     `net.ipv4.conf.wlan*.forwarding=0` right away. The hotspot's "shared" mode
+     turns IP forwarding on, which would let a hotspot device route through the
+     panel to the robot. The script writes 0 again on every Wi-Fi `up`.
 5. **Session scripts**: `chmod +x` on both, and `usermod -aG video,input,render`
    for the kiosk user. logind normally grants wlroots its DRM/input access via
    the seat; the group membership is belt-and-braces and harmless on X11.
@@ -227,8 +232,32 @@ be physically plugged in before the connection comes up).
 - The password goes on nmcli's command line, so it is briefly visible in `ps` to
   local users. It is never logged.
 
+**Hotspot (trade shows).** "Create a hotspot…" makes the panel an access point
+on `wlan0` (profile `weldflex-hotspot`, 2.4 GHz, WPA2-PSK/CCMP, PMF off,
+`ipv4.method shared` at `10.42.0.1/24`, no IPv6). A laptop that joins it reaches
+the app at `http://10.42.0.1:<PORT>` and SSH at `10.42.0.1`. It has no internet,
+because eth0 is the robot and carries no default route.
+
+- The radio is either a client or an access point, so **turning the hotspot on
+  drops the shop Wi-Fi, and any SSH session over it.** Reconnect through the
+  hotspot.
+- While it is on, the profile autoconnects at priority 100, so it comes back
+  after a power cycle. Stop turns autoconnect off. NetworkManager then rejoins a
+  saved network if one is in range.
+- The profile is not a "saved network": `_wifi_profiles()` leaves it out, so
+  Forget and the connect rollback never delete it.
+- The start is refused if the robot's subnet overlaps 10.42.0.0/24. It is rolled
+  back, and the previous Wi-Fi restored, if the robot route moves.
+- The card reads `/proc/sys/net/ipv4/conf/wlan0/forwarding`. It shows a red
+  warning when that is not 0 (step 4d missing).
+- The password is shown on the card in plain text, by design. Anyone who joins
+  gets the full operator UI, including Run.
+
 **Not yet run on hardware.** Only the fake-nmcli tests in `tests/test_wifi.py`
-have run. Verify the polkit rule and one real join and rollback on the Pi.
+have run. Verify the polkit rule and one real join and rollback on the Pi. For
+the hotspot, also verify that a phone can join (brcmfmac AP mode), that the
+password reads back on the card (`nmcli -s` needs the secrets permission), and
+that a hotspot client cannot ping the robot.
 
 ## `.env` on the RPi
 

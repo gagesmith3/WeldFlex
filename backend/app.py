@@ -2066,7 +2066,7 @@ def _wifi_card(error="", rescan="no"):
     op = wifi.operation()
     # No scan while a connect is in progress: it can disturb the association.
     st = wifi.status(robot.robot_ip, rescan="no" if op.running else rescan)
-    return render_template("partials/wifi_card.html", wifi=st, op=op,
+    return render_template("partials/wifi_card.html", wifi=st, op=op, port=PORT,
                            error=error or st.error, job_active=job.snapshot().active)
 
 def _wifi_refusal():
@@ -2110,6 +2110,29 @@ def ui_wifi_radio_on():
     except wifi.WifiError as exc:
         error = str(exc)
     return _wifi_card(error=error, rescan="yes")
+
+@app.route("/ui/wifi/hotspot/start", methods=["POST"])
+def ui_wifi_hotspot_start():
+    error = _wifi_refusal()
+    if not error:
+        try:
+            wifi.start_hotspot(request.form.get("ssid", ""), request.form.get("password", ""),
+                               robot.robot_ip)
+        except wifi.WifiError as exc:
+            error = str(exc)
+    return _wifi_card(error=error)
+
+@app.route("/ui/wifi/hotspot/stop", methods=["POST"])
+def ui_wifi_hotspot_stop():
+    error = _wifi_refusal()
+    if not error:
+        try:
+            wifi.stop_hotspot()
+        except wifi.WifiError as exc:
+            error = str(exc)
+    # "auto", not "yes": right after the access point goes down, NetworkManager is
+    # busy rejoining a saved network and refuses a forced scan.
+    return _wifi_card(error=error, rescan="auto")
 
 @app.route("/manager")
 def manager():

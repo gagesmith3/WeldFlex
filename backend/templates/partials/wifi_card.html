@@ -10,7 +10,7 @@
       {{ icon_safe('wifi', width=18, height=18) }}
       <h3>Wi-Fi</h3>
     </div>
-    {% if wifi.available and wifi.radio_on %}
+    {% if wifi.available and wifi.radio_on and not wifi.hotspot.on %}
     <button type="button" class="btn primary wifi-btn wifi-scan-btn"
       hx-get="/ui/wifi/card?rescan=1" hx-target="#wifi-card" hx-swap="outerHTML"
       hx-disabled-elt="this" {% if op.running %}disabled{% endif %}>
@@ -29,7 +29,7 @@
      link is not the Wi-Fi link before changing anything. #}
   <div class="wifi-links">
     <div class="wifi-link {{ 'is-ok' if wifi.ssid else '' }}">
-      <span class="wifi-link-label">Network</span>
+      <span class="wifi-link-label">{{ 'Hotspot' if wifi.hotspot.on else 'Network' }}</span>
       <strong>
         {% if not wifi.radio_on %}Wi-Fi is off
         {% elif wifi.ssid %}{{ wifi.ssid }}
@@ -50,7 +50,11 @@
   <div class="wifi-banner wifi-banner-{{ op.state }}" role="status">
     {% if op.running %}
       <span class="wifi-spin">{{ icon_safe('loader', width=16, height=16) }}</span>
+      {% if op.kind == 'hotspot' %}
+      <span>Starting hotspot <strong>{{ op.ssid }}</strong>. This can take up to 30 s. The robot link stays up.</span>
+      {% else %}
       <span>Connecting to <strong>{{ op.ssid }}</strong>. This can take up to 30 s. The robot link stays up.</span>
+      {% endif %}
     {% else %}
       <span>{{ op.message }}</span>
     {% endif %}
@@ -63,6 +67,22 @@
   {% if not wifi.radio_on %}
     <button type="button" class="btn primary wifi-btn" hx-post="/ui/wifi/radio-on"
       hx-target="#wifi-card" hx-swap="outerHTML" hx-disabled-elt="this">Turn Wi-Fi on</button>
+  {% elif wifi.hotspot.on %}
+  {# The panel is the access point. It shows what to type on the laptop or phone. #}
+  <div class="wifi-hotspot">
+    <dl class="wifi-hotspot-creds">
+      <div><dt>Name</dt><dd>{{ wifi.hotspot.ssid }}</dd></div>
+      <div><dt>Password</dt><dd>{{ wifi.hotspot.password or 'not readable' }}</dd></div>
+      <div><dt>Open</dt><dd>http://{{ wifi.hotspot.address }}:{{ port }}</dd></div>
+    </dl>
+    <p class="wifi-note">Join this network on a laptop or phone, then open the address above, or SSH to {{ wifi.hotspot.address }}. The hotspot has no internet. It stays on after a restart until you stop it.</p>
+    {% if not wifi.hotspot.isolated %}
+    <div class="wifi-banner wifi-banner-failed" role="alert">Devices on the hotspot can reach the robot network through this panel. Re-run the kiosk installer to block that.</div>
+    {% endif %}
+    <button type="button" class="btn stop wifi-btn wifi-hotspot-stop" hx-post="/ui/wifi/hotspot/stop"
+      hx-target="#wifi-card" hx-swap="outerHTML" hx-disabled-elt="this"
+      {% if op.running or job_active %}disabled{% endif %}>Stop hotspot</button>
+  </div>
   {% else %}
   <ul class="wifi-list" role="list">
     {% for n in wifi.networks %}
@@ -86,6 +106,14 @@
       <button type="button" class="wifi-row wifi-row-other" data-other="1"
         {% if op.running or job_active %}disabled{% endif %}>
         <span class="wifi-ssid">Other network…</span>
+      </button>
+    </li>
+    <li>
+      <button type="button" class="wifi-row wifi-row-other" data-hotspot="1"
+        data-ssid="{{ wifi.hotspot.ssid }}" data-password="{{ wifi.hotspot.password }}"
+        {% if op.running or job_active %}disabled{% endif %}>
+        <span class="wifi-ssid">Create a hotspot…</span>
+        <span class="wifi-row-hint">No Wi-Fi here? This panel makes its own.</span>
       </button>
     </li>
   </ul>

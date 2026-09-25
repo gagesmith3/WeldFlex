@@ -27,8 +27,11 @@
 
     document.addEventListener('click', function (e) {
       var row = e.target.closest('.wifi-row');
-      if (row && !row.disabled) open(row.dataset);
+      if (!row || row.disabled) return;
+      if (row.dataset.hotspot === '1') openHotspot(row.dataset);
+      else open(row.dataset);
     });
+    initHotspot();
     overlay.querySelector('[data-wifi-close]').addEventListener('click', close);
     overlay.addEventListener('click', function (e) { if (e.target === overlay) close(); });
 
@@ -117,6 +120,48 @@
 
   function close() {
     overlay.hidden = true;
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+  }
+
+  // ── hotspot sheet ──
+  var hsOverlay, hsSsid, hsPw, hsError;
+
+  function initHotspot() {
+    hsOverlay = document.getElementById('hotspot-modal');
+    if (!hsOverlay) return;
+    hsSsid = document.getElementById('hotspot-modal-ssid');
+    hsPw = document.getElementById('hotspot-modal-pw');
+    hsError = document.getElementById('hotspot-modal-error');
+    hsOverlay.querySelector('[data-hotspot-close]').addEventListener('click', closeHotspot);
+    hsOverlay.addEventListener('click', function (e) { if (e.target === hsOverlay) closeHotspot(); });
+
+    hsOverlay.querySelector('form').addEventListener('htmx:configRequest', function (e) {
+      var ssid = hsSsid.value.trim();
+      e.detail.parameters.ssid = ssid;
+      var err = '';
+      if (!ssid) err = 'Enter a name for the hotspot.';
+      else if (new TextEncoder().encode(ssid).length > 32) err = 'The name is too long (32 characters at most).';
+      else if (hsPw.value.length < 8 || hsPw.value.length > 63) err = 'The password is 8 to 63 characters.';
+      if (err) {
+        e.preventDefault();
+        hsError.textContent = err;
+        hsError.hidden = false;
+        return;
+      }
+      closeHotspot();
+    });
+  }
+
+  function openHotspot(data) {
+    if (!hsOverlay) return;
+    hsSsid.value = data.ssid || '';
+    hsPw.value = data.password || '';
+    hsError.hidden = true;
+    hsOverlay.hidden = false;
+  }
+
+  function closeHotspot() {
+    hsOverlay.hidden = true;
     if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
   }
 

@@ -6195,6 +6195,51 @@ body.kiosk .pd-part-delete-btn { opacity: 1; }
   white-space: nowrap;
 }
 
+.wifi-row-hint {
+  font-size: 0.78rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* Hotspot on: what to type on the laptop or phone, big enough to read across the booth. */
+.wifi-hotspot {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.wifi-hotspot-creds {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.wifi-hotspot-creds > div {
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--drawer);
+}
+
+.wifi-hotspot-creds dt {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.wifi-hotspot-creds dd {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  font-family: ui-monospace, "DejaVu Sans Mono", monospace;
+  overflow-wrap: anywhere;
+}
+
+.btn.wifi-hotspot-stop { align-self: flex-start; }
+
 .wifi-empty {
   padding: 12px;
   color: var(--muted);

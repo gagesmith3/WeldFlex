@@ -58,12 +58,15 @@ nested further (never `/ui/tcp/calibrate`). Live features: `connection`,
 `diagnostics`, `fault`, `ft`, `job`, `jog`, `manager`, `parts`, `points`,
 `recipes`, `settings`, `single-shot`, `tcp-calibrate`, `wifi`.
 
-`wifi` is `/ui/wifi/{card,connect,forget,radio-on}`. Each one re-renders the whole
-card, and errors show inside it. `backend/wifi.py` does the work through `nmcli`.
-It is host-OS code outside the robot chain, and its docstring has the rule that
-the robot's eth0 profile is never touched. Connect runs on a thread, and the card
-polls `/ui/wifi/card` every second while it runs. Connect and forget are refused
-while a job is active.
+`wifi` is `/ui/wifi/{card,connect,forget,radio-on}` plus
+`/ui/wifi/hotspot/{start,stop}`. Each one re-renders the whole card, and errors
+show inside it. `backend/wifi.py` does the work through `nmcli`. It is host-OS
+code outside the robot chain, and its docstring has the rule that the robot's
+eth0 profile is never touched. Connect and hotspot start run on a thread, and
+the card polls `/ui/wifi/card` every second while they run. Every change is
+refused while a job is active. While the hotspot is on, the card shows its name,
+password and address in place of the network list. The hotspot sheet
+(`#hotspot-modal`) lives in `settings.html` next to the join sheet.
 
 `ft` is `/ui/ft/{reading,stream,inspect}` — that's the whole route set;
 `setup` and `zero` don't exist as routes (an earlier revision of this file

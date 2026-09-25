@@ -21,6 +21,17 @@ HMI reaches the controller over `eth0` on a static profile (`robot-eth0`,
 Connecting takes up to `CONNECT_TIMEOUT_S` seconds, so `start_connect()` runs it
 on a thread and the card polls `operation()`. Only one operation runs at a time.
 
+**Hotspot.** For a trade show with no Wi-Fi to join, the panel can broadcast its
+own network instead (`start_hotspot()`), so a laptop or phone can reach the app
+and SSH at `HOTSPOT_ADDR`. The radio cannot be a client and an access point at
+once, so the hotspot replaces the shop Wi-Fi until it is stopped. While it is on,
+its profile (`HOTSPOT_NAME`) autoconnects at a high priority, so it comes back
+after an overnight power-off. `stop_hotspot()` turns that off. NetworkManager's
+"shared" mode hands out addresses and turns on IP forwarding, which would let a
+hotspot device route through the panel to the robot. The installer's dispatcher
+script (`deploy/rpi/90-weldflex-wifi-noforward`) turns forwarding off for
+packets that arrive on Wi-Fi, and the card warns when it is not in place.
+
 Privilege: the backend runs as the kiosk user, not root. The installer's polkit
 rule (`deploy/rpi/10-weldflex-wifi.rules`) grants that user the NetworkManager
 actions this module needs. Without it every change fails with "Not authorized".
@@ -37,6 +48,7 @@ import ipaddress
 import json
 import logging
 import os
+import secrets
 import shutil
 import subprocess
 import sys
@@ -49,6 +61,28 @@ log = logging.getLogger(__name__)
 IFACE = os.getenv("WELDFLEX_WIFI_IFACE", "wlan0")
 CONNECT_TIMEOUT_S = 30
 WIFI_TYPE = "802-11-wireless"
+
+HOTSPOT_NAME = "weldflex-hotspot"
+HOTSPOT_ADDR = ipaddress.IPv4Interface("10.42.0.1/24")
+# Written to the hotspot profile on every start. It uses 2.4 GHz because the most
+# devices support it. It is WPA2-only (CCMP) with PMF off, because in AP mode the
+# Pi's brcmfmac driver is known to reject clients under WPA3/SAE or PMF.
+HOTSPOT_SETTINGS = [
+    "connection.autoconnect", "yes",
+    "connection.autoconnect-priority", "100",
+    "802-11-wireless.mode", "ap",
+    "802-11-wireless.band", "bg",
+    "ipv4.method", "shared",
+    "ipv4.addresses", str(HOTSPOT_ADDR),
+    "ipv6.method", "disabled",
+    "802-11-wireless-security.key-mgmt", "wpa-psk",
+    "802-11-wireless-security.proto", "rsn",
+    "802-11-wireless-security.pairwise", "ccmp",
+    "802-11-wireless-security.group", "ccmp",
+    "802-11-wireless-security.pmf", "disable",
+]
+# The password is read off the kiosk screen, so only characters that can't be confused.
+_PW_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"
 
 # How long a finished connect/forget result stays on the card.
 RESULT_SHOW_S = 90
@@ -81,7 +115,7 @@ class Network:
 
 @dataclass
 class Operation:
-    kind: str = ""               # "connect" | "forget" | ""
+    kind: str = ""               # "connect" | "forget" | "hotspot" | "hotspot-stop" | ""
     ssid: str = ""
     state: str = "idle"          # "idle" | "running" | "ok" | "failed"
     message: str = ""
@@ -99,6 +133,16 @@ class Operation:
 
 
 @dataclass
+class Hotspot:
+    saved: bool = False          # a hotspot profile exists
+    on: bool = False             # and it is the active Wi-Fi connection
+    ssid: str = ""               # the saved name, or a suggested default
+    password: str = ""           # the saved password, or a new suggestion while off
+    address: str = ""
+    isolated: bool = True        # hotspot devices cannot route through to the robot network
+
+
+@dataclass
 class WifiStatus:
     available: bool
     reason: str = ""
@@ -109,6 +153,7 @@ class WifiStatus:
     robot_dev: str = ""
     robot_ok: bool = False
     networks: list[Network] = field(default_factory=list)
+    hotspot: Hotspot = field(default_factory=Hotspot)
     error: str = ""
 
 
@@ -175,15 +220,31 @@ def split_terse(line: str) -> list[str]:
     return fields
 
 
-def _wifi_profiles() -> list[tuple[str, str]]:
-    """(uuid, ssid) for every saved Wi-Fi profile. Other profile types never appear."""
+def _get(prop: str, uuid: str, secret: bool = False) -> str:
+    """One property of a saved profile. `-g` output escapes `:` and `\\` as well."""
+    out = _nmcli(*(["-s"] if secret else []), "-g", prop, "connection", "show", "uuid", uuid)
+    return split_terse(out.rstrip("\n"))[0]
+
+
+def _profiles() -> list[tuple[str, str, str]]:
+    """(uuid, type, name) for every saved profile, of any type."""
     out = []
-    for line in _nmcli("-t", "-f", "UUID,TYPE", "connection", "show").splitlines():
+    for line in _nmcli("-t", "-f", "UUID,TYPE,NAME", "connection", "show").splitlines():
         parts = split_terse(line)
-        if len(parts) >= 2 and parts[1] == WIFI_TYPE:
-            ssid = _nmcli("-g", "802-11-wireless.ssid", "connection", "show", "uuid", parts[0]).strip()
-            out.append((parts[0], ssid))
+        if len(parts) >= 3:
+            out.append((parts[0], parts[1], parts[2]))
     return out
+
+
+def _wifi_profiles() -> list[tuple[str, str]]:
+    """(uuid, ssid) for every saved Wi-Fi client profile. The hotspot's own profile
+    and other profile types never appear."""
+    return [(uuid, _get("802-11-wireless.ssid", uuid))
+            for uuid, typ, name in _profiles() if typ == WIFI_TYPE and name != HOTSPOT_NAME]
+
+
+def _hotspot_uuid() -> str:
+    return next((u for u, t, n in _profiles() if t == WIFI_TYPE and n == HOTSPOT_NAME), "")
 
 
 def _active_wifi_uuid() -> str:
@@ -204,6 +265,28 @@ def _iface_network(dev: str) -> ipaddress.IPv4Interface | None:
             if addr.get("family") == "inet":
                 return ipaddress.IPv4Interface(f"{addr['local']}/{addr['prefixlen']}")
     return None
+
+
+def _forwarding(dev: str) -> str:
+    """The kernel's IPv4 forwarding flag for packets arriving on `dev`: "0", "1" or ""."""
+    try:
+        with open(f"/proc/sys/net/ipv4/conf/{dev}/forwarding", encoding="ascii") as fh:
+            return fh.read().strip()
+    except OSError:
+        return ""
+
+
+def _default_hotspot_ssid() -> str:
+    try:
+        with open(f"/sys/class/net/{IFACE}/address", encoding="ascii") as fh:
+            mac = fh.read().strip()
+    except OSError:
+        return "WeldFlex"
+    return "WeldFlex-" + mac.replace(":", "")[-4:].upper()
+
+
+def _new_password() -> str:
+    return "".join(secrets.choice(_PW_ALPHABET) for _ in range(10))
 
 
 def _robot_route_dev(robot_ip: str) -> str:
@@ -228,6 +311,10 @@ def status(robot_ip: str, rescan: str = "no") -> WifiStatus:
         st.robot_ok = bool(st.robot_dev) and st.robot_dev != IFACE
         if not st.radio_on:
             return st
+        st.hotspot = _hotspot_status()
+        if st.hotspot.on:
+            st.ssid, st.address = st.hotspot.ssid, st.hotspot.address
+            return st     # an access point does not scan
         saved = {ssid for _, ssid in _wifi_profiles()}
         seen: dict[str, Network] = {}
         out = _nmcli("-t", "-f", "IN-USE,SSID,SIGNAL,SECURITY", "device", "wifi", "list",
@@ -251,6 +338,24 @@ def status(robot_ip: str, rescan: str = "no") -> WifiStatus:
     except WifiError as exc:
         st.error = str(exc)
     return st
+
+
+def _hotspot_status() -> Hotspot:
+    uuid = _hotspot_uuid()
+    hs = Hotspot(saved=bool(uuid), on=bool(uuid) and _active_wifi_uuid() == uuid)
+    if uuid:
+        hs.ssid = _get("802-11-wireless.ssid", uuid)
+        try:
+            hs.password = _get("802-11-wireless-security.psk", uuid, secret=True)
+        except WifiError:
+            pass
+    hs.ssid = hs.ssid or _default_hotspot_ssid()
+    if hs.on:
+        hs.address = str(HOTSPOT_ADDR.ip)
+        hs.isolated = _forwarding(IFACE) == "0"
+    else:
+        hs.password = hs.password or _new_password()
+    return hs
 
 
 def operation() -> Operation:
@@ -297,6 +402,9 @@ def start_connect(ssid: str, password: str, hidden: bool, robot_ip: str) -> None
     bad = validate_password(password)
     if bad:
         raise WifiError(bad)
+    hotspot = _hotspot_uuid()
+    if hotspot and _active_wifi_uuid() == hotspot:
+        raise WifiError("The hotspot is on. Stop it before joining a network.")
     _begin("connect", ssid)
     threading.Thread(target=_connect_body, args=(ssid, password, hidden, robot_ip),
                      name="wifi-connect", daemon=True).start()
@@ -362,6 +470,11 @@ def _rollback(before_uuids: set[str], prev_uuid: str) -> None:
                 _nmcli("connection", "delete", "uuid", uuid)
     except WifiError as exc:
         log.warning("wifi rollback: could not delete new profile: %s", exc)
+    _restore(prev_uuid)
+
+
+def _restore(prev_uuid: str) -> None:
+    """Bring the previously active Wi-Fi profile back up, unless it already is."""
     if prev_uuid and _active_wifi_uuid() != prev_uuid:
         try:
             _nmcli("--wait", str(CONNECT_TIMEOUT_S), "connection", "up", "uuid", prev_uuid,
@@ -396,3 +509,94 @@ def radio_on() -> None:
     if not ok:
         raise WifiError(reason)
     _nmcli("radio", "wifi", "on")
+
+
+# ── hotspot ───────────────────────────────────────────────────────────────────
+
+def start_hotspot(ssid: str, password: str, robot_ip: str) -> None:
+    """Start the hotspot on a thread. Raises WifiError if it cannot start."""
+    ok, reason = available()
+    if not ok:
+        raise WifiError(reason)
+    ssid = ssid.strip()
+    if not ssid or len(ssid.encode()) > 32:
+        raise WifiError("Enter a hotspot name (up to 32 characters).")
+    if not password:
+        raise WifiError("The hotspot needs a password (8 to 63 characters).")
+    bad = validate_password(password)
+    if bad:
+        raise WifiError(bad)
+    _begin("hotspot", ssid)
+    threading.Thread(target=_hotspot_body, args=(ssid, password, robot_ip),
+                     name="wifi-hotspot", daemon=True).start()
+
+
+def _hotspot_body(ssid: str, password: str, robot_ip: str) -> None:
+    try:
+        ok, msg = _start_hotspot(ssid, password, robot_ip)
+    except Exception as exc:  # noqa: BLE001 - reported on the card, never swallowed
+        log.exception("wifi hotspot crashed")
+        ok, msg = False, str(exc)
+    log.info("wifi hotspot ssid=%r ok=%s msg=%s", ssid, ok, msg)
+    _finish(ok, msg)
+
+
+def _start_hotspot(ssid: str, password: str, robot_ip: str) -> tuple[bool, str]:
+    robot_dev = _robot_route_dev(robot_ip)
+    robot_net = _iface_network(robot_dev) if robot_dev and robot_dev != IFACE else None
+    if robot_net and robot_net.network.overlaps(HOTSPOT_ADDR.network):
+        return False, (f"The robot network {robot_net.network} overlaps the hotspot's "
+                       f"{HOTSPOT_ADDR.network}. The hotspot was not started.")
+    prev_uuid = _active_wifi_uuid()
+    uuid = _hotspot_uuid()
+    settings = [*HOTSPOT_SETTINGS, "802-11-wireless.ssid", ssid, "802-11-wireless-security.psk", password]
+    try:
+        if uuid:
+            _nmcli("connection", "modify", "uuid", uuid, *settings)
+        else:
+            _nmcli("connection", "add", "type", "wifi", "ifname", IFACE, "con-name", HOTSPOT_NAME, *settings)
+            uuid = _hotspot_uuid()
+        _nmcli("--wait", str(CONNECT_TIMEOUT_S), "connection", "up", "uuid", uuid, "ifname", IFACE,
+               timeout=CONNECT_TIMEOUT_S + 10)
+    except WifiError as exc:
+        _hotspot_rollback(uuid, prev_uuid)
+        return False, f"Could not start the hotspot: {exc}"
+
+    if robot_dev and _robot_route_dev(robot_ip) != robot_dev:
+        _hotspot_rollback(uuid, prev_uuid)
+        return False, (f"Starting the hotspot moved the robot route off {robot_dev}. "
+                       f"Stopped it and reconnected to the previous Wi-Fi.")
+    return True, f"Hotspot {ssid} is on."
+
+
+def _hotspot_rollback(uuid: str, prev_uuid: str) -> None:
+    try:
+        _hotspot_off(uuid)
+    except WifiError as exc:
+        log.warning("wifi hotspot rollback: could not stop the hotspot: %s", exc)
+    _restore(prev_uuid)
+
+
+def _hotspot_off(uuid: str) -> None:
+    """Take the hotspot down and keep it from coming back at boot."""
+    if not uuid:
+        return
+    _nmcli("connection", "modify", "uuid", uuid, "connection.autoconnect", "no")
+    if _active_wifi_uuid() == uuid:
+        _nmcli("connection", "down", "uuid", uuid)
+
+
+def stop_hotspot() -> str:
+    """Stop the hotspot. NetworkManager then rejoins a saved network if one is in range."""
+    ok, reason = available()
+    if not ok:
+        raise WifiError(reason)
+    _begin("hotspot-stop", HOTSPOT_NAME)
+    try:
+        _hotspot_off(_hotspot_uuid())
+        msg = "Hotspot off. The panel rejoins a saved network if one is in range."
+        _finish(True, msg)
+        return msg
+    except WifiError as exc:
+        _finish(False, f"Could not stop the hotspot: {exc}")
+        raise

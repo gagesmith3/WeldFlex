@@ -280,10 +280,11 @@ def test_hotspot_is_not_a_saved_network(host, no_forward):
     assert "hotspot-uuid" in host.profiles
 
 
-def test_status_when_off_suggests_a_password(host):
+def test_status_when_off_offers_the_default_password(host):
     st = wifi.status(ROBOT_IP)
     assert not st.hotspot.saved and not st.hotspot.on
-    assert len(st.hotspot.password) == 10 and st.hotspot.ssid.startswith("WeldFlex")
+    assert st.hotspot.password == "iloveiwt" and st.hotspot.ssid.startswith("WeldFlex")
+    assert wifi.validate_password(st.hotspot.password) == ""
 
 
 def test_restart_reuses_the_saved_profile(host, no_forward):

@@ -51,7 +51,6 @@ import ipaddress
 import json
 import logging
 import os
-import secrets
 import shutil
 import subprocess
 import sys
@@ -84,8 +83,9 @@ HOTSPOT_SETTINGS = [
     "802-11-wireless-security.group", "ccmp",
     "802-11-wireless-security.pmf", "disable",
 ]
-# The password is read off the kiosk screen, so only characters that can't be confused.
-_PW_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"
+# What the start sheet offers until a hotspot has been saved. The owner picked a
+# fixed, memorable one so booth staff don't have to read it off the panel.
+DEFAULT_HOTSPOT_PASSWORD = "iloveiwt"
 
 # How long a finished connect/forget result stays on the card.
 RESULT_SHOW_S = 90
@@ -141,7 +141,7 @@ class Hotspot:
     saved: bool = False          # a hotspot profile exists
     on: bool = False             # and it is the active Wi-Fi connection
     ssid: str = ""               # the saved name, or a suggested default
-    password: str = ""           # the saved password, or a new suggestion while off
+    password: str = ""           # the saved password, or the default while none is saved
     address: str = ""
     isolated: bool = True        # hotspot devices cannot route through to the robot network
 
@@ -289,10 +289,6 @@ def _default_hotspot_ssid() -> str:
     return "WeldFlex-" + mac.replace(":", "")[-4:].upper()
 
 
-def _new_password() -> str:
-    return "".join(secrets.choice(_PW_ALPHABET) for _ in range(10))
-
-
 def _robot_route_dev(robot_ip: str) -> str:
     try:
         data = json.loads(_run(["ip", "-j", "route", "get", robot_ip]) or "[]")
@@ -361,7 +357,7 @@ def _hotspot_status() -> Hotspot:
     if hs.on:
         hs.isolated = _forwarding(IFACE) == "0"
     else:
-        hs.password = hs.password or _new_password()
+        hs.password = hs.password or DEFAULT_HOTSPOT_PASSWORD
     return hs
 
 

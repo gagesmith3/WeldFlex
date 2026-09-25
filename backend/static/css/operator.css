@@ -6260,7 +6260,8 @@ body.kiosk .pd-part-delete-btn { opacity: 1; }
   overflow-wrap: anywhere;
 }
 
-.btn.wifi-hotspot-stop { align-self: flex-start; }
+.btn.wifi-hotspot-stop,
+.btn.wifi-hotspot-start { align-self: flex-start; }
 
 .wifi-empty {
   padding: 12px;

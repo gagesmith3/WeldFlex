@@ -1,0 +1,44 @@
+{# Shared by the Wi-Fi and Hotspot cards: what the radio is doing, the robot
+   link beside it, and any operation result, error or job lock. Both pages show
+   every operation, because the two share one radio. #}
+
+{# Two separate facts, on purpose: the operator needs to see that the robot
+   link is not the Wi-Fi link before changing anything. #}
+<div class="wifi-links">
+  <div class="wifi-link {{ 'is-ok' if wifi.ssid else '' }}">
+    <span class="wifi-link-label">{{ 'Hotspot' if wifi.hotspot.on else 'Network' }}</span>
+    <strong>
+      {% if not wifi.radio_on %}Wi-Fi is off
+      {% elif wifi.ssid %}{{ wifi.ssid }}
+      {% else %}Not connected{% endif %}
+    </strong>
+    {% if wifi.address %}<span class="wifi-link-detail">{{ wifi.address }}{% if wifi.signal is not none %} · {{ wifi.signal }}%{% endif %}</span>{% endif %}
+  </div>
+  <div class="wifi-link {{ 'is-ok' if wifi.robot_ok else 'is-warn' }}">
+    <span class="wifi-link-label">Robot link</span>
+    <strong>{{ wifi.robot_dev or 'no route' }}</strong>
+    <span class="wifi-link-detail">
+      {% if wifi.robot_ok %}Not affected by Wi-Fi changes{% elif wifi.robot_dev %}Robot is routed over Wi-Fi. Check the cable.{% else %}Check the robot cable.{% endif %}
+    </span>
+  </div>
+</div>
+
+{% if op.visible %}
+<div class="wifi-banner wifi-banner-{{ op.state }}" role="status">
+  {% if op.running %}
+    <span class="wifi-spin">{{ icon_safe('loader', width=16, height=16) }}</span>
+    {% if op.kind == 'hotspot' %}
+    <span>Starting hotspot <strong>{{ op.ssid }}</strong>. This can take up to 30 s. The robot link stays up.</span>
+    {% elif op.kind == 'hotspot-stop' %}
+    <span>Stopping the hotspot. The robot link stays up.</span>
+    {% else %}
+    <span>Connecting to <strong>{{ op.ssid }}</strong>. This can take up to 30 s. The robot link stays up.</span>
+    {% endif %}
+  {% else %}
+    <span>{{ op.message }}</span>
+  {% endif %}
+</div>
+{% endif %}
+
+{% if error %}<div class="wifi-banner wifi-banner-failed" role="alert">{{ error }}</div>{% endif %}
+{% if job_active %}<div class="wifi-banner wifi-banner-warn">A job is running. Wi-Fi can be changed once it finishes.</div>{% endif %}

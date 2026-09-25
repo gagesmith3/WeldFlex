@@ -3,7 +3,7 @@
 
 {% block body %}
 <div class="page-body settings-page">
-  {% call panel_shell('Connection', class_name='settings-shell') %}
+  {% call panel_shell(class_name='settings-shell') %}
     <div id="wifi-card" class="wifi-card" hx-get="/ui/wifi/card" hx-trigger="load" hx-swap="outerHTML">
       <div class="wifi-head">
         <div class="wifi-head-title">{{ icon_safe('wifi', width=18, height=18) }}<h3>Wi-Fi</h3></div>
@@ -40,30 +40,6 @@
     </label>
     <p class="wifi-note" id="wifi-modal-note" hidden></p>
     <button type="button" class="btn stop wifi-forget" id="wifi-modal-forget" hidden>Forget this network</button>
-  </form>
-</div>
-
-{# Hotspot sheet, laid out like the join sheet above. The password is plain
-   text on purpose: someone has to read it off the screen to join. #}
-<div id="hotspot-modal" class="wf-modal-overlay wifi-modal-overlay" hidden>
-  <form class="wf-modal wifi-modal" hx-post="/ui/wifi/hotspot/start" hx-target="#wifi-card" hx-swap="outerHTML">
-    <div class="wifi-modal-bar">
-      <button type="button" class="btn wf-cancel" data-hotspot-close>Cancel</button>
-      <p class="wf-modal-msg">Create a hotspot</p>
-      <button type="submit" class="btn primary wifi-btn">Start</button>
-    </div>
-    <label class="wifi-field">
-      <span>Name</span>
-      <input type="text" name="ssid" id="hotspot-modal-ssid" inputmode="none" data-kbd="alphanum"
-        autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="32">
-    </label>
-    <label class="wifi-field">
-      <span>Password</span>
-      <input type="text" name="password" id="hotspot-modal-pw" inputmode="none" data-kbd="alphanum"
-        autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="63">
-    </label>
-    <p class="wifi-note" id="hotspot-modal-error" hidden></p>
-    <p class="wifi-note">The panel leaves its current Wi-Fi and broadcasts this network, with no internet. The robot link is not affected. Stop the hotspot to rejoin the shop Wi-Fi.</p>
   </form>
 </div>
 {% endblock %}

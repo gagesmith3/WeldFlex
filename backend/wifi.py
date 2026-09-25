@@ -24,9 +24,12 @@ on a thread and the card polls `operation()`. Only one operation runs at a time.
 **Hotspot.** For a trade show with no Wi-Fi to join, the panel can broadcast its
 own network instead (`start_hotspot()`), so a laptop or phone can reach the app
 and SSH at `HOTSPOT_ADDR`. The radio cannot be a client and an access point at
-once, so the hotspot replaces the shop Wi-Fi until it is stopped. While it is on,
-its profile (`HOTSPOT_NAME`) autoconnects at a high priority, so it comes back
-after an overnight power-off. `stop_hotspot()` turns that off. NetworkManager's
+once, so the two are either/or: starting the hotspot leaves the shop Wi-Fi, and
+joining a network (`start_connect()`) turns the hotspot off first. If that join
+fails, the hotspot comes back on. While it is on, its profile (`HOTSPOT_NAME`)
+autoconnects at a high priority, so it comes back after an overnight power-off.
+`stop_hotspot()` and a join both turn that off. An access point cannot scan, so
+while the hotspot is on `status()` lists the saved networks instead. NetworkManager's
 "shared" mode hands out addresses and turns on IP forwarding, which would let a
 hotspot device route through the panel to the robot. The installer's dispatcher
 script (`deploy/rpi/90-weldflex-wifi-noforward`) turns forwarding off for
@@ -99,6 +102,7 @@ class Network:
     security: str          # nmcli's SECURITY column, "" for an open network
     in_use: bool = False
     saved: bool = False
+    seen: bool = True      # False: a saved profile listed while the hotspot is on, not scanned
 
     @property
     def secured(self) -> bool:
@@ -312,10 +316,13 @@ def status(robot_ip: str, rescan: str = "no") -> WifiStatus:
         if not st.radio_on:
             return st
         st.hotspot = _hotspot_status()
-        if st.hotspot.on:
-            st.ssid, st.address = st.hotspot.ssid, st.hotspot.address
-            return st     # an access point does not scan
         saved = {ssid for _, ssid in _wifi_profiles()}
+        if st.hotspot.on:
+            # An access point does not scan, so offer the saved networks to switch back to.
+            st.ssid, st.address = st.hotspot.ssid, st.hotspot.address
+            st.networks = [Network(ssid=s, signal=0, security="", saved=True, seen=False)
+                           for s in sorted(saved, key=str.lower)]
+            return st
         seen: dict[str, Network] = {}
         out = _nmcli("-t", "-f", "IN-USE,SSID,SIGNAL,SECURITY", "device", "wifi", "list",
                      "ifname", IFACE, "--rescan", rescan, timeout=25)
@@ -350,8 +357,8 @@ def _hotspot_status() -> Hotspot:
         except WifiError:
             pass
     hs.ssid = hs.ssid or _default_hotspot_ssid()
+    hs.address = str(HOTSPOT_ADDR.ip)    # where it will be while off, so the page can say
     if hs.on:
-        hs.address = str(HOTSPOT_ADDR.ip)
         hs.isolated = _forwarding(IFACE) == "0"
     else:
         hs.password = hs.password or _new_password()
@@ -402,9 +409,6 @@ def start_connect(ssid: str, password: str, hidden: bool, robot_ip: str) -> None
     bad = validate_password(password)
     if bad:
         raise WifiError(bad)
-    hotspot = _hotspot_uuid()
-    if hotspot and _active_wifi_uuid() == hotspot:
-        raise WifiError("The hotspot is on. Stop it before joining a network.")
     _begin("connect", ssid)
     threading.Thread(target=_connect_body, args=(ssid, password, hidden, robot_ip),
                      name="wifi-connect", daemon=True).start()
@@ -425,6 +429,8 @@ def _connect(ssid: str, password: str, hidden: bool, robot_ip: str) -> tuple[boo
     robot_dev = _robot_route_dev(robot_ip)
     robot_net = _iface_network(robot_dev) if robot_dev and robot_dev != IFACE else None
     prev_uuid = _active_wifi_uuid()
+    hotspot = _hotspot_uuid()
+    from_hotspot = bool(hotspot) and prev_uuid == hotspot
     before = _wifi_profiles()
     before_uuids = {u for u, _ in before}
     saved = [u for u, s in before if s == ssid]
@@ -442,24 +448,62 @@ def _connect(ssid: str, password: str, hidden: bool, robot_ip: str) -> tuple[boo
         if hidden:
             args += ["hidden", "yes"]
 
+    # The radio is either the hotspot or a client, so joining a network ends the hotspot.
+    if from_hotspot:
+        try:
+            _hotspot_off(hotspot)
+        except WifiError as exc:
+            return False, f"Could not turn the hotspot off to join {ssid}: {exc}"
+        if not saved and not hidden:
+            _await_ssid(ssid)    # device-wifi-connect needs the network in a scan
+    back = "Turned the hotspot back on." if from_hotspot else "Reconnected to the previous Wi-Fi."
+
     try:
         _nmcli(*args, timeout=CONNECT_TIMEOUT_S + 10)
     except WifiError as exc:
-        _rollback(before_uuids, prev_uuid)
-        return False, f"Could not connect to {ssid}: {exc}"
+        _undo(before_uuids, prev_uuid, from_hotspot)
+        return False, f"Could not connect to {ssid}: {exc}" + (f" {back}" if from_hotspot else "")
 
     # Wi-Fi must not share the robot's subnet or take over the route to it.
     wifi_net = _iface_network(IFACE)
     if robot_net and wifi_net and wifi_net.network.overlaps(robot_net.network):
-        _rollback(before_uuids, prev_uuid)
+        _undo(before_uuids, prev_uuid, from_hotspot)
         return False, (f"{ssid} gave this panel {wifi_net}, which overlaps the robot network "
-                       f"{robot_net.network}. Reconnected to the previous Wi-Fi.")
+                       f"{robot_net.network}. {back}")
     if robot_dev and _robot_route_dev(robot_ip) != robot_dev:
-        _rollback(before_uuids, prev_uuid)
-        return False, f"Joining {ssid} moved the robot route off {robot_dev}. Reconnected to the previous Wi-Fi."
+        _undo(before_uuids, prev_uuid, from_hotspot)
+        return False, f"Joining {ssid} moved the robot route off {robot_dev}. {back}"
 
     where = f" · {wifi_net.ip}" if wifi_net else ""
-    return True, f"Connected to {ssid}{where}."
+    return True, ("Hotspot off. " if from_hotspot else "") + f"Connected to {ssid}{where}."
+
+
+def _await_ssid(ssid: str, timeout: float = 15) -> None:
+    """Wait for `ssid` to show up in a scan after the access point goes down. The
+    connect that follows reports "not found" itself, so running out of time is fine."""
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            out = _nmcli("-t", "-f", "SSID", "device", "wifi", "list", "ifname", IFACE,
+                         "--rescan", "auto", timeout=25)
+            if any(split_terse(line)[0] == ssid for line in out.splitlines()):
+                return
+        except WifiError:
+            pass     # NetworkManager refuses scans for a moment while the AP goes down
+        if time.monotonic() >= deadline:
+            return
+        time.sleep(1.5)
+
+
+def _undo(before_uuids: set[str], prev_uuid: str, from_hotspot: bool) -> None:
+    """Roll back a failed join. When the join started from the hotspot, the hotspot
+    comes back on, and autoconnects again so it survives a power-off as before."""
+    if from_hotspot:
+        try:
+            _nmcli("connection", "modify", "uuid", prev_uuid, "connection.autoconnect", "yes")
+        except WifiError as exc:
+            log.warning("wifi rollback: could not re-enable hotspot autoconnect: %s", exc)
+    _rollback(before_uuids, prev_uuid)
 
 
 def _rollback(before_uuids: set[str], prev_uuid: str) -> None:

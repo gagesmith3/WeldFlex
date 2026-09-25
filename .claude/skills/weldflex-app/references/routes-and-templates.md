@@ -18,7 +18,8 @@ Page routes (`app.py`) — verified against the code 2026-09-09:
 /operator/tcp-calibrate             tcp_calibrate.html
 /operator/robot-diagnostics         robot_diagnostics.html
 /operator/settings                  settings.html   (menu: 3×2 grid of calib-menu-card tiles; an href-less tile is a dimmed placeholder)
-/operator/settings/connection       settings_connection.html   (Wi-Fi card — partials/wifi_card.html, /ui/wifi/*)
+/operator/settings/wifi             settings_wifi.html      (Wi-Fi card — partials/wifi_card.html, /ui/wifi/*)
+/operator/settings/hotspot          settings_hotspot.html   (hotspot card — partials/hotspot_card.html, /ui/wifi/hotspot/*)
 /manager                            redirects to /manager/part-designer (see bug note below)
 /manager/part-designer               manager.html (active_tab=part-designer)
 /manager/settings                    manager.html (active_tab=settings)
@@ -59,15 +60,20 @@ nested further (never `/ui/tcp/calibrate`). Live features: `connection`,
 `diagnostics`, `fault`, `ft`, `job`, `jog`, `manager`, `parts`, `points`,
 `recipes`, `settings`, `single-shot`, `tcp-calibrate`, `wifi`.
 
-`wifi` is `/ui/wifi/{card,connect,forget,radio-on}` plus
-`/ui/wifi/hotspot/{start,stop}`. Each one re-renders the whole card, and errors
-show inside it. `backend/wifi.py` does the work through `nmcli`. It is host-OS
+`wifi` is `/ui/wifi/{card,connect,forget,radio-on}` for the Wi-Fi page and
+`/ui/wifi/hotspot/{card,start,stop}` for the Hotspot page (`radio-on?card=hotspot`
+answers with the hotspot card). Each one re-renders its page's whole card, and
+errors show inside it; `partials/wifi_status.html` is the links/banners block
+both cards include. `backend/wifi.py` does the work through `nmcli`. It is host-OS
 code outside the robot chain, and its docstring has the rule that the robot's
 eth0 profile is never touched. Connect and hotspot start run on a thread, and
-the card polls `/ui/wifi/card` every second while they run. Every change is
-refused while a job is active. While the hotspot is on, the card shows its name,
-password and address in place of the network list. The hotspot sheet
-(`#hotspot-modal`) lives in `settings_connection.html` next to the join sheet.
+the card polls itself every second while they run. Every change is refused while
+a job is active. The two share one radio, so they are either/or: starting the
+hotspot leaves the Wi-Fi network, and joining a network turns the hotspot off
+(a failed join turns it back on). While the hotspot is on, the Wi-Fi card lists
+the saved networks, since an access point cannot scan. Each page holds its own
+sheet: `#wifi-modal` in `settings_wifi.html`, `#hotspot-modal` in
+`settings_hotspot.html`.
 
 `ft` is `/ui/ft/{reading,stream,inspect}` — that's the whole route set;
 `setup` and `zero` don't exist as routes (an earlier revision of this file

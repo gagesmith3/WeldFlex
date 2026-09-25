@@ -419,6 +419,7 @@ _ICONS = {
     "repeat":           '<path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/>',
     "lock":             '<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
     "wifi":             '<path d="M5 13a10 10 0 0 1 14 0"/><path d="M8.5 16.5a5 5 0 0 1 7 0"/><path d="M2 8.82a15 15 0 0 1 20 0"/><line x1="12" y1="20" x2="12.01" y2="20"/>',
+    "radio":            '<path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"/><circle cx="12" cy="12" r="2"/><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5"/><path d="M19.1 4.9C23 8.8 23 15.1 19.1 19"/>',
     "bar_chart_2":      '<line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>',
     "zap":              '<path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/>',
     "arrow_down_to_line": '<path d="M12 17V3"/><path d="m6 11 6 6 6-6"/><path d="M19 21H5"/>',
@@ -2057,21 +2058,29 @@ def ui_diagnostics_reconnect():
 def settings():
     return render_template("settings.html", page_title="Settings")
 
-@app.route("/operator/settings/connection")
-def settings_connection():
-    return render_template("settings_connection.html", page_title="Connection")
+@app.route("/operator/settings/wifi")
+def settings_wifi():
+    return render_template("settings_wifi.html", page_title="Wi-Fi")
 
-# ── Wi-Fi card (Settings page) ────────────────────────────────────────────────
+@app.route("/operator/settings/hotspot")
+def settings_hotspot():
+    return render_template("settings_hotspot.html", page_title="Hotspot")
+
+# ── Wi-Fi and Hotspot cards (Settings → Wi-Fi, Settings → Hotspot) ────────────
 # backend/wifi.py does the work and owns the rule that the robot's eth0 link is
 # never touched. Routes follow the in-state inline-error convention: every
-# action re-renders the whole card, with any error shown inside it.
+# action re-renders the whole card, with any error shown inside it. The two
+# cards share one radio, so each page's actions re-render that page's card.
 
-def _wifi_card(error="", rescan="no"):
+def _wifi_card(error="", rescan="no", template="partials/wifi_card.html"):
     op = wifi.operation()
     # No scan while a connect is in progress: it can disturb the association.
     st = wifi.status(robot.robot_ip, rescan="no" if op.running else rescan)
-    return render_template("partials/wifi_card.html", wifi=st, op=op, port=PORT,
+    return render_template(template, wifi=st, op=op, port=PORT,
                            error=error or st.error, job_active=job.snapshot().active)
+
+def _hotspot_card(error=""):
+    return _wifi_card(error=error, template="partials/hotspot_card.html")
 
 def _wifi_refusal():
     # The robot link does not depend on Wi-Fi, but a network change is not something
@@ -2113,7 +2122,13 @@ def ui_wifi_radio_on():
         wifi.radio_on()
     except wifi.WifiError as exc:
         error = str(exc)
+    if request.args.get("card") == "hotspot":
+        return _hotspot_card(error=error)
     return _wifi_card(error=error, rescan="yes")
+
+@app.route("/ui/wifi/hotspot/card")
+def ui_wifi_hotspot_card():
+    return _hotspot_card()
 
 @app.route("/ui/wifi/hotspot/start", methods=["POST"])
 def ui_wifi_hotspot_start():
@@ -2124,7 +2139,7 @@ def ui_wifi_hotspot_start():
                                robot.robot_ip)
         except wifi.WifiError as exc:
             error = str(exc)
-    return _wifi_card(error=error)
+    return _hotspot_card(error=error)
 
 @app.route("/ui/wifi/hotspot/stop", methods=["POST"])
 def ui_wifi_hotspot_stop():
@@ -2134,9 +2149,9 @@ def ui_wifi_hotspot_stop():
             wifi.stop_hotspot()
         except wifi.WifiError as exc:
             error = str(exc)
-    # "auto", not "yes": right after the access point goes down, NetworkManager is
-    # busy rejoining a saved network and refuses a forced scan.
-    return _wifi_card(error=error, rescan="auto")
+    # No forced scan: right after the access point goes down, NetworkManager is
+    # busy rejoining a saved network and refuses one.
+    return _hotspot_card(error=error)
 
 @app.route("/manager")
 def manager():

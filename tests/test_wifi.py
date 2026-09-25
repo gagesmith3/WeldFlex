@@ -92,6 +92,8 @@ class FakeHost:
             return "", 0, ""
         if a[:3] == ["-t", "-f", "IN-USE,SSID,SIGNAL,SECURITY"]:
             return "".join(":".join(esc(x) for x in row) + "\n" for row in self.scan), 0, ""
+        if a[:3] == ["-t", "-f", "SSID"]:
+            return "".join(esc(row[1]) + "\n" for row in self.scan), 0, ""
         if a[:3] == ["connection", "delete", "uuid"]:
             self.profiles.pop(a[3])
             return "", 0, ""
@@ -260,8 +262,9 @@ def test_status_while_hotspot_is_on_shows_credentials_and_skips_scan(host, no_fo
     st = wifi.status(ROBOT_IP)
     assert st.hotspot.on and st.hotspot.ssid == "Booth:1" and st.hotspot.password == "booth2026x"
     assert st.hotspot.isolated and st.address == "10.42.0.1" and st.ssid == "Booth:1"
-    assert st.networks == []
-    assert not any("list" in c for c in host.calls)   # an access point does not scan
+    # An access point does not scan, so the list is the saved networks to switch back to.
+    assert [(n.ssid, n.saved, n.seen) for n in st.networks] == [("HomeNet", True, False)]
+    assert not any("list" in c for c in host.calls)
 
 
 def test_status_warns_when_forwarding_is_not_blocked(host, monkeypatch):
@@ -325,10 +328,51 @@ def test_hotspot_refused_when_robot_subnet_overlaps(host, monkeypatch):
     assert "hotspot-uuid" not in host.profiles
 
 
-def test_join_is_refused_while_hotspot_is_on(host, no_forward):
+def test_join_is_accepted_while_hotspot_is_on(host, no_forward, monkeypatch):
+    monkeypatch.setattr(wifi.threading, "Thread", lambda **kw: SimpleNamespace(start=lambda: None))
     wifi._start_hotspot("Booth", "booth2026x", ROBOT_IP)
-    with pytest.raises(wifi.WifiError, match="Stop it"):
-        wifi.start_connect("ShopNet", "hunter2hunter2", False, ROBOT_IP)
+    wifi.start_connect("ShopNet", "hunter2hunter2", False, ROBOT_IP)
+    assert wifi.operation().running
+
+
+def test_joining_a_network_turns_the_hotspot_off(host, no_forward):
+    wifi._start_hotspot("Booth", "booth2026x", ROBOT_IP)
+    ok, msg = wifi._connect("ShopNet", "hunter2hunter2", False, ROBOT_IP)
+    assert ok and msg.startswith("Hotspot off. Connected to ShopNet"), msg
+    assert host.profiles["new-ShopNet"][2] == "wlan0"
+    assert host.profiles["hotspot-uuid"][2] is None
+    assert host.settings["hotspot-uuid"]["connection.autoconnect"] == "no"
+    # It waited for a scan to see the network before device-wifi-connect.
+    scan = next(i for i, c in enumerate(host.calls) if c[1:4] == ["-t", "-f", "SSID"])
+    connect = next(i for i, c in enumerate(host.calls) if "connect" in c)
+    assert scan < connect
+    _no_eth_changes(host)
+
+
+def test_joining_a_saved_network_from_the_hotspot(host, no_forward):
+    wifi._start_hotspot("Booth", "booth2026x", ROBOT_IP)
+    ok, _ = wifi._connect("HomeNet", "", False, ROBOT_IP)
+    assert ok
+    assert host.profiles["home-uuid"][2] == "wlan0" and host.profiles["hotspot-uuid"][2] is None
+
+
+def test_failed_join_from_the_hotspot_turns_it_back_on(host, no_forward):
+    wifi._start_hotspot("Booth", "booth2026x", ROBOT_IP)
+    host.connect_result = "fail"
+    ok, msg = wifi._connect("ShopNet", "wrongpass1", False, ROBOT_IP)
+    assert not ok and "Wrong password" in msg and "hotspot back on" in msg
+    assert "new-ShopNet" not in host.profiles
+    assert host.profiles["hotspot-uuid"][2] == "wlan0"
+    # Back to autoconnecting, so it still survives a power-off at the booth.
+    assert host.settings["hotspot-uuid"]["connection.autoconnect"] == "yes"
+    _no_eth_changes(host)
+
+
+def test_forget_first_check_leaves_the_hotspot_on(host, no_forward):
+    wifi._start_hotspot("Booth", "booth2026x", ROBOT_IP)
+    ok, msg = wifi._connect("HomeNet", "newpassword", False, ROBOT_IP)
+    assert not ok and "Forget it first" in msg
+    assert host.profiles["hotspot-uuid"][2] == "wlan0"
 
 
 @pytest.mark.parametrize("ssid,pw", [("", "booth2026x"), ("Booth", ""), ("Booth", "short"), ("x" * 33, "booth2026x")])
@@ -363,18 +407,19 @@ def wifi_app(monkeypatch, host):
 
 
 def test_settings_page_and_card_render(wifi_app):
-    page = wifi_app.client.get("/operator/settings/connection").get_data(as_text=True)
+    page = wifi_app.client.get("/operator/settings/wifi").get_data(as_text=True)
     assert 'hx-get="/ui/wifi/card"' in page and 'id="wifi-modal"' in page
+    assert 'id="hotspot-modal"' not in page
     card = wifi_app.client.get("/ui/wifi/card").get_data(as_text=True)
     assert "HomeNet" in card and "ShopNet" in card and "Other network" in card
     assert "Not affected by Wi-Fi changes" in card
 
 
-def test_settings_menu_links_to_the_connection_page(wifi_app):
+def test_settings_menu_links_to_the_wifi_and_hotspot_pages(wifi_app):
     page = wifi_app.client.get("/operator/settings").get_data(as_text=True)
     assert page.count('class="calib-menu-card') == 6
-    assert 'href="/operator/settings/connection"' in page
-    assert 'id="wifi-card"' not in page
+    assert 'href="/operator/settings/wifi"' in page and 'href="/operator/settings/hotspot"' in page
+    assert 'id="wifi-card"' not in page and 'id="hotspot-card"' not in page
 
 
 def test_connect_is_refused_while_a_job_is_active(wifi_app):
@@ -389,19 +434,32 @@ def test_connect_starts_when_idle(wifi_app):
     assert wifi_app.started == [("Secret", "x" * 8, True, wifi_app.robot_ip)]
 
 
-def test_card_offers_hotspot_and_page_has_its_sheet(wifi_app):
-    page = wifi_app.client.get("/operator/settings/connection").get_data(as_text=True)
+def test_hotspot_page_has_its_sheet_and_card(wifi_app):
+    page = wifi_app.client.get("/operator/settings/hotspot").get_data(as_text=True)
     assert 'id="hotspot-modal"' in page and 'hx-post="/ui/wifi/hotspot/start"' in page
-    card = wifi_app.client.get("/ui/wifi/card").get_data(as_text=True)
-    assert 'data-hotspot="1"' in card and "Create a hotspot" in card
+    assert 'hx-target="#hotspot-card"' in page and 'id="wifi-modal"' not in page
+    card = wifi_app.client.get("/ui/wifi/hotspot/card").get_data(as_text=True)
+    assert 'id="hotspot-card"' in card and 'data-hotspot-open="1"' in card
+    assert "takes the panel off <strong>HomeNet</strong>" in card
+    wifi_card = wifi_app.client.get("/ui/wifi/card").get_data(as_text=True)
+    assert "data-hotspot-open" not in wifi_card
 
 
-def test_card_while_hotspot_on_shows_how_to_join(wifi_app, host, monkeypatch):
+def test_hotspot_card_while_on_shows_how_to_join(wifi_app, host, monkeypatch):
+    monkeypatch.setattr(wifi, "_forwarding", lambda dev: "0")
+    wifi._start_hotspot("Booth", "booth2026x", ROBOT_IP)
+    card = wifi_app.client.get("/ui/wifi/hotspot/card").get_data(as_text=True)
+    assert "booth2026x" in card and "http://10.42.0.1:" in card and "Stop hotspot" in card
+    assert "can reach the robot network" not in card
+
+
+def test_wifi_card_while_hotspot_on_offers_saved_networks(wifi_app, host, monkeypatch):
     monkeypatch.setattr(wifi, "_forwarding", lambda dev: "0")
     wifi._start_hotspot("Booth", "booth2026x", ROBOT_IP)
     card = wifi_app.client.get("/ui/wifi/card").get_data(as_text=True)
-    assert "booth2026x" in card and "http://10.42.0.1:" in card and "Stop hotspot" in card
-    assert "Other network" not in card and "can reach the robot network" not in card
+    assert "The hotspot is on" in card and 'data-ssid="HomeNet"' in card
+    assert 'data-leaves-hotspot="1"' in card and "Other network" in card
+    assert "wifi-bars" not in card and "Scan" not in card
 
 
 def test_hotspot_start_is_refused_while_a_job_is_active(wifi_app, monkeypatch):

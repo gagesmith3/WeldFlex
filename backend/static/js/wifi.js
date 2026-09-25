@@ -1,6 +1,8 @@
-// Settings page Wi-Fi card: opens the network sheet for a tapped row.
-// The card itself is server-rendered (partials/wifi_card.html) and swaps on
-// every action, so row clicks are delegated from the document.
+// Settings → Wi-Fi and Settings → Hotspot: opens the join sheet for a tapped
+// network row, or the start sheet for the hotspot. Each page has only its own
+// sheet. The cards are server-rendered (partials/wifi_card.html,
+// partials/hotspot_card.html) and swap on every action, so clicks are
+// delegated from the document.
 (function () {
   'use strict';
 
@@ -10,6 +12,20 @@
   var forgetArmed = false;
 
   function init() {
+    document.addEventListener('click', function (e) {
+      var hs = e.target.closest('[data-hotspot-open]');
+      if (hs) {
+        if (!hs.disabled) openHotspot(hs.dataset);
+        return;
+      }
+      var row = e.target.closest('.wifi-row');
+      if (row && !row.disabled && overlay) open(row.dataset);
+    });
+    initWifi();
+    initHotspot();
+  }
+
+  function initWifi() {
     overlay = document.getElementById('wifi-modal');
     if (!overlay) return;
     form = overlay.querySelector('form');
@@ -25,13 +41,6 @@
     connectBtn = document.getElementById('wifi-modal-connect');
     forgetBtn = document.getElementById('wifi-modal-forget');
 
-    document.addEventListener('click', function (e) {
-      var row = e.target.closest('.wifi-row');
-      if (!row || row.disabled) return;
-      if (row.dataset.hotspot === '1') openHotspot(row.dataset);
-      else open(row.dataset);
-    });
-    initHotspot();
     overlay.querySelector('[data-wifi-close]').addEventListener('click', close);
     overlay.addEventListener('click', function (e) { if (e.target === overlay) close(); });
 
@@ -108,6 +117,7 @@
     connectBtn.hidden = isCurrent || enterprise;
 
     if (isCurrent) showNote('This panel is connected to this network.');
+    else if (data.leavesHotspot === '1') showNote('Joining turns the hotspot off. If the join fails, the hotspot comes back on.');
     else if (enterprise) showNote('This network needs a username or certificate (WPA-Enterprise). It has to be set up over SSH.');
     else if (saved) showNote('Saved network. To change its password, forget it and join again.');
     else if (other) showNote('For a hidden network. Leave the password blank if it is open.');

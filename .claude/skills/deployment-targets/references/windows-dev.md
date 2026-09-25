@@ -44,12 +44,12 @@ UI cannot be visually verified on this machine** without either setting
 assume a change "looks fine" on Windows dev implies it's fine at 800×480
 touch scale.
 
-## Settings → Connection (Wi-Fi) needs the Pi
+## Settings → Wi-Fi and Settings → Hotspot need the Pi
 
-`/operator/settings` is a menu of tiles; its Connection tile opens
-`/operator/settings/connection`, the Wi-Fi card. The card drives NetworkManager
-through `nmcli` (`backend/wifi.py`), which Windows doesn't have, so here it only
-shows its unavailable state. `tests/test_wifi.py` covers the logic with a fake
+`/operator/settings` is a menu of tiles; its Wi-Fi and Hotspot tiles open
+`/operator/settings/wifi` and `/operator/settings/hotspot`. Both cards drive
+NetworkManager through `nmcli` (`backend/wifi.py`), which Windows doesn't have,
+so here they only show their unavailable state. `tests/test_wifi.py` covers the logic with a fake
 `nmcli` host; real joins and the hotspot can only be tried on the kiosk.
 
 ## The Chinese-debug-print / UTF-8 fix

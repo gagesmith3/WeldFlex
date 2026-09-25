@@ -6,11 +6,12 @@
 
 {% block body %}
 {% set tiles = [
-  {'href': '/operator/settings/connection', 'icon': 'wifi', 'title': 'Connection',
-   'note': 'Wi-Fi network, or a hotspot of its own'},
+  {'href': '/operator/settings/wifi', 'icon': 'wifi', 'title': 'Wi-Fi',
+   'note': 'Join the shop network'},
+  {'href': '/operator/settings/hotspot', 'icon': 'radio', 'title': 'Hotspot',
+   'note': 'Backup: the panel makes its own network'},
   {'href': '/operator/job-history', 'icon': 'clipboard', 'title': 'Run History',
    'note': 'Completed and aborted production runs'},
-  {'href': '', 'icon': 'plus', 'title': 'Coming soon', 'note': ''},
   {'href': '', 'icon': 'plus', 'title': 'Coming soon', 'note': ''},
   {'href': '', 'icon': 'plus', 'title': 'Coming soon', 'note': ''},
   {'href': '', 'icon': 'plus', 'title': 'Coming soon', 'note': ''},

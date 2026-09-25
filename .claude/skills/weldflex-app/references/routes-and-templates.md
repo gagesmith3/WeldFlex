@@ -124,6 +124,13 @@ app. It has no `/ui/*` routes; everything load-bearing is outside Flask:
 - **Typing goes through a relay.** The bridge posts `kbd-open` to the page on
   field focus; the page focuses a hidden `data-kbd` input so `keyboard.js` opens,
   and relays each value back by `postMessage`.
+- **Contenteditable cells only half work.** The bridge also opens on the
+  controller's in-place table cells (its Points page's name column): it writes
+  the whole value as `textContent` and replays Enter and blur on done
+  (`editableTarget()`/`commitCell()`). Typing and saving work there, but
+  Backspace does not delete (Gage, 2026-09-25), and the cause is unknown.
+  Rename controller points from a laptop instead; see `deployment-targets`,
+  installer step 4b.
 - **The page has no header** (`hide_header=True` in `base.html`); a floating
   `.robot-web-home` button is the only way out.
 - Run/Pause/Stop in the controller's app bypass `JobManager` — no run history,
@@ -163,12 +170,21 @@ through `job.stop()` so a running job still finalizes. Load-bearing:
   resets collision detection first because a stop mid-press skips weld.lua's
   restore. The program is branch-free straight-line code: the host plans and
   checks everything, because the upload check executes top-level Lua.
-- **Every refusal happens before upload**, in `_plan_point_move()`: unknown or
-  untaught point, an active job, `commands_available` false, or an active
-  tool/wobj other than `point_moves.MOVE_TOOL`/`MOVE_WOBJ`. It is **not
-  commissioned**: the frame assumption behind the pose read is unverified on
-  hardware, which is why the modal shows the planned distances first.
-- It is the only page that calls `robot.teach_point_pose()` and
+- **Every refusal happens before upload.** `_plan_point_move()` refuses an
+  unknown or untaught point; `_live_move_poses()` refuses an active job,
+  `commands_available` false, or an active tool/wobj other than
+  `point_moves.MOVE_TOOL`/`MOVE_WOBJ`; `_check_base_keepout()` refuses a target
+  or level leg inside the robot-base no-go circle (`backend/base_keepout.py`, a
+  no-op unless `WELDFLEX_BASE_X_MM`/`_Y_MM`/`_KEEPOUT_MM` are all set). It is
+  **not commissioned**: the frame assumption behind the pose read is unverified
+  on hardware, which is why the modal shows the planned distances first.
+- **The part designer's Goto (`/ui/parts/goto`) makes the same move.** It
+  plans with `point_moves.plan_offset_move()` to a stud's offset from
+  `zerozero` and goes through the same `_live_move_poses()` and
+  `_check_base_keepout()`; its last leg is an offset `Lin` instead of a `Lin`
+  to a named point. It used to be a single `PTP(zerozero)`, which swung the
+  head into the arm (2026-09-25, per `ui_parts_goto`'s docstring). These two
+  are the only callers of `robot.teach_point_pose()` and
   `robot.active_tool_wobj()`. The second reads the raw XML-RPC
   `GetActualTCPNum`/`GetActualWObjNum`, not the SDK's dead cached getters.
 

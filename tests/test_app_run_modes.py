@@ -14,7 +14,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from robot_service import WeldFlexRobotService
+from robot_service import UniversalRobotState, WeldFlexRobotService
 
 
 class RecordingJob:
@@ -190,21 +190,30 @@ def goto(run_app, monkeypatch):
     monkeypatch.delenv("WELDFLEX_BED_X_MM", raising=False)
     monkeypatch.delenv("WELDFLEX_BED_Y_MM", raising=False)
     uploaded = []
-    monkeypatch.setattr(run_app.module.robot, "upload_and_run",
+    robot = run_app.module.robot
+    zerozero = [400.0, -200.0, 50.0, 180.0, 0.0, 90.0]
+    frames = {"tool_wobj": (2, 2)}
+    monkeypatch.setattr(robot, "upload_and_run",
                         lambda path: uploaded.append(Path(path).read_text(encoding="utf-8")))
+    monkeypatch.setattr(robot, "get_universal_state",
+                        lambda: UniversalRobotState(commands_available=True))
+    monkeypatch.setattr(robot, "active_tool_wobj", lambda: frames["tool_wobj"])
+    # The head starts 60 mm straight above zerozero, square to the bed.
+    monkeypatch.setattr(robot, "jog_pose", lambda: [400.0, -200.0, 110.0, 180.0, 0.0, 90.0])
+    monkeypatch.setattr(robot, "teach_point_pose", lambda name: list(zerozero))
 
     def post(**form):
         response = run_app.client.post("/ui/parts/goto", data={"safe_z": "60", "part_z": "0", **form})
         return response.get_data(as_text=True), uploaded
 
+    post.frames = frames
     return post
 
 
 def test_goto_moves_to_the_stud_measured_from_the_parts_corner(goto):
     _, uploaded = goto(x="100", y="50", origin_corner="back_right")
     (program,) = uploaded
-    assert "PointsOffsetEnable(0, 662.0, 712.0, HIGH_Z, 0, 0, 0)" in program
-    assert "PTP(zerozero, speed, -1, 0)" in program
+    assert "PointsOffsetEnable(0, 662.000, 712.000, 127.000, 0, 0, 0)" in program
 
 
 def test_goto_parks_at_safe_z_not_the_search_height(goto):
@@ -212,13 +221,56 @@ def test_goto_parks_at_safe_z_not_the_search_height(goto):
     The Search Height (retract_z) is only where a run's search starts."""
     _, uploaded = goto(x="100", y="50", safe_z="127", part_z="2.54", retract_z="50.8")
     (program,) = uploaded
-    assert "HIGH_Z = 129.54" in program
+    assert "PointsOffsetEnable(0, 100.000, 50.000, 129.540, 0, 0, 0)" in program
     assert "50.8" not in program and "53.34" not in program
 
 
 def test_goto_without_a_corner_is_front_left(goto):
     _, uploaded = goto(x="100", y="50")
-    assert "PointsOffsetEnable(0, 100.0, 50.0, HIGH_Z, 0, 0, 0)" in uploaded[0]
+    assert "PointsOffsetEnable(0, 100.000, 50.000, 127.000, 0, 0, 0)" in uploaded[0]
+
+
+def test_goto_never_sweeps_in_joint_space(goto):
+    """A PTP Goto swung the head into the arm's second joint (2026-09-25).
+    Now it lifts straight up, travels level, and descends straight down."""
+    _, uploaded = goto(x="44.7", y="304.8", safe_z="30")
+    (program,) = uploaded
+    assert "PTP" not in program and "MoveCart" not in program
+    lines = [l for l in program.splitlines() if l.startswith("PointsOffsetEnable")]
+    assert lines == [
+        "PointsOffsetEnable(0, 0.000, 0.000, 127.000, 0, 0, 0)",      # straight up
+        "PointsOffsetEnable(0, 44.700, 304.800, 127.000, 0, 0, 0)",   # level
+        "PointsOffsetEnable(0, 44.700, 304.800, 30.000, 0, 0, 0)",    # straight down
+    ]
+    assert program.index("SetAnticollision(") < program.index("Lin(")
+
+
+def test_goto_refuses_a_stud_inside_the_base_no_go_zone(goto, monkeypatch):
+    """fabtech polygon's stud 5, 175 mm from J1, nearly put the head into J2."""
+    monkeypatch.setenv("WELDFLEX_BASE_X_MM", "-130")
+    monkeypatch.setenv("WELDFLEX_BASE_Y_MM", "320")
+    monkeypatch.setenv("WELDFLEX_BASE_KEEPOUT_MM", "250")
+    html, uploaded = goto(x="44.7", y="304.8")
+    assert "within 175 mm of the robot base" in html
+    assert uploaded == []
+
+
+def test_job_load_refuses_a_part_inside_the_base_no_go_zone(run_app, monkeypatch):
+    monkeypatch.setenv("WELDFLEX_BASE_X_MM", "-130")
+    monkeypatch.setenv("WELDFLEX_BASE_Y_MM", "320")
+    monkeypatch.setenv("WELDFLEX_BASE_KEEPOUT_MM", "250")
+    job_manager = importlib.import_module("job_manager")
+    manager = job_manager.JobManager.__new__(job_manager.JobManager)
+    with pytest.raises(job_manager.JobError, match="Stud 2"):
+        manager.load("part-1", "Bracket", [{"x": 300, "y": 300}, {"x": 44.7, "y": 304.8}], 1,
+                     arm_mode="dry")
+
+
+def test_goto_refuses_the_wrong_active_frame_without_moving(goto):
+    goto.frames["tool_wobj"] = (1, 0)
+    html, uploaded = goto(x="100", y="50")
+    assert "tool 1 / wobj 0" in html
+    assert uploaded == []
 
 
 def test_goto_refuses_a_stud_that_would_flip_across_the_bed(goto):

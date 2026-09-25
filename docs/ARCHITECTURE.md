@@ -121,6 +121,16 @@ Consequences worth knowing:
   with +Z up, but a stud is a point welded with the tool vertical, and DSC only
   uses the distances between studs. `JobManager.load` resolves the studs too,
   so a stud that would flip across the bed is refused at load, not at Run.
+- **Studs near the robot base are refused, if the base is configured.** Near
+  J1 the arm can't hold the head vertical without folding J2 up under it, and
+  the controller has no model of the weld head to catch that.
+  `backend/base_keepout.py` checks each resolved stud, and each level move
+  between consecutive studs, against a circle around J1, both in
+  `build_weldflex_lua` and at `JobManager.load` for parts. It is off unless
+  `WELDFLEX_BASE_X_MM`, `_Y_MM` and `_KEEPOUT_MM` are all set, because a guessed
+  base position would refuse good studs or pass bad ones, and `.env.example`
+  ships them commented out. The legs to and from `homewf` and Single Shot's
+  target are not checked.
 - `WeldFlex.lua` applies each stud position through
   `PointsOffsetEnable(0, ...)`, so percentage-mode `Lin` calls must use
   `Lin(point, speed, -1, 0, 0)`. Its final `0` means no *inline* offset; it is

@@ -38,6 +38,7 @@ from lua_builder import (
     STUD_RELOAD_MS_MIN,
 )
 import part_origin
+import base_keepout
 import point_moves
 import wifi
 from robot_service import STATE_MAP as ROBOT_STATE_MAP, WeldFlexRobotService
@@ -1067,12 +1068,10 @@ def ui_parts_goto():
     designer's in-memory state, which may be unsaved) rather than the persisted
     recipe. X/Y are measured from the part's corner and resolved to zerozero
     offsets the same way a run's studs are.
+
+    The move is point_moves' straight up, level, straight down, never a PTP:
+    a joint-space sweep here swung the head into the arm (2026-09-25).
     """
-    if job.snapshot().active:
-        return render_template(
-            "partials/command_result.html", ok=False, title="Goto",
-            payload={"error": "A job is running — stop the active job first."},
-        )
     try:
         x = float(request.form.get("x"))
         y = float(request.form.get("y"))
@@ -1093,29 +1092,27 @@ def ui_parts_goto():
     part_z = float(request.form.get("part_z") or 0.0)
     high_z = part_z + safe_z
 
-    # flag=0 offsets in the wobj-2 workpiece frame (per FR Lua manual §3.2.12),
-    # not flag=1's tool frame — the offset is off the taught zerozero point,
-    # which sits at the workpiece origin, so this walks x/y/z along the
-    # workpiece's own axes: +X = bed left-right, +Y = bed depth, +Z = up.
-    # The production program uses this same X/Y order.
-    program = (
-        "tool = 2\n"
-        "blend = -1\n"
-        "wobj = 2\n"
-        "speed = 25\n"
-        f"HIGH_Z = {high_z}\n"
-        f"PointsOffsetEnable(0, {bed_x}, {bed_y}, HIGH_Z, 0, 0, 0)\n"
-        "PTP(zerozero, speed, -1, 0)\n"
-        "PointsOffsetDisable()\n"
-    )
+    try:
+        current, zerozero = _live_move_poses()
+        plan = point_moves.plan_offset_move(f"stud at x={x:g}, y={y:g}", current, zerozero,
+                                            (bed_x, bed_y, high_z))
+        _check_base_keepout(plan, "This stud")
+    except point_moves.PointMoveError as exc:
+        return render_template(
+            "partials/command_result.html", ok=False, title="Goto",
+            payload={"error": str(exc)},
+        )
+    if not (plan.do_lift or plan.do_travel or plan.do_descend):
+        return render_template("partials/command_result.html", ok=True, title="Goto",
+                               payload={"message": "Already above this stud"})
 
     try:
         with tempfile.NamedTemporaryFile("w", suffix=".lua", delete=False, encoding="utf-8") as tf:
-            tf.write(program)
+            tf.write(point_moves.build_program(plan))
             tmp_path = tf.name
         try:
             robot.upload_and_run(tmp_path)
-            ok, payload = True, {"target": f"x={x}, y={y}, z={high_z}"}
+            ok, payload = True, {"target": f"x={x}, y={y}, z={high_z:g}"}
         finally:
             if os.path.exists(tmp_path):
                 os.unlink(tmp_path)
@@ -1261,6 +1258,28 @@ def _plan_point_move(point_name, mode):
         raise point_moves.PointMoveError("Unknown point.")
     if not point["taught"]:
         raise point_moves.PointMoveError(f"{point['label']} is not taught on the controller yet.")
+    current, zerozero = _live_move_poses()
+    try:
+        target = zerozero if point["name"] == "zerozero" else robot.teach_point_pose(point["name"])
+    except Exception as exc:
+        raise point_moves.PointMoveError(str(exc)) from exc
+    plan = point_moves.plan_move(point["name"], mode, current, zerozero, target)
+    _check_base_keepout(plan, point["label"])
+    return point, plan
+
+def _check_base_keepout(plan, what):
+    """Refuse a host move whose target or level travel enters the base no-go zone."""
+    try:
+        base_keepout.check_point(plan.target[0], plan.target[1], what)
+        base_keepout.check_move(plan.start[:2], plan.target[:2], f"The level move to {what}")
+    except ValueError as exc:
+        raise point_moves.PointMoveError(str(exc)) from exc
+
+def _live_move_poses():
+    """The head's pose and zerozero's, read fresh for a host move. Raises PointMoveError.
+
+    Every host move plans its legs from these, after the same refusals.
+    """
     if job.snapshot().active:
         raise point_moves.PointMoveError("A job is running — stop the active job first.")
     if not robot.get_universal_state().commands_available:
@@ -1273,14 +1292,11 @@ def _plan_point_move(point_name, mode):
                 f"tool {point_moves.MOVE_TOOL} / wobj {point_moves.MOVE_WOBJ}. "
                 "Select them on the pendant first."
             )
-        current = robot.jog_pose()
-        zerozero = robot.teach_point_pose("zerozero")
-        target = zerozero if point["name"] == "zerozero" else robot.teach_point_pose(point["name"])
+        return robot.jog_pose(), robot.teach_point_pose("zerozero")
     except point_moves.PointMoveError:
         raise
     except Exception as exc:
         raise point_moves.PointMoveError(str(exc)) from exc
-    return point, point_moves.plan_move(point["name"], mode, current, zerozero, target)
 
 @app.route("/ui/points/plan")
 def ui_points_plan():

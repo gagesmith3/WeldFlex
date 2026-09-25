@@ -32,7 +32,7 @@ wrong frame shows up as absurd numbers before anything moves.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 # 5 in above zerozero (the bed surface). Owner, 2026-09-24.
 TRAVEL_HEIGHT_MM = 127.0
@@ -72,6 +72,9 @@ class Plan:
     do_lift: bool
     do_travel: bool
     do_descend: bool
+    # False: the target is an offset from zerozero (a stud), not a taught
+    # point, so the descend is an offset Lin in zerozero's orientation.
+    target_is_point: bool = True
 
 
 def _angle_diff(a: float, b: float) -> float:
@@ -121,6 +124,25 @@ def plan_move(point: str, mode: str, current_pose, zerozero_pose, point_pose) ->
     )
 
 
+def plan_offset_move(label: str, current_pose, zerozero_pose,
+                     target: tuple[float, float, float]) -> Plan:
+    """Plan a move from `current_pose` to an offset from zerozero.
+
+    For the part designer's Goto: `target` is a stud's X/Y (already resolved
+    through part_origin) and its height, all relative to zerozero in the wobj-2
+    frame. The head arrives square to the bed, in zerozero's orientation.
+    The legs are the same as a point move's, so the head never sweeps in joint
+    space: a PTP here swung the head into the arm's second joint on the way
+    to a stud (2026-09-25).
+    """
+    zx, zy, zz = (float(v) for v in zerozero_pose[:3])
+    tx, ty, tz = (float(v) for v in target)
+    point_pose = [zx + tx, zy + ty, zz + tz] + [float(v) for v in zerozero_pose[3:6]]
+    plan = plan_move(label, "to", current_pose, zerozero_pose, point_pose)
+    return replace(plan, target_is_point=False,
+                   do_descend=plan.descend_mm >= MIN_LEG_MM)
+
+
 def _offset_lin(x: float, y: float, z: float, speed: int) -> str:
     return (
         f"PointsOffsetEnable(0, {x:.3f}, {y:.3f}, {z:.3f}, 0, 0, 0)\n"
@@ -130,10 +152,11 @@ def _offset_lin(x: float, y: float, z: float, speed: int) -> str:
 
 
 def build_program(plan: Plan) -> str:
-    """The controller program for `plan`. Point names are trusted (from POINTS)."""
+    """The controller program for `plan`. Point names and labels are trusted
+    (POINTS, or a label the host formatted from numbers)."""
     level = ", ".join([str(COLLISION_LEVEL)] * 6)
     lines = [
-        f"-- Points page: move to {plan.point} ({plan.mode})\n",
+        f"-- Move to {plan.point} ({plan.mode})\n",
         f"tool = {MOVE_TOOL}\n",
         "blend = -1\n",
         f"wobj = {MOVE_WOBJ}\n",
@@ -143,7 +166,7 @@ def build_program(plan: Plan) -> str:
         f"SetAnticollision(0, {{{level}}}, 0)\n",
     ]
     cx, cy, _ = plan.start
-    tx, ty, _ = plan.target
+    tx, ty, tz = plan.target
     if plan.do_lift:
         lines.append("-- Straight up, squaring the head\n")
         lines.append(_offset_lin(cx, cy, plan.travel_z, TRAVEL_SPEED_PCT))
@@ -152,5 +175,8 @@ def build_program(plan: Plan) -> str:
         lines.append(_offset_lin(tx, ty, plan.travel_z, TRAVEL_SPEED_PCT))
     if plan.do_descend:
         lines.append("-- Straight down into the point\n")
-        lines.append(f"Lin({plan.point}, {DESCEND_SPEED_PCT}, -1, 0, 0)\n")
+        if plan.target_is_point:
+            lines.append(f"Lin({plan.point}, {DESCEND_SPEED_PCT}, -1, 0, 0)\n")
+        else:
+            lines.append(_offset_lin(tx, ty, tz, DESCEND_SPEED_PCT))
     return "".join(lines)

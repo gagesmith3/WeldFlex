@@ -71,7 +71,14 @@ hand-editing installed copies.
      `192.168.58.2`), removes Debian's default site, and reloads nginx.
      Loopback only: `:8081` proxies the controller's web app for Admin → Robot
      Web App, and `:9999` proxies its websocket. The conf's comments explain
-     the header, cookie and websocket rewrites.
+     the header, cookie and websocket rewrites. To use the controller's web app
+     from a laptop with a real keyboard, tunnel both ports over SSH rather than
+     opening them to the Wi-Fi: `ssh -i ~/.ssh/id_ed25519_weldflex -N -L
+     8081:127.0.0.1:8081 -L 9999:127.0.0.1:9999 weldflex@<pi>`, then browse
+     `http://localhost:8081`. The laptop's local port must be 9999 because the
+     app hard-codes its websocket port, and the injected bridge stays idle
+     because the page isn't framed. Gage renamed a controller point this way
+     on 2026-09-25.
    - **4c. Wi-Fi polkit rule**: installs `10-weldflex-wifi.rules` to
      `/etc/polkit-1/rules.d/` with `KIOSK_USER` substituted. It grants the kiosk
      user four NetworkManager actions (network-control, settings.modify.system,

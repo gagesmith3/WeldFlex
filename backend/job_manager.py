@@ -47,6 +47,7 @@ from lua_builder import (
     strip_lua_comments,
 )
 import fault_codes
+from base_keepout import check_studs as check_base_keepout
 from part_origin import DEFAULT_CORNER, parse_corner, resolve_studs
 
 log = logging.getLogger("weldflex.job")
@@ -432,7 +433,7 @@ class JobManager:
         try:
             origin_corner = parse_corner(origin_corner, strict=True)
             if kind == "part":
-                resolve_studs(studs, origin_corner)
+                check_base_keepout(resolve_studs(studs, origin_corner))
         except ValueError as exc:
             raise JobError(str(exc)) from None
         cycles = max(1, int(cycles))

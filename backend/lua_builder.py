@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
 
+from base_keepout import check_studs as check_base_keepout
 from part_origin import DEFAULT_CORNER, BedSpan, resolve_studs
 
 PROGRAM_NAME = "WeldFlex.lua"
@@ -441,6 +442,7 @@ def build_weldflex_lua(
     if cycles < 1:
         raise ValueError(f"cycles must be >= 1, got {cycles}")
     studs = resolve_studs(studs, origin_corner, bed_span)
+    check_base_keepout(studs)
 
     path = Path(template_path) if template_path else TEMPLATE_PATH
     if not path.is_file():

@@ -82,14 +82,19 @@ local FIND_ACC  = 0.0
 
 local PRESS_DIR = 0     -- 0 = negative (FT_LinInsertion encoding; flipped with TCP Z, 2026-09-01)
 
--- The commissioned speeds, restored 2026-09-14. Raising them the same day (search
--- at 10 mm/s with the press at 1.0, then 0.5) left the press stuck well short of
--- force both times, while 5 and 0.25 held pressure accurately. Both stop on force,
--- but the press ends on its first reading past threshold, and arriving faster
--- stopped it short. Shorten a shot some other way: a lower park height (a run's
--- Search Height) shortens the search.
+-- The commissioned search speed, restored 2026-09-14. Raising the speeds that day
+-- (search at 10 mm/s with the press at 1.0, then 0.5) left the press stuck well
+-- short of force both times. Both stop on force, but the press ends on its first
+-- reading past threshold, and arriving faster stopped it short. Shorten a shot
+-- some other way: a lower park height (a run's Search Height) shortens the search.
+--
+-- The press dropped from 0.25 to 0.10 mm/s on 2026-09-28. At 0.25 a 10 lbf press
+-- read ~9 lbf on the Force page and then jumped straight to 14-15: something in
+-- the gun bottoms out near 9 lbf, after which force climbs almost vertically and
+-- the stop lands several lbf late. Overshoot there scales with arrival speed. The
+-- cost is time on the soft spring travel before that point.
 local SEARCH_SPEED_MMS = 5.0
-local PRESS_SPEED_MMS  = 0.25
+local PRESS_SPEED_MMS  = 0.10
 
 -- The park height is the caller's global Z_CLEARANCE, read where it is used and
 -- never shadowed here: WeldFlex.lua parks at the Search Height, single_shot.lua at

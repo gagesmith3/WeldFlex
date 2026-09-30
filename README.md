@@ -48,6 +48,15 @@ skipped, on live runs too, and the job panel shows **DI OFF**.
 Admin's **Single Shot** tool welds one stud at a saved target point, with the
 same Live/Dry choice, then feeds the next stud and stays over the target.
 
+## Resuming a part after a fault
+
+A fault cancels the program, and a run cannot be picked back up. To finish the
+part on the bed, run it again and set **Starting stud** in the run modal to the
+next stud after the last one welded. Studs are counted from 1 in the order the
+part lists them. The first cycle starts there; any further cycles weld every
+stud. Left at 0, a run starts at the first stud. The job panel shows
+**FROM STUD N** for a resumed run.
+
 ## Install RPI Kiosk
 
 ```

@@ -303,6 +303,104 @@ def test_weldflex_lua_returns_home_every_cycle_before_the_gate():
     assert not any(i > built.gate_line for i in home_idxs)
 
 
+def _line_of(lines, statement):
+    """1-based line number of the one line that is exactly `statement`."""
+    (found,) = [i for i, line in enumerate(lines, 1) if line.strip() == statement]
+    return found
+
+
+def _indent(line):
+    return len(line) - len(line.lstrip())
+
+
+@pytest.mark.parametrize("start", [0, 1, None, "", "0", " 1 "])
+def test_a_run_starts_at_the_first_stud_unless_told_otherwise(start):
+    """The run modal's Starting Stud defaults to 0, which is not a stud number:
+    0, 1 and a blank field all have to build the same whole-part program."""
+    studs = [{"x": i, "y": i} for i in range(4)]
+    built = build_weldflex_lua(studs, cycles=1, run_mode=LIVE, start_stud=start)
+    assert "START_STUD = 1" in _lines(built)
+    assert built.start_stud == 1
+    assert built.text == build_weldflex_lua(studs, cycles=1, run_mode=LIVE).text
+
+
+def test_a_resumed_run_skips_the_earlier_studs_on_the_first_cycle_only():
+    """A fault cancels the program, and the only way to finish the part was to
+    delete the studs already welded from the recipe (owner, 2026-09-30). The
+    starting stud skips them instead — for the part on the bed, not for the
+    parts that follow it, so it has to reset inside the cycle loop."""
+    built = build_weldflex_lua(
+        [{"x": i, "y": i} for i in range(6)], cycles=3, run_mode=LIVE, start_stud=4
+    )
+    lines = _lines(built)
+
+    assert built.start_stud == 4
+    # Every stud is still in the program: later cycles weld all of them.
+    assert built.stud_count == 6
+    assert sum(line.strip().startswith("{x=") for line in lines) == 6
+    assert "--{{" not in built.text
+
+    declared = _line_of(lines, "START_STUD = 4")
+    seeded = _line_of(lines, "local firstStud = START_STUD")
+    stud_loop = _line_of(lines, "for studIndex = firstStud, #studs do")
+    reset = _line_of(lines, "firstStud = 1")
+    assert declared < seeded < built.loop_start_line < stud_loop < reset < built.cycle_marker_line
+    assert lines[stud_loop].strip() == "local stud = studs[studIndex]"
+    # The reset belongs to the cycle loop, after the stud loop has closed — at the
+    # stud loop's own depth, not inside its body, where it would undo the skip
+    # after the first stud.
+    assert _indent(lines[reset - 1]) == _indent(lines[stud_loop - 1])
+    assert lines[reset - 2].strip() == "end"
+
+
+def test_the_last_stud_is_a_valid_starting_stud():
+    built = build_weldflex_lua([{"x": i, "y": i} for i in range(4)], cycles=1, run_mode=LIVE,
+                               start_stud="4")
+    assert "START_STUD = 4" in _lines(built)
+
+
+@pytest.mark.parametrize("start, error", [
+    (5, r"past the part's last stud \(4\)"),
+    (-1, "negative"),
+    ("2.5", "whole number"),
+    (2.0, "whole number"),
+    (True, "whole number"),
+    ("four", "whole number"),
+])
+def test_the_builder_refuses_a_starting_stud_that_is_not_on_the_part(start, error):
+    """Refused, never clamped: a resume that quietly started at some other stud
+    would weld over studs that are already on the part."""
+    with pytest.raises(ValueError, match=error):
+        build_weldflex_lua([{"x": i, "y": i} for i in range(4)], cycles=1, run_mode=LIVE,
+                           start_stud=start)
+
+
+def test_dropping_the_start_stud_marker_fails_loudly(tmp_path):
+    """Without it the template's literal 1 would stand, and a resume would start
+    over at the first stud with nothing saying so."""
+    stripped = [line for line in TEMPLATE_PATH.read_text(encoding="utf-8").splitlines()
+                if "--{{START_STUD}}" not in line]
+    bad = tmp_path / TEMPLATE_PATH.name
+    bad.write_text("\n".join(stripped) + "\n", encoding="utf-8")
+    with pytest.raises(RuntimeError, match=r"missing required marker.*START_STUD"):
+        build_weldflex_lua([{"x": 1, "y": 2}], cycles=1, run_mode=LIVE, template_path=bad)
+
+
+def test_a_resumed_cycle_does_not_wait_out_a_reload_that_never_happened(monkeypatch):
+    """DSC gives every stud after the first a reload dwell, timed from the feed
+    that follows the previous weld. A cycle resumed at one of those studs reaches
+    it from home, so both of its DSC settings are gated on a previous stud."""
+    monkeypatch.setenv("WELDFLEX_DSC_CALIBRATED", "1")
+    built = build_weldflex_lua(
+        [{"x": 0, "y": 0}, {"x": 1, "y": 0}, {"x": 2, "y": 0}],
+        cycles=1, run_mode=LIVE, dsc_enabled=True, stud_reload_ms=600, start_stud=2,
+    )
+    code = strip_lua_comments(built.text)
+    assert "if lastWeldX ~= nil and lastWeldY ~= nil and stud.s2sSpeed ~= nil then" in code
+    assert "if lastWeldX ~= nil and stud.s2sWaitMs ~= nil and stud.s2sWaitMs > 0 then" in code
+    assert code.count("WaitMs(stud.s2sWaitMs)") == 1
+
+
 
 
 def test_weldflex_lua_substitutes_numeric_pressure_setting():

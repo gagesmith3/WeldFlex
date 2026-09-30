@@ -3462,6 +3462,23 @@ pre {
   letter-spacing: 0.05em;
 }
 
+/* Cycles and starting stud share a row, so the second field adds no height to
+   a modal that has to fit the kiosk's 500 px canvas. */
+.run-modal-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.run-modal-fields .run-modal-label {
+  margin-top: 0;
+}
+
+/* Sits tight under the two fields it is about, inside the modal's 16 px gap. */
+.arm-mode-di-note.run-modal-start-note {
+  margin: -8px 0 0;
+}
+
 /* Live/Dry picker in the run modal and the Single Shot confirm. Neither option
    starts selected: the operator's tap is the arming choice. */
 .arm-mode-seg {

@@ -337,6 +337,71 @@ def test_run_mode_is_on_the_snapshot_the_history_and_the_load_event(tmp_path):
     mgr.shutdown()
 
 
+def test_a_starting_stud_reaches_the_builder_the_snapshot_and_the_records(tmp_path, monkeypatch):
+    """The run modal posts it as text. It is parsed once at load, and the same
+    number is what gets built, shown on the job panel and written to history."""
+    import job_manager as jm
+
+    real_build = jm.build_weldflex_lua
+    seen = []
+
+    def spy(studs, cycles, **kwargs):
+        seen.append(kwargs.get("start_stud"))
+        return real_build(studs, cycles, **kwargs)
+
+    monkeypatch.setattr(jm, "build_weldflex_lua", spy)
+
+    mgr = make_manager(tmp_path, FakeRobot())
+    studs = [{"x": i, "y": i} for i in range(1, 6)]
+    snap = mgr.load("p1", "Bracket", studs, cycles=2, arm_mode="dry", gate_mode="none",
+                    start_stud="3")
+    assert snap.start_stud == 3
+    assert snap.to_dict()["start_stud"] == 3
+
+    mgr.start()
+    wait_state(mgr, JobState.RUNNING.value)
+    assert seen == [3]
+    mgr.stop()
+
+    record = json.loads((tmp_path / "run_history.jsonl").read_text(encoding="utf-8"))
+    assert record["start_stud"] == 3
+    assert record["stud_count"] == 5
+    events = [
+        json.loads(line)
+        for line in (tmp_path / "run_events.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    load_event = next(event for event in events if event["event"] == "load")
+    assert load_event["detail"]["start_stud"] == 3
+    mgr.shutdown()
+
+
+@pytest.mark.parametrize("start", [0, 1, None, ""])
+def test_a_load_without_a_starting_stud_starts_at_the_first(tmp_path, start):
+    mgr = make_manager(tmp_path, FakeRobot())
+    snap = mgr.load("p1", "Bracket", [{"x": 1, "y": 2}, {"x": 3, "y": 4}], cycles=1,
+                    arm_mode="dry", gate_mode="none", start_stud=start)
+    assert snap.start_stud == 1
+    assert mgr.load("p1", "Bracket", [{"x": 1, "y": 2}], cycles=1,
+                    arm_mode="dry", gate_mode="none").start_stud == 1
+    mgr.shutdown()
+
+
+@pytest.mark.parametrize("start, error", [
+    (3, "past the part's last stud"),
+    ("-1", "negative"),
+    ("1.5", "whole number"),
+])
+def test_load_refuses_a_starting_stud_that_is_not_on_the_part(tmp_path, start, error):
+    """At load, where the operator is still looking at the number they typed —
+    not when Run is pressed, and never by starting somewhere else instead."""
+    mgr = make_manager(tmp_path, FakeRobot())
+    with pytest.raises(JobError, match=error):
+        mgr.load("p1", "Bracket", [{"x": 1, "y": 2}, {"x": 3, "y": 4}], cycles=1,
+                 arm_mode="dry", gate_mode="none", start_stud=start)
+    assert mgr.snapshot().state == JobState.IDLE.value
+    mgr.shutdown()
+
+
 def test_load_has_no_default_arm_mode(tmp_path):
     """Live or Dry is picked for every run. A default of "live" is how the old
     faceplate page loaded live jobs nobody had chosen."""

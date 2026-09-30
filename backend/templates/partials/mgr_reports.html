@@ -198,6 +198,8 @@
       tags.push(`<span class="run-mode-tag ${r.arm_mode === 'live' ? 'is-live' : 'is-dry'}">${r.arm_mode}</span>`);
     }
     if (r.di_check === false) tags.push('<span class="run-mode-tag is-warn">DI off</span>');
+    // A resumed run: its first cycle skipped the studs before this one.
+    if (r.start_stud > 1) tags.push(`<span class="run-mode-tag is-warn">from stud ${esc(r.start_stud)}</span>`);
     return tags.join(' ');
   }
 
@@ -375,6 +377,7 @@
     if (run.di_check === true) mode.push('DI check on');
     if (run.di_check === false) mode.push('DI check OFF');
     if (run.gate_mode) mode.push(`gate: ${run.gate_mode}`);
+    if (run.start_stud > 1) mode.push(`from stud ${run.start_stud}`);
     set('mgr-modal-mode', mode.length ? mode.join(' · ') : '—');
 
     const errBox = document.getElementById('mgr-modal-error-box');

@@ -102,7 +102,7 @@ alternative input mode to the coordinate-table UI.
 Owned entirely by `backend/job_manager.py`. `app.py` never advances a job.
 
 ```
-POST /ui/job/load     → queued      (JobManager.load: validates gate_mode, stores studs+cycles)
+POST /ui/job/load     → queued      (JobManager.load: validates gate_mode and start_stud, stores studs+cycles)
 POST /ui/job/start    → starting    (returns immediately; build→upload→run on a job-launch thread)
                       → running     (once ProgramRun returns and the tracker is armed)
                       → error       (any launch exception)

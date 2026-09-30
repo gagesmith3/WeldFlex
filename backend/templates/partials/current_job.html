@@ -105,6 +105,13 @@
       <strong class="metric-value">
         {{ (job.cycles_done ~ ' / ' ~ job.cycles_target) if job.cycles_target else '— / —' }}
       </strong>
+      {% if job.run_id and job.start_stud > 1 %}
+      {# A resumed run: its first cycle skips the studs before this one. Here and
+         not with the run-mode tags, where a third tag is clipped to "…". #}
+      <span class="metric-label">
+        <span class="run-mode-tag is-warn">from stud {{ job.start_stud }}</span>
+      </span>
+      {% endif %}
     </div>
     <div class="metric-card">
       <div class="metric-head">

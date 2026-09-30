@@ -28,6 +28,11 @@ studs = {
 
 --{{CYCLE_COUNT}}
 
+-- The stud the first cycle starts at, counted from 1 as the part designer
+-- numbers them. Above 1 it resumes a part whose earlier studs are already
+-- welded; every later cycle starts back at stud 1.
+START_STUD = 1 --{{START_STUD}}
+
 -- Move to the taught home position. homewf is taught AT the safe height
 -- (PART_Z + SAFE_Z above zerozero), so the legs between home and the part
 -- are level moves; nothing below offsets homewf. An earlier version lifted
@@ -40,9 +45,12 @@ end
 local jobAborted = false
 local lastWeldX = nil
 local lastWeldY = nil
+local firstStud = START_STUD
 
 for cycleIndex = 1, cycleCount do --{{LOOP_START}}
-    for _, stud in ipairs(studs) do
+    for studIndex = firstStud, #studs do
+        local stud = studs[studIndex]
+
         -- Both heights are measured up from zerozero's Z in the wobj-2 frame:
         -- HIGH_Z is Safe Z, the fixture-clearing plane every XY move happens
         -- at; SEARCH_Z is the recipe's Search Height, where weld.lua's search
@@ -83,7 +91,9 @@ for cycleIndex = 1, cycleCount do --{{LOOP_START}}
         Lin(zerozero, travelSpeed, -1, 0, 0)
         PointsOffsetDisable()
 
-        if stud.s2sWaitMs ~= nil and stud.s2sWaitMs > 0 then
+        -- The reload dwell follows a feed, so it is skipped when this stud was
+        -- reached from home (a cycle resumed at START_STUD) and not from a weld.
+        if lastWeldX ~= nil and stud.s2sWaitMs ~= nil and stud.s2sWaitMs > 0 then
             WaitMs(stud.s2sWaitMs)
         end
 
@@ -107,6 +117,7 @@ for cycleIndex = 1, cycleCount do --{{LOOP_START}}
             break
         end
     end
+    firstStud = 1
 
     -- Clear the part before the next cycle (and on a fault): lift straight up
     -- off the last stud's search pose to the safe height, then traverse level

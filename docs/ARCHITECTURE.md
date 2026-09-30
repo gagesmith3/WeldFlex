@@ -39,9 +39,11 @@ directly, and no run state lives in `app.py`.
 
 1. **Operator selects a part** — `/operator/parts` renders the library from
    `recipes.json`.
-2. **Prompted for cycle count and Live or Dry** — the `#run-modal` block in
-   [`parts.html`](../backend/templates/parts.html). Neither mode is
-   preselected; Run stays disabled until one is tapped.
+2. **Prompted for cycle count, starting stud and Live or Dry** — the
+   `#run-modal` block in [`parts.html`](../backend/templates/parts.html).
+   Neither mode is preselected; Run stays disabled until one is tapped.
+   Starting stud defaults to 0 and is only changed to resume a part that
+   faulted partway (see below).
 3. **Job is loaded into the Job Manager** — `POST /ui/job/load` in
    [`app.py`](../backend/app.py) calls `JobManager.load()`, which queues the
    part and redirects the browser to `/operator`.
@@ -102,6 +104,19 @@ Consequences worth knowing:
   2026-09-14, which also removed the `atlas`/`liberty` welder profile, its
   dry-only guards, and the configurable trigger output (now fixed in `weld.lua`
   at DO0 for 250 ms).
+- **A run can start partway through the stud list** (2026-09-30). A fault
+  cancels the program and nothing resumes it, so finishing the part used to
+  mean deleting the studs already welded from the recipe. The run modal's
+  Starting Stud is the stud to start at, counted from 1 in the part's own stud
+  order: the next one after the last stud welded. `lua_builder.parse_start_stud`
+  reads 0 (the field's default), 1 and blank as "the first stud" and refuses
+  anything that isn't a stud on the part rather than clamping it.
+  `--{{START_STUD}}` publishes it and `WeldFlex.lua` starts **the first cycle
+  only** there; every later cycle welds the whole list, since those are new
+  parts. The job panel and the run history carry a "from stud N" tag. It is a
+  per-run value like the cycle count, never saved on the recipe, and the
+  operator supplies the number: the app still does not record which stud a run
+  stopped on. Single Shot does not take one.
 - **Single Shot uses the same machinery.** `JobManager.load(kind="single_shot")`
   builds `programs/single_shot.lua` with `build_single_shot_lua`: one cycle,
   one target from the `"system": "single_shot"` record in `recipes.json`, no

@@ -25,9 +25,24 @@
 <div id="run-modal" class="wf-modal-overlay" hidden>
   <div class="wf-modal">
     <p class="wf-modal-msg">Run "<span id="run-modal-part-name"></span>"</p>
-    <label class="run-modal-label" for="run-modal-cycles">Number of cycles</label>
-    <input type="number" id="run-modal-cycles" class="pd-create-input run-modal-cycles-input"
-           value="1" min="1" max="999" autocomplete="off">
+    <div class="run-modal-fields">
+      <div>
+        <label class="run-modal-label" for="run-modal-cycles">Number of cycles</label>
+        <input type="number" id="run-modal-cycles" class="pd-create-input run-modal-cycles-input"
+               value="1" min="1" max="999" autocomplete="off">
+      </div>
+      <div>
+        {# Resumes a part that faulted partway: the next stud after the last one
+           welded. 0 (the default) and 1 both start at the first stud. Text, not
+           number: the kiosk's pad writes .value directly. #}
+        <label class="run-modal-label" for="run-modal-start-stud">Starting stud</label>
+        <input type="text" id="run-modal-start-stud" name="start_stud"
+               class="pd-create-input run-modal-cycles-input"
+               value="0" inputmode="none" data-kbd="num" autocomplete="off"
+               oninput="runModalSync()">
+      </div>
+    </div>
+    <p id="run-modal-start-note" class="arm-mode-di-note run-modal-start-note" hidden></p>
     {# No default: the operator's tap on Live or Dry is the arming choice for this run. #}
     <span class="run-modal-label">Weld mode</span>
     <div class="arm-mode-seg" role="group" aria-label="Weld mode">
@@ -62,11 +77,14 @@ function syncPartsEditorUrl() {
 <script>
 let _runRecipeId = null;
 let _runArmMode = null;
+let _runStudCount = 0;
 document.querySelectorAll('.js-table-run').forEach(function(btn) {
   btn.addEventListener('click', function() {
     _runRecipeId = btn.dataset.recipeId;
+    _runStudCount = parseInt(btn.dataset.studCount, 10) || 0;
     document.getElementById('run-modal-part-name').textContent = btn.dataset.recipeName;
     document.getElementById('run-modal-cycles').value = '1';
+    document.getElementById('run-modal-start-stud').value = '0';
     document.getElementById('run-modal-di-note').hidden = btn.dataset.diCheck !== '0';
     runModalPickArm(null);
     document.getElementById('run-modal').removeAttribute('hidden');
@@ -82,13 +100,38 @@ function runModalPickArm(mode) {
     b.classList.toggle('active', on);
     b.setAttribute('aria-pressed', on ? 'true' : 'false');
   });
-  document.getElementById('run-modal-confirm').disabled = !mode;
+  runModalSync();
+}
+// The stud the first cycle starts at, or null when the field isn't one of this
+// part's studs. 0 (the default), 1 and blank all start at the first stud.
+function runModalStartStud() {
+  const raw = document.getElementById('run-modal-start-stud').value.trim();
+  if (raw === '') return 0;
+  if (!/^\d+$/.test(raw)) return null;
+  const start = parseInt(raw, 10);
+  return start <= Math.max(1, _runStudCount) ? start : null;
+}
+// Run needs a weld mode and a starting stud that exists; a resume says what it
+// will skip before it is loaded. Both notes are kept to one line: with the DI
+// note showing too, the modal is close to the kiosk's 500 px.
+function runModalSync() {
+  const start = runModalStartStud();
+  const note = document.getElementById('run-modal-start-note');
+  if (start === null) {
+    note.textContent = 'This part has ' + _runStudCount + ' studs.';
+  } else if (start > 1) {
+    note.textContent = 'Cycle 1 skips ' +
+      (start === 2 ? 'stud 1.' : 'studs 1 to ' + (start - 1) + '.');
+  }
+  note.hidden = start !== null && start <= 1;
+  document.getElementById('run-modal-confirm').disabled = !_runArmMode || start === null;
 }
 function runModalCancel() {
   document.getElementById('run-modal').setAttribute('hidden', '');
 }
 async function runModalConfirm() {
-  if (!_runArmMode) return;
+  const startStud = runModalStartStud();
+  if (!_runArmMode || startStud === null) return;
   const cycles = Math.max(1, parseInt(document.getElementById('run-modal-cycles').value, 10) || 1);
   const armMode = _runArmMode;
   runModalCancel();
@@ -96,6 +139,7 @@ async function runModalConfirm() {
   fd.append('recipe_id', _runRecipeId);
   fd.append('cycles', cycles);
   fd.append('arm_mode', armMode);
+  fd.append('start_stud', startStud);
   // Queues the job; the operator page is where it actually gets started.
   const resp = await fetch('/ui/job/load', { method: 'POST', body: fd });
   const data = await resp.json();

@@ -808,6 +808,10 @@ def ui_job_load():
     Live or Dry is the operator's choice for this run and has no default: a
     request without one is refused, never guessed. The DI check comes from the
     part itself.
+
+    `start_stud` resumes a part that faulted partway. Blank, 0 and 1 all start
+    at the first stud; anything that isn't one of the part's studs is refused
+    by JobManager.load(), not rounded to one.
     """
     part_id = (request.form.get("recipe_id") or request.form.get("part_id") or "").strip()
     try:
@@ -848,6 +852,7 @@ def ui_job_load():
             dsc_enabled=recipe.get("dsc_enabled", False),
             stud_reload_ms=recipe.get("stud_reload_ms"),
             origin_corner=recipe["origin_corner"],
+            start_stud=request.form.get("start_stud"),
         )
     except JobError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 409

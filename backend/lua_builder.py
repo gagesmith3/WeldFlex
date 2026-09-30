@@ -283,6 +283,8 @@ class BuiltProgram:
     # to tell a real caller-file sample from an aliased sub-file one. See
     # CycleTracker's docstring.
     program_line_count: int = 0
+    # The stud the first cycle starts at, counted from 1 (parse_start_stud).
+    start_stud: int = 1
 
 
 def format_number(value: float | int) -> str:
@@ -344,6 +346,30 @@ def _gate_rows(gate_mode: str, indent: str, gate_di: int, gate_timeout_ms: int) 
             f"{indent}end",
         ]
     return [f"{indent}-- Inter-cycle gate: none (gate_mode=none)."]
+
+
+def parse_start_stud(value: int | str | None, stud_count: int) -> int:
+    """The stud the first cycle starts at, counted from 1.
+
+    The run modal's Starting Stud field defaults to 0, so 0, 1 and nothing at
+    all mean the same thing: start at the first stud. Anything that is not a
+    stud on the part is refused rather than clamped — a resume that quietly
+    started somewhere else would weld over studs that are already there.
+    """
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return 1
+    try:
+        # int() would truncate 4.7 and accept True; neither is a stud number.
+        if isinstance(value, (bool, float)):
+            raise ValueError
+        start = int(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"Starting stud must be a whole number, got {value!r}") from None
+    if start < 0:
+        raise ValueError(f"Starting stud can't be negative, got {start}")
+    if start > 1 and start > stud_count:
+        raise ValueError(f"Starting stud {start} is past the part's last stud ({stud_count})")
+    return max(1, start)
 
 
 def _indent_of(line: str) -> str:
@@ -424,10 +450,15 @@ def build_weldflex_lua(
     stud_reload_ms: int | float | None = None,
     origin_corner: str = DEFAULT_CORNER,
     corner_ref: CornerRef | None = None,
+    start_stud: int | str | None = 0,
 ) -> BuiltProgram:
     """Substitute the template's markers and report the generated line numbers.
 
     `run_mode` has no default on purpose: every caller states live or dry.
+
+    `start_stud` resumes a part that faulted partway: the first cycle starts
+    at that stud (counted from 1, in the part's own stud order) and every
+    later cycle runs them all. 0 and 1 both start at the first stud.
 
     `studs` are as the part stores them, measured inward from `origin_corner`.
     They are resolved to offsets from zerozero here, once, so the program's
@@ -444,6 +475,7 @@ def build_weldflex_lua(
         raise ValueError(f"cycles must be >= 1, got {cycles}")
     studs = resolve_studs(studs, origin_corner, corner_ref)
     check_base_keepout(studs)
+    start_stud_val = parse_start_stud(start_stud, len(studs))
 
     path = Path(template_path) if template_path else TEMPLATE_PATH
     if not path.is_file():
@@ -475,6 +507,7 @@ def build_weldflex_lua(
     boundary_seen = False
     feed_pulse_seen = False
     run_mode_seen = False
+    start_stud_seen = False
 
     for line in template_lines:
         indent = _indent_of(line)
@@ -482,6 +515,9 @@ def build_weldflex_lua(
             out.extend(_stud_rows(studs, indent, dynamic_legs))
         elif "--{{CYCLE_COUNT}}" in line:
             out.append(f"{indent}cycleCount = {cycles}")
+        elif "--{{START_STUD}}" in line:
+            out.append(f"{indent}START_STUD = {start_stud_val}")
+            start_stud_seen = True
         elif "--{{BOUNDARY_MS}}" in line:
             out.append(f"{indent}BOUNDARY_MS = {dwell_ms}")
             boundary_seen = True
@@ -537,6 +573,7 @@ def build_weldflex_lua(
             ("--{{BOUNDARY_MS}}", boundary_seen),
             ("--{{FEED_PULSE_MS}}", feed_pulse_seen),
             ("--{{RUN_MODE}}", run_mode_seen),
+            ("--{{START_STUD}}", start_stud_seen),
         )
         if not value
     ]
@@ -558,6 +595,7 @@ def build_weldflex_lua(
         gate_mode=gate_mode,
         program_line_count=len(out),
         boundary_ms=dwell_ms,
+        start_stud=start_stud_val,
     )
 
 

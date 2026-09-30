@@ -44,6 +44,7 @@ from lua_builder import (
     RunMode,
     build_single_shot_lua,
     build_weldflex_lua,
+    parse_start_stud,
     strip_lua_comments,
 )
 import fault_codes
@@ -257,6 +258,8 @@ class JobSnapshot:
     arm_mode: str = "dry"
     di_check: bool = True
     stud_count: int = 0
+    # The stud the first cycle starts at, counted from 1. Above 1 is a resume.
+    start_stud: int = 1
     cycles_target: int = 0
     cycles_done: int = 0
     pressure_setting: str | None = None
@@ -312,6 +315,7 @@ class _Session:
     arm_mode: str = "dry"
     di_check: bool = True
     cycles_target: int = 0
+    start_stud: int = 1
     safe_z: float = 60.0
     retract_z: float = 10.0
     part_z: float = 0.0
@@ -410,14 +414,19 @@ class JobManager:
         dsc_enabled: bool = False,
         stud_reload_ms: int | None = None,
         origin_corner: str = DEFAULT_CORNER,
+        start_stud: int | str | None = 0,
     ) -> JobSnapshot:
         """Queue a part (or a single shot) for running.
 
         What the caller passes, grouped by where it comes from:
 
-        * **This run** — `cycles` and `arm_mode` ("live" or "dry"). `arm_mode`
-          has no default: the operator picks it every run, and a caller that
-          forgets gets a TypeError rather than a guess.
+        * **This run** — `cycles`, `arm_mode` ("live" or "dry") and
+          `start_stud`. `arm_mode` has no default: the operator picks it every
+          run, and a caller that forgets gets a TypeError rather than a guess.
+          `start_stud` resumes a part that faulted partway: the first cycle
+          starts at that stud, counted from 1, and later cycles run them all.
+          0 (the default) and 1 both start at the first stud; a number past
+          the part's last stud is refused.
         * **The recipe** — `di_check` (False skips the DI0/DI1 checks, live
           runs included), plus the geometry and press settings from `safe_z`
           on down. `origin_corner` is the bed corner the studs are measured
@@ -448,6 +457,7 @@ class JobManager:
                 corner_ref = read_corner_ref(origin_corner,
                                              lambda name: self._robot.teach_point_pose(name))
                 check_base_keepout(resolve_studs(studs, origin_corner, corner_ref))
+            start_stud = parse_start_stud(start_stud, len(studs))
         except ValueError as exc:
             raise JobError(str(exc)) from None
         cycles = max(1, int(cycles))
@@ -467,6 +477,7 @@ class JobManager:
                 arm_mode=arm_mode,
                 di_check=di_check,
                 cycles_target=cycles,
+                start_stud=start_stud,
                 safe_z=float(safe_z),
                 retract_z=float(retract_z),
                 part_z=float(part_z),
@@ -481,14 +492,14 @@ class JobManager:
             )
             snap = self._snapshot_locked()
         log.info("job loaded run_id=%s kind=%s part=%r cycles=%d gate=%s arm=%s di_check=%s "
-                 "origin=%s corner_ref=(%.1f, %.1f) studs=%d",
+                 "origin=%s corner_ref=(%.1f, %.1f) studs=%d start_stud=%d",
                  run_id, kind, part_name, cycles, gate_mode, arm_mode, di_check,
-                 origin_corner, corner_ref.x_mm, corner_ref.y_mm, len(studs))
+                 origin_corner, corner_ref.x_mm, corner_ref.y_mm, len(studs), start_stud)
         self._event(run_id, "load", {"part_id": part_id, "part_name": part_name,
                                      "kind": kind, "cycles": cycles, "gate_mode": gate_mode,
                                      "arm_mode": arm_mode, "di_check": di_check,
                                      "origin_corner": origin_corner,
-                                     "studs": len(studs)})
+                                     "studs": len(studs), "start_stud": start_stud})
         return snap
 
     def start(self) -> JobSnapshot:
@@ -727,6 +738,7 @@ class JobManager:
             arm_mode=sess.arm_mode,
             di_check=sess.di_check,
             stud_count=len(sess.studs),
+            start_stud=sess.start_stud,
             cycles_target=sess.cycles_target,
             cycles_done=sess.cycles_done,
             pressure_setting=sess.pressure_setting,
@@ -768,6 +780,7 @@ class JobManager:
                 stud_reload_ms = sess.stud_reload_ms
                 origin_corner = sess.origin_corner
                 corner_ref = sess.corner_ref
+                start_stud = sess.start_stud
 
             ft_config = self._robot.ft_config()
             if ft_config.get("company") != 24 or ft_config.get("device") != 0:
@@ -815,6 +828,7 @@ class JobManager:
                     stud_reload_ms=stud_reload_ms,
                     origin_corner=origin_corner,
                     corner_ref=corner_ref,
+                    start_stud=start_stud,
                 )
 
             tmp_dir = tempfile.mkdtemp()
@@ -1179,6 +1193,7 @@ class JobManager:
                 "arm_mode": sess.arm_mode,
                 "di_check": sess.di_check,
                 "stud_count": len(sess.studs),
+                "start_stud": sess.start_stud,
                 "cycles_target": sess.cycles_target,
                 "cycles_done": sess.cycles_done,
                 "started_at": sess.started_at,

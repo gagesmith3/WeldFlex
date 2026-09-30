@@ -109,6 +109,65 @@ def test_job_load_ignores_a_legacy_saved_arm_mode(run_app):
     assert "arm_mode" not in run_app.read()[0]
 
 
+def test_job_load_passes_the_starting_stud_through_untouched(run_app):
+    """The route does not parse it: JobManager.load() knows the stud count and
+    refuses a bad one, where a route-side fallback would quietly start at 1."""
+    run_app.write([_recipe()])
+    run_app.client.post("/ui/job/load",
+                        data={"recipe_id": "part-1", "arm_mode": "dry", "start_stud": "7"})
+    run_app.client.post("/ui/job/load", data={"recipe_id": "part-1", "arm_mode": "dry"})
+    (_, resumed), (_, plain) = run_app.job.loads
+    assert resumed["start_stud"] == "7"
+    assert plain["start_stud"] is None
+
+
+def test_job_load_reports_a_refused_starting_stud(run_app, monkeypatch):
+    run_app.write([_recipe()])
+
+    def refuse(*args, **kwargs):
+        raise run_app.module.JobError("Starting stud 7 is past the part's last stud (1)")
+
+    monkeypatch.setattr(run_app.job, "load", refuse)
+    response = run_app.client.post(
+        "/ui/job/load", data={"recipe_id": "part-1", "arm_mode": "dry", "start_stud": "7"}
+    )
+    assert response.status_code == 409
+    assert response.get_json() == {
+        "ok": False, "error": "Starting stud 7 is past the part's last stud (1)"
+    }
+
+
+def test_the_run_modal_asks_for_a_starting_stud_that_defaults_to_zero(run_app):
+    """Typed on the kiosk's number pad, so it needs data-kbd and must be a text
+    field: the pad writes .value directly. Run buttons carry the stud count the
+    modal checks the number against."""
+    run_app.write([_recipe(studs=[{"x": 10, "y": 20}, {"x": 30, "y": 40}, {"x": 50, "y": 60}])])
+    html = run_app.client.get("/operator/parts").get_data(as_text=True)
+    field = re.search(r'<input[^>]*\bid="run-modal-start-stud"[^>]*>', html)
+    assert field, "the run modal has no Starting Stud field"
+    for attribute in ('type="text"', 'name="start_stud"', 'value="0"', 'data-kbd="num"'):
+        assert attribute in field.group(0)
+    assert re.search(r'<button[^>]*\bjs-table-run\b[^>]*\bdata-stud-count="3"', html)
+    assert "fd.append('start_stud', startStud)" in html
+
+
+def test_the_job_panel_says_when_a_run_is_resumed(run_app):
+    """On the Cycles card, not beside LIVE and DI OFF: a third tag in that row
+    is clipped to an ellipsis on the kiosk, and a resume nobody can see is the
+    one thing this tag exists to prevent."""
+    from job_manager import JobSnapshot
+
+    queued = dict(state="queued", run_id="r1", part_name="Bracket", cycles_target=1,
+                  arm_mode="live", di_check=False)
+    with run_app.module.app.test_request_context("/operator"):
+        resumed = run_app.module._job_panel(JobSnapshot(**queued, start_stud=12))
+        plain = run_app.module._job_panel(JobSnapshot(**queued))
+    assert "from stud" not in plain
+    tag = resumed.index("from stud 12")
+    assert resumed.index("Cycles") < tag < resumed.index("Force Sensor")
+    assert resumed.index("DI off") < resumed.index("Cycles")
+
+
 def test_job_load_refuses_the_single_shot_record(run_app):
     run_app.write([_recipe(id="shot", name="Single Shot", system="single_shot")])
     response = run_app.client.post("/ui/job/load", data={"recipe_id": "shot", "arm_mode": "dry"})

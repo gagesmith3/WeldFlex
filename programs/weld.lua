@@ -119,7 +119,12 @@ local USE_PRESS_COLL_OFF   = 1
 local PRESS_COLL_OFF_LEVEL = 10
 
 -- ===== Retract =====
-local RETRACT_SPEED = 10
+-- A Lin percentage, capped again by the pendant's Auto Speed. Raised from 10 on
+-- 2026-09-30 as a trial: at 10 a welded stud sometimes stayed in the chuck long
+-- enough to bring the plate up with it and trip "Force sensor range threshold
+-- reached", and the same stud then came off clean on a manual jog straight up.
+-- 25 matches WeldFlex.lua's default travel speed. Not yet run live.
+local RETRACT_SPEED = 25
 
 
 -- =========================================

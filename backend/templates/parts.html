@@ -33,12 +33,12 @@
       </div>
       <div>
         {# Resumes a part that faulted partway: the next stud after the last one
-           welded. 0 (the default) and 1 both start at the first stud. Text, not
-           number: the kiosk's pad writes .value directly. #}
+           welded. Studs count from 1, so 1 (the default) is the whole part.
+           Text, not number: the kiosk's pad writes .value directly. #}
         <label class="run-modal-label" for="run-modal-start-stud">Starting stud</label>
         <input type="text" id="run-modal-start-stud" name="start_stud"
                class="pd-create-input run-modal-cycles-input"
-               value="0" inputmode="none" data-kbd="num" autocomplete="off"
+               value="1" inputmode="none" data-kbd="num" autocomplete="off"
                oninput="runModalSync()">
       </div>
     </div>
@@ -84,7 +84,7 @@ document.querySelectorAll('.js-table-run').forEach(function(btn) {
     _runStudCount = parseInt(btn.dataset.studCount, 10) || 0;
     document.getElementById('run-modal-part-name').textContent = btn.dataset.recipeName;
     document.getElementById('run-modal-cycles').value = '1';
-    document.getElementById('run-modal-start-stud').value = '0';
+    document.getElementById('run-modal-start-stud').value = '1';
     document.getElementById('run-modal-di-note').hidden = btn.dataset.diCheck !== '0';
     runModalPickArm(null);
     document.getElementById('run-modal').removeAttribute('hidden');
@@ -103,10 +103,10 @@ function runModalPickArm(mode) {
   runModalSync();
 }
 // The stud the first cycle starts at, or null when the field isn't one of this
-// part's studs. 0 (the default), 1 and blank all start at the first stud.
+// part's studs. 1 is the default; a cleared field and 0 are read as 1 too.
 function runModalStartStud() {
   const raw = document.getElementById('run-modal-start-stud').value.trim();
-  if (raw === '') return 0;
+  if (raw === '') return 1;
   if (!/^\d+$/.test(raw)) return null;
   const start = parseInt(raw, 10);
   return start <= Math.max(1, _runStudCount) ? start : null;

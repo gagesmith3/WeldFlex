@@ -42,7 +42,7 @@ directly, and no run state lives in `app.py`.
 2. **Prompted for cycle count, starting stud and Live or Dry** — the
    `#run-modal` block in [`parts.html`](../backend/templates/parts.html).
    Neither mode is preselected; Run stays disabled until one is tapped.
-   Starting stud defaults to 0 and is only changed to resume a part that
+   Starting stud defaults to 1 and is only changed to resume a part that
    faulted partway (see below).
 3. **Job is loaded into the Job Manager** — `POST /ui/job/load` in
    [`app.py`](../backend/app.py) calls `JobManager.load()`, which queues the
@@ -109,8 +109,9 @@ Consequences worth knowing:
   mean deleting the studs already welded from the recipe. The run modal's
   Starting Stud is the stud to start at, counted from 1 in the part's own stud
   order: the next one after the last stud welded. `lua_builder.parse_start_stud`
-  reads 0 (the field's default), 1 and blank as "the first stud" and refuses
-  anything that isn't a stud on the part rather than clamping it.
+  takes 1, the field's default, as the whole part, reads 0 and blank the same
+  way, and refuses anything that isn't a stud on the part rather than clamping
+  it.
   `--{{START_STUD}}` publishes it and `WeldFlex.lua` starts **the first cycle
   only** there; every later cycle welds the whole list, since those are new
   parts. The job panel and the run history carry a "from stud N" tag. It is a

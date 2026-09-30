@@ -351,10 +351,10 @@ def _gate_rows(gate_mode: str, indent: str, gate_di: int, gate_timeout_ms: int) 
 def parse_start_stud(value: int | str | None, stud_count: int) -> int:
     """The stud the first cycle starts at, counted from 1.
 
-    The run modal's Starting Stud field defaults to 0, so 0, 1 and nothing at
-    all mean the same thing: start at the first stud. Anything that is not a
-    stud on the part is refused rather than clamped — a resume that quietly
-    started somewhere else would weld over studs that are already there.
+    1 is the run modal's default and means the whole part. A cleared field and
+    0 are read as 1 too, since neither can mean anything else. Anything that is
+    not a stud on the part is refused rather than clamped — a resume that
+    quietly started somewhere else would weld over studs that are already there.
     """
     if value is None or (isinstance(value, str) and not value.strip()):
         return 1
@@ -450,7 +450,7 @@ def build_weldflex_lua(
     stud_reload_ms: int | float | None = None,
     origin_corner: str = DEFAULT_CORNER,
     corner_ref: CornerRef | None = None,
-    start_stud: int | str | None = 0,
+    start_stud: int | str | None = 1,
 ) -> BuiltProgram:
     """Substitute the template's markers and report the generated line numbers.
 
@@ -458,7 +458,7 @@ def build_weldflex_lua(
 
     `start_stud` resumes a part that faulted partway: the first cycle starts
     at that stud (counted from 1, in the part's own stud order) and every
-    later cycle runs them all. 0 and 1 both start at the first stud.
+    later cycle runs them all. The default, 1, is the whole part.
 
     `studs` are as the part stores them, measured inward from `origin_corner`.
     They are resolved to offsets from zerozero here, once, so the program's

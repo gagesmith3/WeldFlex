@@ -414,7 +414,7 @@ class JobManager:
         dsc_enabled: bool = False,
         stud_reload_ms: int | None = None,
         origin_corner: str = DEFAULT_CORNER,
-        start_stud: int | str | None = 0,
+        start_stud: int | str | None = 1,
     ) -> JobSnapshot:
         """Queue a part (or a single shot) for running.
 
@@ -425,8 +425,8 @@ class JobManager:
           run, and a caller that forgets gets a TypeError rather than a guess.
           `start_stud` resumes a part that faulted partway: the first cycle
           starts at that stud, counted from 1, and later cycles run them all.
-          0 (the default) and 1 both start at the first stud; a number past
-          the part's last stud is refused.
+          The default, 1, is the whole part (0 and blank are read as 1); a
+          number past the part's last stud is refused.
         * **The recipe** — `di_check` (False skips the DI0/DI1 checks, live
           runs included), plus the geometry and press settings from `safe_z`
           on down. `origin_corner` is the bed corner the studs are measured

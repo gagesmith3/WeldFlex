@@ -809,8 +809,8 @@ def ui_job_load():
     request without one is refused, never guessed. The DI check comes from the
     part itself.
 
-    `start_stud` resumes a part that faulted partway. Blank, 0 and 1 all start
-    at the first stud; anything that isn't one of the part's studs is refused
+    `start_stud` resumes a part that faulted partway. 1, the modal's default,
+    is the whole part; anything that isn't one of the part's studs is refused
     by JobManager.load(), not rounded to one.
     """
     part_id = (request.form.get("recipe_id") or request.form.get("part_id") or "").strip()

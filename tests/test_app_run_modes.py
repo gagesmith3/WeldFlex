@@ -137,16 +137,19 @@ def test_job_load_reports_a_refused_starting_stud(run_app, monkeypatch):
     }
 
 
-def test_the_run_modal_asks_for_a_starting_stud_that_defaults_to_zero(run_app):
-    """Typed on the kiosk's number pad, so it needs data-kbd and must be a text
-    field: the pad writes .value directly. Run buttons carry the stud count the
-    modal checks the number against."""
+def test_the_run_modal_asks_for_a_starting_stud_that_defaults_to_the_first(run_app):
+    """Studs count from 1, so the default is 1, not the 0 it first shipped with
+    (owner, 2026-09-30). Typed on the kiosk's number pad, so it needs data-kbd
+    and must be a text field: the pad writes .value directly. Run buttons carry
+    the stud count the modal checks the number against."""
     run_app.write([_recipe(studs=[{"x": 10, "y": 20}, {"x": 30, "y": 40}, {"x": 50, "y": 60}])])
     html = run_app.client.get("/operator/parts").get_data(as_text=True)
     field = re.search(r'<input[^>]*\bid="run-modal-start-stud"[^>]*>', html)
     assert field, "the run modal has no Starting Stud field"
-    for attribute in ('type="text"', 'name="start_stud"', 'value="0"', 'data-kbd="num"'):
+    for attribute in ('type="text"', 'name="start_stud"', 'value="1"', 'data-kbd="num"'):
         assert attribute in field.group(0)
+    # Reopening the modal puts it back to 1, whatever the last run used.
+    assert "getElementById('run-modal-start-stud').value = '1'" in html
     assert re.search(r'<button[^>]*\bjs-table-run\b[^>]*\bdata-stud-count="3"', html)
     assert "fd.append('start_stud', startStud)" in html
 

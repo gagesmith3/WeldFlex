@@ -313,10 +313,11 @@ def _indent(line):
     return len(line) - len(line.lstrip())
 
 
-@pytest.mark.parametrize("start", [0, 1, None, "", "0", " 1 "])
+@pytest.mark.parametrize("start", [1, "1", " 1 ", None, "", 0, "0"])
 def test_a_run_starts_at_the_first_stud_unless_told_otherwise(start):
-    """The run modal's Starting Stud defaults to 0, which is not a stud number:
-    0, 1 and a blank field all have to build the same whole-part program."""
+    """The run modal's Starting Stud defaults to 1. A cleared field and 0 are
+    not stud numbers and can only mean the same thing, so all of them have to
+    build the same whole-part program."""
     studs = [{"x": i, "y": i} for i in range(4)]
     built = build_weldflex_lua(studs, cycles=1, run_mode=LIVE, start_stud=start)
     assert "START_STUD = 1" in _lines(built)

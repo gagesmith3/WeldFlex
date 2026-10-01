@@ -751,7 +751,8 @@ def test_retract_uses_the_trial_pull_off_speed():
     """At 10 a welded stud sometimes stayed in the chuck, lifted the plate and
     tripped "Force sensor range threshold reached", while a manual jog straight up
     pulled the same stud off clean (2026-09-30). 25 is a trial of a quicker
-    pull-off, not yet run live."""
+    pull-off. Resistance dropped on 2026-10-01, but zerozero was re-taught at the
+    same time, so don't read that as proof the speed did it."""
     weld = WELD_PATH.read_text(encoding="utf-8")
     match = re.search(r"^local RETRACT_SPEED\s*=\s*([\d.]+)", weld, re.M)
     assert match, "weld.lua no longer declares RETRACT_SPEED"

@@ -123,7 +123,9 @@ local PRESS_COLL_OFF_LEVEL = 10
 -- 2026-09-30 as a trial: at 10 a welded stud sometimes stayed in the chuck long
 -- enough to bring the plate up with it and trip "Force sensor range threshold
 -- reached", and the same stud then came off clean on a manual jog straight up.
--- 25 matches WeldFlex.lua's default travel speed. Not yet run live.
+-- 25 matches WeldFlex.lua's default travel speed. Live since that day; on
+-- 2026-10-01 the pull-off had less resistance, but zerozero had just been
+-- re-taught too, so which change helped is unknown. See docs/weldNotes.md.
 local RETRACT_SPEED = 25
 
 

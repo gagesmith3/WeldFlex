@@ -109,7 +109,7 @@ for cycleIndex = 1, cycleCount do --{{LOOP_START}}
         end
 
         -- Straight down to the Search Height. weld.lua searches down tool Z from
-        -- here and retracts back to this same pose.
+        -- here and lifts straight back up to this height from wherever it pressed.
         if travelZ ~= PARK_Z then
             PointsOffsetEnable(0, weldX, weldY, PARK_Z, 0, 0, 0)
             Lin(zerozero, speed, -1, 0, 0)

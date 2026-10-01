@@ -841,6 +841,26 @@ def test_retract_uses_the_trial_pull_off_speed():
     assert float(match.group(1)) == 5.0
 
 
+def test_retract_lifts_straight_up_from_where_the_head_is():
+    """The retract used to Lin back to the park pose, retracing the tool-Z descent,
+    so a head out of square with the bed pulled the chuck off at a tilt. About
+    3 lbf sideways on the chuck trips the sensor (owner, 2026-10-01). It now lifts
+    straight up the workpiece Z from the head's measured X/Y, as the Points page
+    does, using the drift from a reading taken at the park pose before anything
+    moves."""
+    code = strip_lua_comments(WELD_PATH.read_text(encoding="utf-8"))
+    depart = code.split("local function departFromStud()", 1)[1].split("local function ", 1)[0]
+    assert "now[1] - parkPose[1]" in depart and "now[2] - parkPose[2]" in depart
+    assert "liftX = weldX + dx" in depart and "liftY = weldY + dy" in depart
+    assert "PointsOffsetEnable(0, liftX, liftY, Z_CLEARANCE, 0, 0, 0)" in depart
+    assert "Lin(zerozero, RETRACT_SPEED, -1, 0, 0)" in depart
+    # Past the cap it falls back to the park pose, not to an unchecked reading.
+    assert "<= LIFT_MAX_DRIFT_MM * LIFT_MAX_DRIFT_MM" in depart
+
+    run = code.split("local function weldOneStud()", 1)[1]
+    assert run.index("parkPose = readPose()") < run.index("waitForWeldReady()")
+
+
 def test_a_fault_does_not_erase_which_collision_lever_took():
     """fault() runs forceControlOff() on its way out, which releases the collision
     guard. The release used to publish GUARD_RELEASED unconditionally, so every
@@ -1298,22 +1318,22 @@ def test_the_weld_jolt_reading_does_not_touch_the_arc_pulse_timing():
     assert "pub(SV_WELD_JOLT_TRAVEL, 0)" in reset
 
 
-def test_the_retract_retraces_the_descent_in_a_straight_line():
-    """The caller parks the torch at PART_Z + SAFE_Z over the stud, and
-    FT_FindSurface and FT_LinInsertion drive straight down tool Z from there
-    (FIND_RCS = 0), so a Lin back to that same pose retraces the descent exactly,
-    however askew the head is. PTP and MoveCart reach the same endpoint but
-    interpolate in joint space, which bows the lift off that line while the
-    collet is still on the stud. This is not the fix for the "Force sensor range
-    threshold reached" fault at retract, which tripped on the Lin too (2026-09-15).
+def test_the_retract_is_a_straight_line():
+    """The lift is a Lin: PTP and MoveCart interpolate in joint space, which bows
+    the path sideways while the collet is still on the stud. Until 2026-10-01 it
+    was a Lin back to the park pose, retracing the tool-Z descent; it now lifts
+    straight up the workpiece Z from the head's measured X/Y (see
+    test_retract_lifts_straight_up_from_where_the_head_is), keeping the park pose
+    as the fallback.
     """
     code = strip_lua_comments(WELD_PATH.read_text(encoding="utf-8"))
 
     depart = code.split("local function departFromStud()", 1)[1].split(
         "local FAULT_BEACON_MS", 1
     )[0]
-    assert "PointsOffsetEnable(0, weldX, weldY, Z_CLEARANCE, 0, 0, 0)" in depart, \
-        "the lift must end at the pose the caller parked at, not somewhere new"
+    assert "local liftX, liftY = weldX, weldY" in depart, \
+        "without a usable reading the lift must end at the pose the caller parked at"
+    assert "PointsOffsetEnable(0, liftX, liftY, Z_CLEARANCE, 0, 0, 0)" in depart
     assert "Lin(zerozero, RETRACT_SPEED, -1, 0, 0)" in depart
     assert "PointsOffsetDisable()" in depart
     assert "PTP(" not in code and "MoveCart(" not in code, \

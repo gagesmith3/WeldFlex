@@ -131,6 +131,12 @@ local PRESS_COLL_OFF_LEVEL = 10
 -- descent speed. See docs/weldNotes.md.
 local RETRACT_SPEED = 5
 
+-- How far the head may read off the park pose's X/Y at the retract before the
+-- straight-up lift stops trusting the reading (see departFromStud()). A real
+-- drift is the descent's depth times tool Z's tilt off the bed's vertical, about
+-- 1 mm for 2 degrees over 30 mm, so 10 mm means something other than tilt.
+local LIFT_MAX_DRIFT_MM = 10.0
+
 
 -- =========================================
 -- Telemetry Definitions
@@ -259,27 +265,62 @@ local function readToolZ()
     return p[3]
 end
 
--- ===== Departure Along The Approach Axis =====
+local function readPose()
+    if type(GetActualTCPPose) ~= "function" then return nil end
+    local p = GetActualTCPPose()
+    if type(p) ~= "table" then return nil end
+    if type(p[1]) ~= "number" or type(p[2]) ~= "number" then return nil end
+    return p
+end
+
+-- ===== Departure: Straight Up Off The Bed =====
+-- The lift goes straight up the workpiece Z from wherever the head actually is,
+-- the way the Points page lifts (backend/point_moves.py): only Z changes. A side
+-- load on the chuck trips the sensor's moment limit almost at once (owner,
+-- 2026-10-01: about 3 lbf pushed sideways on the chuck faults it), so the lift
+-- must not drag the chuck sideways off the stud.
+--
 -- The caller parks the torch at zerozero + (weldX, weldY, Z_CLEARANCE) in the
--- workpiece frame, and FT_FindSurface and FT_LinInsertion then drive the stud
--- straight down tool Z from there (FIND_RCS = 0) without turning it. So the
--- pressed pose lies on a straight tool-Z line from the park pose, however far the
--- head sits out of square with the bed, and a Lin back to the park pose retraces
--- that line exactly.
+-- workpiece frame, and FT_FindSurface and FT_LinInsertion then drive straight down
+-- tool Z (FIND_RCS = 0). If zerozero's taught orientation leaves tool Z off the
+-- bed's vertical, the pressed head ends up beside the park pose's X/Y. Until
+-- 2026-10-01 the retract was a Lin back to the park pose, which retraced tool Z
+-- and so pulled at that same tilt.
 --
--- PTP and MoveCart reach the same endpoint but interpolate in joint space, which
--- bows the path off that line while the collet is still on the stud.
+-- The head's offset is measured, not assumed: GetActualTCPPose at the park pose
+-- (weldOneStud(), before anything moves) and again here. Only the difference is
+-- used, so the reading's origin cancels out. It must share the workpiece frame's
+-- axes, the same assumption the Points page makes. With either reading missing,
+-- or the head more than LIFT_MAX_DRIFT_MM off the park pose, it falls back to the
+-- old Lin back to the park pose.
 --
--- Straightening the lift did not stop the resettable "Force sensor range
--- threshold reached" fault at retract. It tripped on this Lin (live Single Shots,
--- 2026-09-15) as it had before, so its cause is not the lift path. See
--- docs/weldNotes.md.
+-- A Lin, not PTP or MoveCart: those interpolate in joint space, which bows the
+-- path while the collet is still on the stud.
 --
 -- Every departure from a stud goes through here, faults included: a fault
 -- during press leaves the collet on the stud exactly like a good weld does.
+local parkPose = nil
+
 local function departFromStud()
+    local liftX, liftY = weldX, weldY
+    local now = readPose()
+    if parkPose ~= nil and now ~= nil then
+        local dx = now[1] - parkPose[1]
+        local dy = now[2] - parkPose[2]
+        if dx * dx + dy * dy <= LIFT_MAX_DRIFT_MM * LIFT_MAX_DRIFT_MM then
+            liftX = weldX + dx
+            liftY = weldY + dy
+            print(string.format("[WELD] Lifting straight up from %.3f, %.3f mm off the park pose.", dx, dy))
+        else
+            print(string.format("[WELD] WARNING: head reads %.1f, %.1f mm off the park pose; " ..
+                "retracing the descent instead of lifting straight up.", dx, dy))
+        end
+    else
+        print("[WELD] WARNING: no pose reading; retracing the descent instead of lifting straight up.")
+    end
+
     -- flag=0: workpiece frame, matching WeldFlex.lua's traverse (see its comment).
-    PointsOffsetEnable(0, weldX, weldY, Z_CLEARANCE, 0, 0, 0)
+    PointsOffsetEnable(0, liftX, liftY, Z_CLEARANCE, 0, 0, 0)
     Lin(zerozero, RETRACT_SPEED, -1, 0, 0)
     PointsOffsetDisable()
 end
@@ -609,6 +650,10 @@ local function weldOneStud()
 
     pub(SV_PHASE, PH_ENTER)
     pub(SV_LAST_RET, 0)
+
+    -- Still at the caller's park pose: the reference departFromStud() measures
+    -- the head's drift from.
+    parkPose = readPose()
 
     pressZ0 = nil
     pub(SV_PRESS_Z0, 0)

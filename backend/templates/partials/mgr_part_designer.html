@@ -298,6 +298,29 @@
           </div>
         </div>
         <p class="pds-note is-warn" id="pds-di-note" hidden>DI check is off for this part: DI0 welder ready and DI1 stud on work are not checked, on live runs too.</p>
+        <div class="pds-row">
+          <div class="pds-field">
+            <label for="pd-modal-fixed-z" class="pds-label">Fixed Z Depth</label>
+            <label class="pds-switch">
+              <input type="checkbox" id="pd-modal-fixed-z" aria-describedby="pd-modal-fixed-z-hint">
+              <span class="pds-switch-track" aria-hidden="true"></span>
+              <span class="pds-switch-state" aria-hidden="true"></span>
+            </label>
+            <p class="pds-hint" id="pd-modal-fixed-z-hint">Plunges to Weld Z by position instead of pressing to a force.</p>
+          </div>
+          <div class="pds-field">
+            <label for="pd-modal-weld-z" class="pds-label">Weld Z</label>
+            <div class="pds-input-wrap">
+              <!-- min = lua_builder.WELD_Z_MIN (mm); scaled for inches in pdsReadForm. -->
+              <input type="number" id="pd-modal-weld-z" class="pds-input" step="0.1" data-min-mm="-10" inputmode="none" data-kbd="num"
+                     aria-describedby="pd-modal-weld-z-hint pd-modal-weld-z-error">
+              <span class="pds-suffix pd-length-unit">mm</span>
+            </div>
+            <p class="pds-hint" id="pd-modal-weld-z-hint">From Part Z; negative is below the surface. A stud can override it.</p>
+            <p class="pds-error" id="pd-modal-weld-z-error"></p>
+          </div>
+        </div>
+        <p class="pds-note is-warn" id="pds-fixed-z-note" hidden>Fixed Z uses no force sensing: a wrong Weld Z drives the gun into the part with collision detection raised.</p>
       </section>
 
       <!-- Motion: how fast the arm travels between studs and home. -->

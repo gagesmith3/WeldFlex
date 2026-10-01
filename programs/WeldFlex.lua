@@ -11,6 +11,8 @@ RETRACT_Z = 60.0 --{{RETRACT_Z}}
 SEARCH_Z = 10.0 --{{SEARCH_Z}}
 PART_Z = 0.0 --{{PART_Z}}
 PRESS_LBF = 20.0 --{{PRESS_LBF}}
+-- Fixed-Z depth below PART_Z; only weld_depth.lua reads it.
+WELD_Z = -2.0 --{{WELD_Z}}
 FT_SENSOR_NUM = 1 --{{FT_SENSOR_NUM}}
 STUD_TYPE = "M4" --{{STUD_TYPE}}
 SUBSTRATE = "Mild Steel" --{{SUBSTRATE}}
@@ -71,6 +73,7 @@ for cycleIndex = 1, cycleCount do --{{LOOP_START}}
         WELD_STUD_TYPE = STUD_TYPE
         WELD_SUBSTRATE = SUBSTRATE
         WELD_FEED_PULSE_MS = FEED_PULSE_MS
+        WELD_DEPTH_Z = PART_Z + (stud.weldZ or WELD_Z)
 
         -- Z and XY never move together: every move below is straight up,
         -- straight down, or level. The first stud of a cycle is reached level
@@ -119,9 +122,9 @@ for cycleIndex = 1, cycleCount do --{{LOOP_START}}
         lastWeldX = weldX
         lastWeldY = weldY
 
-        -- Execute single-stud weld sequence (search, press, weld, hold, retract, feed)
+        -- Execute single-stud weld sequence: weld.lua, or weld_depth.lua for a Fixed Z part
         WELD_FAULT = 0
-        NewDofile("/fruser/weld.lua", 1, 1)
+        NewDofile("/fruser/weld.lua", 1, 1) --{{WELD_SUB}}
         DofileEnd()
 
         if WELD_FAULT == 1 then

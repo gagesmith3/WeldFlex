@@ -321,6 +321,40 @@ def test_job_load_takes_all_three_heights_from_the_part(run_app):
     assert (kwargs["safe_z"], kwargs["retract_z"], kwargs["search_z"]) == (127.0, 38.1, 25.4)
 
 
+def test_recipe_save_sets_depth_mode_and_weld_z_and_keeps_them_when_omitted(run_app):
+    run_app.write([_recipe(search_z=10.0)])
+    form = {"recipe_id": "part-1", "recipe_name": "Bracket",
+            "studs_json": json.dumps([{"x": 10, "y": 20, "weld_z": "-3"}, {"x": 5, "y": 5, "weld_z": ""}])}
+    run_app.client.post("/ui/recipes/save", data={**form, "depth_mode": "fixed_z", "weld_z": "-1.5"})
+    saved = run_app.read()[0]
+    assert (saved["depth_mode"], saved["weld_z"]) == ("fixed_z", -1.5)
+    assert saved["studs"] == [{"x": 10, "y": 20, "weld_z": -3.0}, {"x": 5, "y": 5}]
+
+    run_app.client.post("/ui/recipes/save", data=form)
+    saved = run_app.read()[0]
+    assert (saved["depth_mode"], saved["weld_z"]) == ("fixed_z", -1.5)
+
+
+def test_recipe_save_refuses_a_fixed_z_depth_past_the_floor(run_app):
+    run_app.write([_recipe(search_z=10.0)])
+    response = run_app.client.post("/ui/recipes/save", data={
+        "recipe_id": "part-1", "recipe_name": "Bracket", "studs_text": "10,20",
+        "depth_mode": "fixed_z", "weld_z": "-12",
+    })
+    assert "below the part surface" in response.get_data(as_text=True)
+    assert "X-Recipe-Id" not in response.headers
+    assert "depth_mode" not in run_app.read()[0]
+
+
+def test_job_load_takes_depth_mode_and_weld_z_from_the_part(run_app):
+    run_app.write([_recipe(), _recipe(id="part-2", depth_mode="fixed_z", weld_z=-1.0)])
+    run_app.client.post("/ui/job/load", data={"recipe_id": "part-1", "arm_mode": "dry"})
+    run_app.client.post("/ui/job/load", data={"recipe_id": "part-2", "arm_mode": "dry"})
+    (_, plain), (_, fixed) = run_app.job.loads
+    assert (plain["depth_mode"], plain["weld_z"]) == ("force", -2.0)
+    assert (fixed["depth_mode"], fixed["weld_z"]) == ("fixed_z", -1.0)
+
+
 def test_job_manager_refuses_a_retract_z_below_the_search_height_at_load(run_app):
     job_manager = importlib.import_module("job_manager")
     manager = job_manager.JobManager.__new__(job_manager.JobManager)

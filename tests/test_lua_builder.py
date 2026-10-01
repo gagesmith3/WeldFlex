@@ -16,6 +16,9 @@ from lua_builder import (
     TEMPLATE_PATH,
     WELD_PATH,
     WELD_PROGRAM_NAME,
+    WELD_DEPTH_PATH,
+    WELD_DEPTH_PROGRAM_NAME,
+    WELD_Z_MIN,
     RunMode,
     build_io_monitor_lua,
     build_single_shot_lua,
@@ -1071,28 +1074,33 @@ def test_weld_phase_codes_agree_across_the_language_boundary():
     free to change.
     """
     weld = WELD_PATH.read_text(encoding="utf-8")
+    depth = WELD_DEPTH_PATH.read_text(encoding="utf-8")
     app_src = (WELD_PATH.parents[1] / "backend" / "app.py").read_text(encoding="utf-8")
 
-    lua_codes = {
-        int(m.group(2))
-        for m in re.finditer(r"^local (PH_\w+)\s*=\s*(\d+)", weld, re.M)
-        if m.group(1) != "PH_FAULT_BASE"
-    }
-    assert lua_codes, "weld.lua no longer declares PH_* phase codes"
+    def phase_codes(src):
+        return {
+            int(m.group(2))
+            for m in re.finditer(r"^local (PH_\w+)\s*=\s*(\d+)", src, re.M)
+            if m.group(1) != "PH_FAULT_BASE"
+        }
+
+    lua_codes = phase_codes(weld) | phase_codes(depth)
+    assert phase_codes(weld) and phase_codes(depth), "a weld sub-process no longer declares PH_* codes"
 
     table = app_src.split("_WELD_PHASES = {", 1)[1].split("}", 1)[0]
     py_codes = {int(m.group(1)) for m in re.finditer(r"^\s*(\d+):", table, re.M)}
 
     assert lua_codes == py_codes, (
-        f"phase codes drifted — only in weld.lua: {sorted(lua_codes - py_codes)}, "
+        f"phase codes drifted — only in the Lua: {sorted(lua_codes - py_codes)}, "
         f"only in app.py: {sorted(py_codes - lua_codes)}"
     )
 
     # The fault codes are 90 + beacon site, so the offset has to agree too.
-    lua_base = re.search(r"^local PH_FAULT_BASE\s*=\s*(\d+)", weld, re.M)
     py_base = re.search(r"^_WELD_FAULT_BASE = (\d+)", app_src, re.M)
-    assert lua_base and py_base, "the fault-code base is no longer declared on both sides"
-    assert lua_base.group(1) == py_base.group(1)
+    for src in (weld, depth):
+        lua_base = re.search(r"^local PH_FAULT_BASE\s*=\s*(\d+)", src, re.M)
+        assert lua_base and py_base, "the fault-code base is no longer declared on both sides"
+        assert lua_base.group(1) == py_base.group(1)
 
 
 def test_weld_telemetry_slots_and_press_budget_agree_across_the_language_boundary():
@@ -1723,5 +1731,86 @@ def test_single_shot_rejects_bad_gate_mode_or_cycles():
         build_single_shot_lua(0, 0, cycles=1, run_mode=LIVE, gate_mode="nope")
     with pytest.raises(ValueError):
         build_single_shot_lua(0, 0, cycles=0, run_mode=LIVE)
+
+
+# ---------------------------------------------------------------------------
+# Fixed Z (weld_depth.lua)
+# ---------------------------------------------------------------------------
+
+
+def test_force_mode_still_calls_weld_lua():
+    built = build_weldflex_lua([{"x": 1, "y": 2}], cycles=1, run_mode=LIVE)
+    assert 'NewDofile("/fruser/weld.lua", 1, 1)' in built.text
+    assert f'"/fruser/{WELD_DEPTH_PROGRAM_NAME}"' not in built.text
+    assert built.weld_program_name == WELD_PROGRAM_NAME
+    assert "--{{" not in built.text
+
+
+def test_fixed_z_mode_calls_weld_depth_lua_with_the_recipe_depth():
+    built = build_weldflex_lua([{"x": 1, "y": 2}], cycles=1, run_mode=LIVE,
+                               depth_mode="fixed_z", weld_z=-1.5)
+    assert f'NewDofile("/fruser/{WELD_DEPTH_PROGRAM_NAME}", 1, 1)' in built.text
+    assert 'NewDofile("/fruser/weld.lua"' not in built.text
+    assert built.weld_program_name == WELD_DEPTH_PROGRAM_NAME
+    assert "WELD_Z = -1.5" in _lines(built)
+    assert "WELD_DEPTH_Z = PART_Z + (stud.weldZ or WELD_Z)" in built.text
+
+
+def test_a_stud_weld_z_override_reaches_its_row():
+    built = build_weldflex_lua([{"x": 1, "y": 2, "weld_z": -3}, {"x": 4, "y": 5}],
+                               cycles=1, run_mode=LIVE, depth_mode="fixed_z")
+    assert "{x=1, y=2, weldZ=-3}," in built.text
+    assert "{x=4, y=5}," in built.text
+
+
+@pytest.mark.parametrize("weld_z", [WELD_Z_MIN - 0.1, 10.0, 25.0])
+def test_fixed_z_refuses_a_depth_too_deep_or_not_below_the_search_height(weld_z):
+    with pytest.raises(ValueError, match="Weld Z"):
+        build_weldflex_lua([{"x": 1, "y": 2}], cycles=1, run_mode=LIVE,
+                           depth_mode="fixed_z", weld_z=weld_z, search_z=10.0)
+
+
+def test_fixed_z_refuses_a_bad_stud_override():
+    with pytest.raises(ValueError, match="Stud 2 Weld Z"):
+        build_weldflex_lua([{"x": 1, "y": 2}, {"x": 3, "y": 4, "weld_z": -20}],
+                           cycles=1, run_mode=LIVE, depth_mode="fixed_z")
+
+
+def test_unknown_depth_mode_is_refused():
+    with pytest.raises(ValueError, match="depth mode"):
+        build_weldflex_lua([{"x": 1, "y": 2}], cycles=1, run_mode=LIVE, depth_mode="laser")
+
+
+def test_weld_depth_lua_uses_no_force_sensor_instruction():
+    code = strip_lua_comments(WELD_DEPTH_PATH.read_text(encoding="utf-8"))
+    assert not re.search(r"\bFT_\w+\s*\(", code)
+
+
+def test_weld_depth_lua_keeps_the_arming_and_di_gates():
+    code = strip_lua_comments(WELD_DEPTH_PATH.read_text(encoding="utf-8"))
+    assert "if WELD_ARMED ~= 1 then" in code
+    assert "WELD_DI_CHECK ~= 0" in code
+    assert "if WELD_RUN == 1 then" in code
+
+
+def test_weld_depth_lua_floor_matches_the_builder():
+    src = WELD_DEPTH_PATH.read_text(encoding="utf-8")
+    m = re.search(r"^local WELD_Z_MIN\s*=\s*(-?[\d.]+)", src, re.M)
+    assert m, "weld_depth.lua no longer declares WELD_Z_MIN"
+    assert float(m.group(1)) == WELD_Z_MIN
+
+
+def test_weld_depth_lua_plunges_once_in_the_workpiece_frame():
+    code = strip_lua_comments(WELD_DEPTH_PATH.read_text(encoding="utf-8"))
+    assert code.count("PointsOffsetEnable(0, weldX, weldY, WELD_DEPTH_Z, 0, 0, 0)") == 1
+    assert "Lin(zerozero, PLUNGE_SPEED, -1, 0, 0)" in code
+
+
+def test_fixed_z_program_stays_under_weld_depth_lua():
+    """Same NewDofile line-aliasing ceiling as weld.lua; see CycleTracker."""
+    built = build_weldflex_lua([{"x": 1, "y": 2}] * 5, cycles=3, run_mode=LIVE,
+                               depth_mode="fixed_z")
+    depth_lines = len(WELD_DEPTH_PATH.read_text(encoding="utf-8").splitlines())
+    assert built.program_line_count < depth_lines
 
 

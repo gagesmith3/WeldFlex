@@ -122,6 +122,16 @@ Consequences worth knowing:
   builds `programs/single_shot.lua` with `build_single_shot_lua`: one cycle,
   one target from the `"system": "single_shot"` record in `recipes.json`, no
   home moves, and the same `RUN_MODE` marker. `weld.lua` feeds after the shot.
+- **A part can weld at a fixed depth instead of a force** (2026-10-01, trial).
+  A recipe's `depth_mode` is `force` (default, `weld.lua`) or `fixed_z`, which
+  makes `--{{WELD_SUB}}` call `programs/weld_depth.lua` instead. That file uses
+  no `FT_*` instruction: it plunges by position to `PART_Z + weld_z` in wobj-2
+  (recipe `weld_z`, default −2 mm, or a stud's own `weld_z`), with collision
+  detection raised as for a press, then fires, holds, lifts and feeds like
+  `weld.lua`. `lua_builder.check_weld_z` refuses deeper than `WELD_Z_MIN`
+  (−10 mm) or not below the Search Height, at save, load and build. A fixed-Z
+  run skips the force-sensor config check at launch. Single Shot always uses
+  `weld.lua`.
 - **A stud is stored the way the part is measured, and inlined the way the
   robot needs it.** Each part saves an `origin_corner`, the bed corner it is
   tooled against, and its X/Y run inward from that corner so they are never

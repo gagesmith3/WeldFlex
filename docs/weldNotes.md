@@ -180,3 +180,14 @@ When target press force exceeds `PRESS_GUARD_MIN_N` (40 N / ~9 lbf):
 - **F/T Sensor**: Active and zeroed prior to execution (done via Calibration page).
 - **Stud Loaded**: Stud must be loaded in torch prior to cycle start (weld-then-feed pattern).
 - **Welder Integration**: Welder powered on, `DI0` ready line high, work return clamped (`DI1`).
+
+---
+
+## 8. Fixed Z Variant (`weld_depth.lua`)
+
+Trial alternative (2026-10-01), picked per recipe by `depth_mode = "fixed_z"`. Same input contract plus `WELD_DEPTH_Z`, the absolute wobj-2 Z to plunge to (`PART_Z + weld_z`, published per stud by `WeldFlex.lua`).
+
+- **Sequence**: DI0 wait → raise collision guard (always, no force threshold decides it) → one `Lin` at `PLUNGE_SPEED` (5%) to `WELD_DEPTH_Z` → `PLUNGE_SETTLE_MS` → DI1 check → fire → hold → guard off, straight-up lift → feed.
+- **No force sensing at all.** A wrong Weld Z drives the gun into the part with collision detection raised; the only guards are `WELD_Z_MIN` (−10 mm below Part Z, in both `lua_builder` and the Lua) and the depth having to be below the park height.
+- **Telemetry**: phases 35 (plunging) and 36 (settled); `s_var_4` carries the plunge travel; `s_var_8` is 0 (no press target). Fault site 6 is a depth out of range.
+- **Bring-up**: Dry run with DI check off at Weld Z 0 to confirm it lands on the surface, then step deeper.

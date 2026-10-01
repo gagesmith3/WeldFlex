@@ -28,10 +28,13 @@ from lua_builder import (
     IO_MONITOR_PROGRAM_NAME,
     WELD_PATH,
     WELD_PROGRAM_NAME,
+    WELD_Z_DEFAULT,
     build_io_monitor_lua,
     check_travel_heights,
+    check_weld_z,
     default_dsc_calibration,
     format_number,
+    parse_depth_mode,
     strip_lua_comments,
     _parse_pressure,
     STUD_RELOAD_MS_DEFAULT,
@@ -143,6 +146,29 @@ def _parse_stud_reload_ms(value):
         return STUD_RELOAD_MS_DEFAULT
     return max(STUD_RELOAD_MS_MIN, min(STUD_RELOAD_MS_MAX, reload_ms))
 
+def _saved_depth_mode(value):
+    try:
+        return parse_depth_mode(value)
+    except ValueError:
+        return 'force'
+
+def _parse_weld_z(value, default=WELD_Z_DEFAULT):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+def _clean_stud_weld_z(studs):
+    """Keep a stud's weld_z only as a number; blank means the part's Weld Z."""
+    for stud in studs:
+        if isinstance(stud, dict) and 'weld_z' in stud:
+            weld_z = _parse_weld_z(stud['weld_z'], None)
+            if weld_z is None:
+                del stud['weld_z']
+            else:
+                stud['weld_z'] = weld_z
+    return studs
+
 def _recipes_load():
     try:
         with open(_RECIPES_PATH) as f:
@@ -230,6 +256,8 @@ def _recipes_enrich(recipes):
             'substrate': r.get('substrate') or 'Mild Steel',
             'pressure_setting': _parse_pressure(r.get('pressure_setting')),
             'di_check': bool(r.get('di_check', True)),
+            'depth_mode': _saved_depth_mode(r.get('depth_mode')),
+            'weld_z': _parse_weld_z(r.get('weld_z')),
             'dsc_enabled': bool(r.get('dsc_enabled', False)),
             'stud_reload_ms': _parse_stud_reload_ms(r.get('stud_reload_ms')),
             # Parts saved before corners existed were all measured from zerozero.
@@ -637,6 +665,15 @@ def ui_recipes_save():
     di_check_raw = request.form.get('di_check')
     # A form without the field keeps the saved value instead of resetting it.
     di_check = None if di_check_raw is None else di_check_raw.strip() != '0'
+    # Same for Depth Mode and Weld Z: only the part designer sends them.
+    try:
+        depth_mode = (None if request.form.get('depth_mode') is None
+                      else parse_depth_mode(request.form.get('depth_mode')))
+    except ValueError as exc:
+        return render_template('partials/command_result.html', ok=False,
+                               title='Save Recipe', payload={'error': str(exc)})
+    weld_z = (None if request.form.get('weld_z') is None
+              else _parse_weld_z(request.form.get('weld_z')))
     # Same for the origin corner: only the part designer sends it, and the
     # operator Parts editor's save must not reset a part to front-left.
     origin_corner_raw = request.form.get('origin_corner')
@@ -659,6 +696,8 @@ def ui_recipes_save():
             studs = json.loads(studs_json)
         except (json.JSONDecodeError, ValueError):
             studs = []
+        if isinstance(studs, list):
+            studs = _clean_stud_weld_z(studs)
     elif studs_text:
         studs, studs_error = _parse_studs(studs_text)
     else:
@@ -683,6 +722,12 @@ def ui_recipes_save():
         if not saved.get('system'):
             try:
                 check_travel_heights(retract_z, search_z)
+                if (depth_mode or _saved_depth_mode(saved.get('depth_mode'))) == 'fixed_z':
+                    check_weld_z(_parse_weld_z(saved.get('weld_z')) if weld_z is None else weld_z,
+                                 search_z)
+                    for index, stud in enumerate(studs):
+                        if isinstance(stud, dict) and stud.get('weld_z') is not None:
+                            check_weld_z(stud['weld_z'], search_z, what=f"Stud {index + 1} Weld Z")
             except ValueError as exc:
                 return render_template('partials/command_result.html', ok=False,
                                        title='Save Recipe', payload={'error': str(exc)})
@@ -701,6 +746,10 @@ def ui_recipes_save():
             existing['pressure_setting'] = pressure_setting
             if di_check is not None:
                 existing['di_check']     = di_check
+            if depth_mode is not None:
+                existing['depth_mode']   = depth_mode
+            if weld_z is not None:
+                existing['weld_z']       = weld_z
             if origin_corner is not None:
                 existing['origin_corner'] = origin_corner
             existing['speed']            = speed
@@ -723,6 +772,8 @@ def ui_recipes_save():
                 'substrate': substrate,
                 'pressure_setting': pressure_setting,
                 'di_check': True if di_check is None else di_check,
+                'depth_mode': depth_mode or 'force',
+                'weld_z': WELD_Z_DEFAULT if weld_z is None else weld_z,
                 'origin_corner': origin_corner or part_origin.DEFAULT_CORNER,
                 'speed': speed,
                 'dsc_enabled': dsc_enabled,
@@ -889,6 +940,8 @@ def ui_job_load():
             stud_reload_ms=recipe.get("stud_reload_ms"),
             origin_corner=recipe["origin_corner"],
             start_stud=request.form.get("start_stud"),
+            depth_mode=recipe["depth_mode"],
+            weld_z=recipe["weld_z"],
         )
     except JobError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 409
@@ -1651,6 +1704,8 @@ _WELD_PHASES = {
     31: "press: driving in",
     32: "press: holding",
     33: "press: held",
+    35: "plunge: to depth",
+    36: "plunge: settled",
     40: "weld",
     50: "retracting",
     60: "done",
@@ -1662,6 +1717,7 @@ _WELD_FAULT_SITES = {
     1: "FT_FindSurface refused the approach",
     4: "DI1 (stud on work) not active",
     5: "FT_LinInsertion refused the press",
+    6: "weld depth out of range",
     9: "FT_Control unavailable or refused",
     10: "DI1 dropped before the weld pulse",
     11: "DI0 (caps at charge) never came up",

@@ -54,6 +54,11 @@ removed deliberately on 2026-09-14. `lua_builder.RunMode` resolves both once and
 `WeldFlex.lua`/`single_shot.lua` publish them verbatim. Don't reintroduce mode
 logic in Lua, a mode saved on a recipe, or behavior keyed on a recipe's name.
 
+One exception, added deliberately on 2026-10-01 as a trial: a recipe's
+`depth_mode` (`force` default, or `fixed_z`) picks the weld sub-process.
+`fixed_z` runs `programs/weld_depth.lua`, which plunges by position to
+`PART_Z + weld_z` with no force sensing. See docs/weldNotes.md §8.
+
 What is still missing:
 
 1. **Arming is chosen at load, not confirmed at Run.** The operator must tap

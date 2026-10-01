@@ -25,6 +25,19 @@ TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "programs" / PROGRAM_NAME
 WELD_PROGRAM_NAME = "weld.lua"
 WELD_PATH = TEMPLATE_PATH.parent / WELD_PROGRAM_NAME
 
+# The Fixed Z alternative to weld.lua: plunges by position to a set depth, no
+# force sensor. A recipe's depth_mode picks which one a run calls.
+WELD_DEPTH_PROGRAM_NAME = "weld_depth.lua"
+WELD_DEPTH_PATH = TEMPLATE_PATH.parent / WELD_DEPTH_PROGRAM_NAME
+
+DEPTH_MODES = ("force", "fixed_z")
+WELD_SUB_PROGRAMS = {"force": WELD_PROGRAM_NAME, "fixed_z": WELD_DEPTH_PROGRAM_NAME}
+
+# Weld Z is measured from Part Z, negative below the surface. Mirrors WELD_Z_MIN
+# in programs/weld_depth.lua, which refuses the same depth controller-side.
+WELD_Z_DEFAULT = -2.0
+WELD_Z_MIN = -10.0
+
 # One weld at a fixed target, fired from the Admin page's Single Shot tool — see
 # build_single_shot_lua() below. Same template-with-markers shape as
 # WeldFlex.lua, just one target instead of a stud list and no home moves.
@@ -285,6 +298,8 @@ class BuiltProgram:
     program_line_count: int = 0
     # The stud the first cycle starts at, counted from 1 (parse_start_stud).
     start_stud: int = 1
+    # The weld sub-process this program's NewDofile calls, uploaded alongside it.
+    weld_program_name: str = WELD_PROGRAM_NAME
 
 
 def format_number(value: float | int) -> str:
@@ -320,6 +335,8 @@ def _stud_rows(
     rows = []
     for index, stud in enumerate(studs):
         row = f"{indent}{{x={format_number(stud['x'])}, y={format_number(stud['y'])}"
+        if stud.get("weld_z") is not None:
+            row += f", weldZ={format_number(stud['weld_z'])}"
         leg = dynamic_legs[index] if dynamic_legs is not None else None
         if leg is not None:
             row += f", s2sSpeed={leg.speed_pct}, s2sWaitMs={leg.wait_ms}"
@@ -388,6 +405,31 @@ def check_travel_heights(retract_z: float | int, search_z: float | int) -> None:
 
 def _indent_of(line: str) -> str:
     return line[: len(line) - len(line.lstrip())]
+
+
+def parse_depth_mode(value: str | None) -> str:
+    """A recipe's depth mode; anything unset is the force-sensed weld.lua."""
+    if value is None or str(value).strip() == "":
+        return "force"
+    mode = str(value).strip().lower()
+    if mode not in DEPTH_MODES:
+        raise ValueError(f"Unknown depth mode {value!r}; expected one of {DEPTH_MODES}")
+    return mode
+
+
+def check_weld_z(weld_z: float | int, search_z: float | int, what: str = "Weld Z") -> None:
+    """Refuse a depth deeper than WELD_Z_MIN or not below the Search Height."""
+    value = float(weld_z)
+    if value < WELD_Z_MIN:
+        raise ValueError(
+            f"{what} ({format_number(value)} mm) is more than {format_number(-WELD_Z_MIN)} mm "
+            "below the part surface"
+        )
+    if value >= float(search_z):
+        raise ValueError(
+            f"{what} ({format_number(value)} mm) is not below the Search Height "
+            f"({format_number(search_z)} mm)"
+        )
 
 
 PRESSURE_LBF_MAP = {
@@ -466,10 +508,15 @@ def build_weldflex_lua(
     origin_corner: str = DEFAULT_CORNER,
     corner_ref: CornerRef | None = None,
     start_stud: int | str | None = 1,
+    depth_mode: str | None = "force",
+    weld_z: float | int | None = None,
 ) -> BuiltProgram:
     """Substitute the template's markers and report the generated line numbers.
 
     `run_mode` has no default on purpose: every caller states live or dry.
+
+    `depth_mode` "fixed_z" calls weld_depth.lua instead of weld.lua: the head
+    plunges to `part_z + weld_z` (or a stud's own `weld_z`) by position.
 
     The three heights all stack on `part_z`. `safe_z` is the plane the legs to
     and from homewf travel at, `retract_z` the one the head lifts to and
@@ -509,6 +556,14 @@ def build_weldflex_lua(
     search_z_val = 10.0 if search_z is None else float(search_z)
     check_travel_heights(retract_z_val, search_z_val)
     part_z_val = 0.0 if part_z is None else float(part_z)
+    depth_mode_val = parse_depth_mode(depth_mode)
+    weld_z_val = WELD_Z_DEFAULT if weld_z is None else float(weld_z)
+    if depth_mode_val == "fixed_z":
+        check_weld_z(weld_z_val, search_z_val)
+        for index, stud in enumerate(studs):
+            if stud.get("weld_z") is not None:
+                check_weld_z(stud["weld_z"], search_z_val, what=f"Stud {index + 1} Weld Z")
+    weld_sub = WELD_SUB_PROGRAMS[depth_mode_val]
     press_lbf_val = _parse_pressure(pressure_setting)
     ft_sensor_num_val = int(ft_sensor_num)
     if not 1 <= ft_sensor_num_val <= 255:
@@ -531,11 +586,17 @@ def build_weldflex_lua(
     feed_pulse_seen = False
     run_mode_seen = False
     start_stud_seen = False
+    weld_sub_seen = False
 
     for line in template_lines:
         indent = _indent_of(line)
         if "--{{STUDS}}" in line:
             out.extend(_stud_rows(studs, indent, dynamic_legs))
+        elif "--{{WELD_SUB}}" in line:
+            out.append(f'{indent}NewDofile("/fruser/{weld_sub}", 1, 1)')
+            weld_sub_seen = True
+        elif "--{{WELD_Z}}" in line:
+            out.append(f"{indent}WELD_Z = {format_number(weld_z_val)}")
         elif "--{{CYCLE_COUNT}}" in line:
             out.append(f"{indent}cycleCount = {cycles}")
         elif "--{{START_STUD}}" in line:
@@ -599,6 +660,7 @@ def build_weldflex_lua(
             ("--{{FEED_PULSE_MS}}", feed_pulse_seen),
             ("--{{RUN_MODE}}", run_mode_seen),
             ("--{{START_STUD}}", start_stud_seen),
+            ("--{{WELD_SUB}}", weld_sub_seen),
         )
         if not value
     ]
@@ -621,6 +683,7 @@ def build_weldflex_lua(
         program_line_count=len(out),
         boundary_ms=dwell_ms,
         start_stud=start_stud_val,
+        weld_program_name=weld_sub,
     )
 
 

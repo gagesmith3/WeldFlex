@@ -40,11 +40,13 @@ from lua_builder import (
     GATE_MODES,
     PROGRAM_NAME,
     WELD_PATH,
-    WELD_PROGRAM_NAME,
+    WELD_Z_DEFAULT,
     RunMode,
     build_single_shot_lua,
     build_weldflex_lua,
     check_travel_heights,
+    check_weld_z,
+    parse_depth_mode,
     parse_start_stud,
     strip_lua_comments,
 )
@@ -258,6 +260,7 @@ class JobSnapshot:
     gate_mode: str = "pause"
     arm_mode: str = "dry"
     di_check: bool = True
+    depth_mode: str = "force"
     stud_count: int = 0
     # The stud the first cycle starts at, counted from 1. Above 1 is a resume.
     start_stud: int = 1
@@ -315,6 +318,8 @@ class _Session:
     gate_mode: str = "pause"
     arm_mode: str = "dry"
     di_check: bool = True
+    depth_mode: str = "force"
+    weld_z: float = WELD_Z_DEFAULT
     cycles_target: int = 0
     start_stud: int = 1
     safe_z: float = 60.0
@@ -418,6 +423,8 @@ class JobManager:
         stud_reload_ms: int | None = None,
         origin_corner: str = DEFAULT_CORNER,
         start_stud: int | str | None = 1,
+        depth_mode: str | None = "force",
+        weld_z: float | None = None,
     ) -> JobSnapshot:
         """Queue a part (or a single shot) for running.
 
@@ -439,7 +446,8 @@ class JobManager:
           load rather than when Run is pressed. Single shots ignore it.
         * **The entry point** — `kind` picks the builder (`JOB_KINDS`), and
           `gate_mode` what happens between cycles. "single_shot" jobs pass a
-          one-point `studs` list (`[{"x":..., "y":...}]`).
+          one-point `studs` list (`[{"x":..., "y":...}]`) and always run
+          weld.lua; `depth_mode` and `weld_z` apply to parts only.
 
         Rejected while a job is still active. A terminal job is replaced rather
         than blocking the load — `clear()` is for dismissing the result
@@ -455,6 +463,8 @@ class JobManager:
             raise JobError(f"DI check must be true or false, got {di_check!r}")
         try:
             origin_corner = parse_corner(origin_corner, strict=True)
+            depth_mode = parse_depth_mode(depth_mode) if kind == "part" else "force"
+            weld_z = WELD_Z_DEFAULT if weld_z is None else float(weld_z)
             corner_ref = ZERO_REF
             if kind == "part":
                 # Front-left reads nothing; any other corner reads its taught point.
@@ -462,6 +472,11 @@ class JobManager:
                                              lambda name: self._robot.teach_point_pose(name))
                 check_base_keepout(resolve_studs(studs, origin_corner, corner_ref))
                 check_travel_heights(safe_z if retract_z is None else retract_z, search_z)
+                if depth_mode == "fixed_z":
+                    check_weld_z(weld_z, search_z)
+                    for index, stud in enumerate(studs):
+                        if stud.get("weld_z") is not None:
+                            check_weld_z(stud["weld_z"], search_z, what=f"Stud {index + 1} Weld Z")
             start_stud = parse_start_stud(start_stud, len(studs))
         except ValueError as exc:
             raise JobError(str(exc)) from None
@@ -481,6 +496,8 @@ class JobManager:
                 gate_mode=gate_mode,
                 arm_mode=arm_mode,
                 di_check=di_check,
+                depth_mode=depth_mode,
+                weld_z=weld_z,
                 cycles_target=cycles,
                 start_stud=start_stud,
                 safe_z=float(safe_z),
@@ -498,12 +515,13 @@ class JobManager:
             )
             snap = self._snapshot_locked()
         log.info("job loaded run_id=%s kind=%s part=%r cycles=%d gate=%s arm=%s di_check=%s "
-                 "origin=%s corner_ref=(%.1f, %.1f) studs=%d start_stud=%d",
-                 run_id, kind, part_name, cycles, gate_mode, arm_mode, di_check,
+                 "depth=%s origin=%s corner_ref=(%.1f, %.1f) studs=%d start_stud=%d",
+                 run_id, kind, part_name, cycles, gate_mode, arm_mode, di_check, depth_mode,
                  origin_corner, corner_ref.x_mm, corner_ref.y_mm, len(studs), start_stud)
         self._event(run_id, "load", {"part_id": part_id, "part_name": part_name,
                                      "kind": kind, "cycles": cycles, "gate_mode": gate_mode,
                                      "arm_mode": arm_mode, "di_check": di_check,
+                                     "depth_mode": depth_mode, "weld_z": weld_z,
                                      "origin_corner": origin_corner,
                                      "studs": len(studs), "start_stud": start_stud})
         return snap
@@ -743,6 +761,7 @@ class JobManager:
             gate_mode=sess.gate_mode,
             arm_mode=sess.arm_mode,
             di_check=sess.di_check,
+            depth_mode=sess.depth_mode,
             stud_count=len(sess.studs),
             start_stud=sess.start_stud,
             cycles_target=sess.cycles_target,
@@ -788,17 +807,21 @@ class JobManager:
                 origin_corner = sess.origin_corner
                 corner_ref = sess.corner_ref
                 start_stud = sess.start_stud
+                depth_mode = sess.depth_mode
+                weld_z = sess.weld_z
 
-            ft_config = self._robot.ft_config()
-            if ft_config.get("company") != 24 or ft_config.get("device") != 0:
-                raise JobError(
-                    "Force sensor configuration is not XJC device 24/0; initialize the force sensor before running"
-                )
-            ft_sensor_num = ft_config.get("number")
-            if not isinstance(ft_sensor_num, int) or not 1 <= ft_sensor_num <= 255:
-                raise JobError(
-                    f"Force sensor reported an invalid controller number: {ft_sensor_num!r}"
-                )
+            ft_sensor_num = 1
+            if depth_mode != "fixed_z":
+                ft_config = self._robot.ft_config()
+                if ft_config.get("company") != 24 or ft_config.get("device") != 0:
+                    raise JobError(
+                        "Force sensor configuration is not XJC device 24/0; initialize the force sensor before running"
+                    )
+                ft_sensor_num = ft_config.get("number")
+                if not isinstance(ft_sensor_num, int) or not 1 <= ft_sensor_num <= 255:
+                    raise JobError(
+                        f"Force sensor reported an invalid controller number: {ft_sensor_num!r}"
+                    )
 
             if kind == "single_shot":
                 if not studs:
@@ -837,14 +860,17 @@ class JobManager:
                     origin_corner=origin_corner,
                     corner_ref=corner_ref,
                     start_stud=start_stud,
+                    depth_mode=depth_mode,
+                    weld_z=weld_z,
                 )
 
             tmp_dir = tempfile.mkdtemp()
             tmp_path = os.path.join(tmp_dir, built.program_name)
-            weld_tmp_path = os.path.join(tmp_dir, WELD_PROGRAM_NAME)
+            weld_tmp_path = os.path.join(tmp_dir, built.weld_program_name)
             try:
-                # Upload weld.lua sub-process first so NewDofile executes the latest code.
-                weld_text = strip_lua_comments(WELD_PATH.read_text(encoding="utf-8"))
+                # Upload the weld sub-process first so NewDofile executes the latest code.
+                weld_src = WELD_PATH.parent / built.weld_program_name
+                weld_text = strip_lua_comments(weld_src.read_text(encoding="utf-8"))
                 Path(weld_tmp_path).write_text(weld_text, encoding="utf-8")
                 self._robot.upload_program(weld_tmp_path, replace=True)
 
@@ -1200,6 +1226,7 @@ class JobManager:
                 "gate_mode": sess.gate_mode,
                 "arm_mode": sess.arm_mode,
                 "di_check": sess.di_check,
+                "depth_mode": sess.depth_mode,
                 "stud_count": len(sess.studs),
                 "start_stud": sess.start_stud,
                 "cycles_target": sess.cycles_target,

@@ -17,6 +17,8 @@ let _state = {
   dsc_enabled: false,
   stud_reload_ms: 600,
   di_check: true,
+  depth_mode: 'force',
+  weld_z: -2.0,
   origin_corner: 'front_left',
   isDirty: false,
 };
@@ -329,6 +331,8 @@ function loadPart(id, name, idx) {
         _state.dsc_enabled = data.recipe.dsc_enabled === true;
         _state.stud_reload_ms = normalizeStudReloadMs(data.recipe.stud_reload_ms);
         _state.di_check = data.recipe.di_check !== false;
+        _state.depth_mode = data.recipe.depth_mode === 'fixed_z' ? 'fixed_z' : 'force';
+        _state.weld_z = Number.isFinite(parseFloat(data.recipe.weld_z)) ? parseFloat(data.recipe.weld_z) : -2.0;
         _state.origin_corner = normalizeCorner(data.recipe.origin_corner);
       }
       renderPoints();
@@ -472,6 +476,8 @@ function pdStartNewPart(name) {
   _state.dsc_enabled   = false;
   _state.stud_reload_ms = 600;
   _state.di_check      = true;
+  _state.depth_mode    = 'force';
+  _state.weld_z        = -2.0;
   _state.origin_corner = PD_CORNERS[0];
 
   const titleEl = document.getElementById('pd-canvas-part-title');
@@ -510,7 +516,9 @@ function pdSave() {
   const name = _state.activePart;
   if (!name) return;
 
-  const studs_json = JSON.stringify(_state.points.map(p => ({ x: p.x, y: p.y })));
+  const studs_json = JSON.stringify(_state.points.map(p => (
+    Number.isFinite(p.weld_z) ? { x: p.x, y: p.y, weld_z: p.weld_z } : { x: p.x, y: p.y }
+  )));
   const safe_z = _state.safe_z !== undefined ? _state.safe_z : 60.0;
   const retract_z = _state.retract_z !== undefined ? _state.retract_z : safe_z;
   const search_z = _state.search_z !== undefined ? _state.search_z : 10.0;
@@ -523,6 +531,8 @@ function pdSave() {
   const dsc_enabled = _state.dsc_enabled === true ? '1' : '0';
   const stud_reload_ms = normalizeStudReloadMs(_state.stud_reload_ms);
   const di_check = _state.di_check === false ? '0' : '1';
+  const depth_mode = _state.depth_mode === 'fixed_z' ? 'fixed_z' : 'force';
+  const weld_z = Number.isFinite(_state.weld_z) ? _state.weld_z : -2.0;
   const origin_corner = normalizeCorner(_state.origin_corner);
 
   const body = new URLSearchParams({
@@ -540,6 +550,8 @@ function pdSave() {
     dsc_enabled,
     stud_reload_ms,
     di_check,
+    depth_mode,
+    weld_z,
     origin_corner,
   });
   if (_state.activeId) body.set('recipe_id', _state.activeId);
@@ -645,6 +657,9 @@ function renderStudList() {
       <input class="pd-stud-input" type="number" min="0" max="${formatLength(BED)}" step="${lengthStep()}" value="${formatLength(p.x)}" data-pid="${p.id}" data-axis="x" inputmode="none" data-kbd="num">
       <span class="pd-stud-label">Y</span>
       <input class="pd-stud-input" type="number" min="0" max="${formatLength(BED)}" step="${lengthStep()}" value="${formatLength(p.y)}" data-pid="${p.id}" data-axis="y" inputmode="none" data-kbd="num">
+      ${_state.depth_mode === 'fixed_z' ? `
+      <span class="pd-stud-label">Z</span>
+      <input class="pd-stud-z-input" type="number" step="${lengthStep()}" value="${Number.isFinite(p.weld_z) ? formatLength(p.weld_z) : ''}" placeholder="${formatLength(_state.weld_z ?? -2.0)}" data-pid="${p.id}" title="Weld Z for this stud; blank uses the part's" inputmode="none" data-kbd="num">` : ''}
       <button class="pd-stud-goto-btn" data-pid="${p.id}" title="Move robot above this stud at Safe Z">⌖</button>
       <button class="pd-stud-delete-btn" data-pid="${p.id}" title="Remove stud">×</button>
     </div>
@@ -733,6 +748,27 @@ function renderStudList() {
     });
   });
 
+  el.querySelectorAll('.pd-stud-z-input').forEach(input => {
+    input.addEventListener('click', e => e.stopPropagation());
+    input.addEventListener('focus', e => {
+      const row = e.target.closest('.pd-stud-row');
+      if (row) row.setAttribute('draggable', 'false');
+    });
+    input.addEventListener('blur', e => {
+      const row = e.target.closest('.pd-stud-row');
+      if (row) row.setAttribute('draggable', 'true');
+    });
+    input.addEventListener('change', () => {
+      const p = _state.points.find(pt => pt.id === parseInt(input.dataset.pid));
+      if (!p) return;
+      const val = input.value.trim() === '' ? NaN : parseLength(input.value);
+      if (Number.isFinite(val)) p.weld_z = val;
+      else delete p.weld_z;
+      input.value = Number.isFinite(val) ? formatLength(val) : '';
+      pdSetDirty(true);
+    });
+  });
+
   el.querySelectorAll('.pd-stud-goto-btn').forEach(btn => {
     btn.addEventListener('click', e => {
       e.stopPropagation();
@@ -794,7 +830,7 @@ function svgEl(tag, attrs = {}) {
 // hold to weld.lua and lua_builder.
 
 const PDS_TABS = ['heights', 'weld', 'motion', 'origin'];
-const PDS_LENGTH_IDS = ['pd-modal-safe-z', 'pd-modal-retract-z', 'pd-modal-search-z', 'pd-modal-part-z'];
+const PDS_LENGTH_IDS = ['pd-modal-safe-z', 'pd-modal-retract-z', 'pd-modal-search-z', 'pd-modal-part-z', 'pd-modal-weld-z'];
 
 let _pdsTab = 'heights';      // reopens on the tab last used
 let _pdsUnits = 'mm';         // the modal's units until Apply
@@ -848,6 +884,9 @@ function pdOpenJobSettingsModal() {
   pdsSetValue('pd-modal-stud-reload-ms', normalizeStudReloadMs(_state.stud_reload_ms));
   const diCheck = pdsEl('pd-modal-di-check');
   if (diCheck) diCheck.checked = _state.di_check !== false;
+  const fixedZ = pdsEl('pd-modal-fixed-z');
+  if (fixedZ) fixedZ.checked = _state.depth_mode === 'fixed_z';
+  pdsSetValue('pd-modal-weld-z', formatLength(_state.weld_z ?? -2.0, _pdsUnits));
   const dsc = pdsEl('pd-modal-dsc-enabled');
   if (dsc) dsc.checked = _state.dsc_enabled === true;
   modal.querySelectorAll('.pds-input').forEach(input => { delete input.dataset.touched; });
@@ -876,8 +915,9 @@ function pdSaveJobSettingsModal() {
   const unitsChanged = _pdsUnits !== _state.units;
   // A new corner keeps the studs' numbers, so they move: redraw them.
   const cornerChanged = values.origin_corner !== normalizeCorner(_state.origin_corner);
+  const depthChanged = values.depth_mode !== _state.depth_mode || values.weld_z !== _state.weld_z;
   Object.assign(_state, values, { units: _pdsUnits });
-  if (unitsChanged || cornerChanged) {
+  if (unitsChanged || cornerChanged || depthChanged) {
     buildGrid();
     renderPoints();
     renderStudList();
@@ -925,6 +965,17 @@ function pdsReadForm() {
 
   values.di_check = pdsEl('pd-modal-di-check')?.checked !== false;
 
+  values.depth_mode = pdsEl('pd-modal-fixed-z')?.checked === true ? 'fixed_z' : 'force';
+  // lua_builder refuses deeper than WELD_Z_MIN, or a depth not below the Search Height.
+  const weldZ = pdsNum('pd-modal-weld-z');
+  const weldZMin = Number(pdsEl('pd-modal-weld-z')?.dataset.minMm) / factor;
+  if (!Number.isFinite(weldZ)) {
+    if (values.depth_mode === 'fixed_z') errors['pd-modal-weld-z'] = 'Enter a depth.';
+  } else if (values.depth_mode !== 'fixed_z') values.weld_z = weldZ * factor;
+  else if (weldZ < weldZMin) errors['pd-modal-weld-z'] = `Enter ${formatLength(weldZMin * factor, _pdsUnits)} ${unitLabel(_pdsUnits)} or above.`;
+  else if (weldZ >= searchZ) errors['pd-modal-weld-z'] = 'Set it below the Search Height.';
+  else values.weld_z = weldZ * factor;
+
   const speed = Math.round(pdsNum('pd-modal-speed'));
   const speedMin = pdsLimit('pd-modal-speed', 'min');
   const speedMax = pdsLimit('pd-modal-speed', 'max');
@@ -953,15 +1004,24 @@ function pdsRefresh() {
 
   const raw = id => (pdsEl(id)?.value || '').trim() || '—';
   const diOn = pdsEl('pd-modal-di-check')?.checked !== false;
+  const fixedZOn = pdsEl('pd-modal-fixed-z')?.checked === true;
   const dscOn = pdsEl('pd-modal-dsc-enabled')?.checked === true;
 
   pdsText('pds-sum-heights', `Safe ${raw('pd-modal-safe-z')} · Retract ${raw('pd-modal-retract-z')} ${unitLabel(_pdsUnits)}`);
-  pdsText('pds-sum-weld', `${raw('pd-modal-stud-type')} · ${raw('pd-modal-pressure')} lbf · DI ${diOn ? 'on' : 'off'}`);
+  pdsText('pds-sum-weld', fixedZOn
+    ? `${raw('pd-modal-stud-type')} · Z ${raw('pd-modal-weld-z')} ${unitLabel(_pdsUnits)} · DI ${diOn ? 'on' : 'off'}`
+    : `${raw('pd-modal-stud-type')} · ${raw('pd-modal-pressure')} lbf · DI ${diOn ? 'on' : 'off'}`);
   pdsText('pds-sum-motion', `${raw('pd-modal-speed')}% · DSC ${dscOn ? 'on' : 'off'}`);
   pdsText('pds-sum-origin', cornerLabel(_pdsCorner));
 
   const diNote = pdsEl('pds-di-note');
   if (diNote) diNote.hidden = diOn;
+  const fixedZNote = pdsEl('pds-fixed-z-note');
+  if (fixedZNote) fixedZNote.hidden = !fixedZOn;
+  const weldZInput = pdsEl('pd-modal-weld-z');
+  if (weldZInput) weldZInput.disabled = !fixedZOn;
+  const pressureInput = pdsEl('pd-modal-pressure');
+  if (pressureInput) pressureInput.disabled = fixedZOn;
   const calibrationNote = pdsEl('pds-dsc-cal-note');  // rendered only on an uncalibrated machine
   if (calibrationNote) calibrationNote.hidden = !dscOn;
   const reload = pdsEl('pd-modal-stud-reload-ms');
@@ -982,7 +1042,7 @@ function pdsRefresh() {
     }
   });
 
-  const warnings = { weld: !diOn, motion: dscOn && !!calibrationNote };
+  const warnings = { weld: !diOn || fixedZOn, motion: dscOn && !!calibrationNote };
   modal.querySelectorAll('.pds-tab').forEach(tab => {
     const name = tab.dataset.tab;
     tab.dataset.state = tabsWithErrors.has(name) ? 'error' : (warnings[name] ? 'warn' : '');

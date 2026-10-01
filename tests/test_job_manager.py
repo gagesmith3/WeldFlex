@@ -445,6 +445,36 @@ def test_launch_uses_the_controller_assigned_force_sensor_number(tmp_path, monke
     mgr.shutdown()
 
 
+def test_a_fixed_z_part_uploads_weld_depth_lua_and_skips_the_force_sensor(tmp_path):
+    robot = FakeRobot(fail={"ft_config"})
+    uploaded = []
+    real_upload = robot.upload_program
+
+    def spy(path, replace=False):
+        uploaded.append(path.replace("\\", "/").rsplit("/", 1)[-1])
+        return real_upload(path, replace)
+
+    robot.upload_program = spy
+    mgr = make_manager(tmp_path, robot)
+    snap = mgr.load("p1", "Bracket", [{"x": 1, "y": 2}], cycles=1, arm_mode="dry",
+                    gate_mode="none", depth_mode="fixed_z", weld_z=-1.0)
+    assert snap.depth_mode == "fixed_z"
+    mgr.start()
+    wait_state(mgr, JobState.RUNNING.value)
+
+    assert uploaded == ["weld_depth.lua", "WeldFlex.lua"]
+    assert "ft_config" not in robot.calls
+    mgr.shutdown()
+
+
+def test_load_refuses_a_fixed_z_depth_at_or_above_the_search_height(tmp_path):
+    mgr = make_manager(tmp_path)
+    with pytest.raises(JobError, match="Weld Z"):
+        mgr.load("p1", "Bracket", [{"x": 1, "y": 2}], cycles=1, arm_mode="dry",
+                 depth_mode="fixed_z", weld_z=10.0, search_z=10.0)
+    assert mgr.snapshot().state == JobState.IDLE.value
+
+
 ILLEGAL = [
     ("start", JobState.IDLE.value),
     ("pause", JobState.IDLE.value),

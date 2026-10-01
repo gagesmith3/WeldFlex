@@ -139,11 +139,7 @@
         <input id="ss_part_z" name="part_z" type="text" inputmode="none" data-kbd="num"
                value="{{ recipe.part_z }}" required>
       </div>
-      <div>
-        <label for="ss_retract_z">Retract Height (mm)</label>
-        <input id="ss_retract_z" name="retract_z" type="text" inputmode="none" data-kbd="num"
-               value="{{ recipe.retract_z }}" required>
-      </div>
+      {# No Retract Z or Search Height: a shot searches from Safe Z and retracts back to it. #}
       <div>
         <label for="ss_stud_type">Stud Selector</label>
         <select id="ss_stud_type" name="stud_type">

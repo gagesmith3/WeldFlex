@@ -246,6 +246,89 @@ def test_job_load_takes_the_origin_corner_from_the_part(run_app):
     assert kwargs["origin_corner"] == "front_right"
 
 
+def test_recipes_migrate_to_three_heights_without_changing_how_they_travel(run_app):
+    """Until 2026-10-01 retract_z held the Search Height and a run travelled
+    between studs at Safe Z. Before 2026-09-22 safe_z held the Search Height.
+    Retract Z starts where the travel already was, so nothing moves differently
+    until someone lowers it."""
+    old = _recipe(id="old", safe_z=10.0, high_z_clearance=40.0)
+    del old["retract_z"]
+    run_app.write([
+        _recipe(id="sep22", safe_z=127.0, retract_z=25.4),
+        old,
+        _recipe(id="high", safe_z=60.0, retract_z=80.0),
+        _recipe(id="new", safe_z=127.0, retract_z=50.0, search_z=25.4),
+        _recipe(id="shot", name="Single Shot", system="single_shot", safe_z=10.0, retract_z=10.0),
+    ])
+    with run_app.module._rec_lock:
+        run_app.module._recipes_load()
+
+    by_id = {r["id"]: r for r in run_app.read()}
+    heights = lambda r: (r["safe_z"], r["retract_z"], r.get("search_z"))
+    assert heights(by_id["sep22"]) == (127.0, 127.0, 25.4)
+    assert heights(by_id["old"]) == (50.0, 50.0, 10.0)
+    assert "high_z_clearance" not in by_id["old"]
+    # A search height above Safe Z is the one case Retract Z can't start at Safe Z.
+    assert heights(by_id["high"]) == (60.0, 80.0, 80.0)
+    assert heights(by_id["new"]) == (127.0, 50.0, 25.4)
+    assert heights(by_id["shot"]) == (10.0, 10.0, None)
+
+
+def test_recipe_save_stores_all_three_heights(run_app):
+    run_app.write([_recipe(search_z=10.0)])
+    form = {"recipe_id": "part-1", "recipe_name": "Bracket", "studs_text": "10,20",
+            "safe_z": "127", "retract_z": "38.1", "search_z": "25.4"}
+    run_app.client.post("/ui/recipes/save", data=form)
+    saved = run_app.read()[0]
+    assert (saved["safe_z"], saved["retract_z"], saved["search_z"]) == (127.0, 38.1, 25.4)
+
+    # A form without them (the Single Shot settings) keeps what was saved.
+    run_app.client.post("/ui/recipes/save", data={
+        "recipe_id": "part-1", "recipe_name": "Bracket", "studs_text": "10,20", "safe_z": "127",
+    })
+    saved = run_app.read()[0]
+    assert (saved["retract_z"], saved["search_z"]) == (38.1, 25.4)
+
+
+def test_recipe_save_refuses_a_retract_z_below_the_search_height(run_app):
+    run_app.write([_recipe(retract_z=60.0, search_z=10.0)])
+    response = run_app.client.post("/ui/recipes/save", data={
+        "recipe_id": "part-1", "recipe_name": "Bracket", "studs_text": "10,20",
+        "safe_z": "60", "retract_z": "20", "search_z": "25.4",
+    })
+    assert "below the Search Height" in response.get_data(as_text=True)
+    assert "X-Recipe-Id" not in response.headers
+    saved = run_app.read()[0]
+    assert (saved["retract_z"], saved["search_z"]) == (60.0, 10.0)
+
+
+def test_recipe_save_reads_a_pre_retract_z_page_as_the_search_height(run_app):
+    """A kiosk page loaded before the deploy still posts the Search Height as
+    retract_z and no search_z. Saving it must not become the travel height."""
+    run_app.write([_recipe(retract_z=50.0, search_z=10.0)])
+    run_app.client.post("/ui/recipes/save", data={
+        "recipe_id": "part-1", "recipe_name": "Bracket", "studs_text": "10,20",
+        "safe_z": "60", "retract_z": "25.4",
+    })
+    saved = run_app.read()[0]
+    assert (saved["retract_z"], saved["search_z"]) == (50.0, 25.4)
+
+
+def test_job_load_takes_all_three_heights_from_the_part(run_app):
+    run_app.write([_recipe(safe_z=127.0, retract_z=38.1, search_z=25.4)])
+    run_app.client.post("/ui/job/load", data={"recipe_id": "part-1", "arm_mode": "dry"})
+    (_, kwargs), = run_app.job.loads
+    assert (kwargs["safe_z"], kwargs["retract_z"], kwargs["search_z"]) == (127.0, 38.1, 25.4)
+
+
+def test_job_manager_refuses_a_retract_z_below_the_search_height_at_load(run_app):
+    job_manager = importlib.import_module("job_manager")
+    manager = job_manager.JobManager.__new__(job_manager.JobManager)
+    with pytest.raises(job_manager.JobError, match="Retract Z"):
+        manager.load("part-1", "Bracket", [{"x": 300, "y": 300}], 1,
+                     arm_mode="dry", safe_z=127.0, retract_z=20.0, search_z=25.4)
+
+
 @pytest.fixture
 def goto(run_app, monkeypatch):
     """Posts to the designer's Goto and returns the Lua it would upload."""
@@ -310,13 +393,15 @@ def test_goto_refuses_a_corner_point_on_the_wrong_side_of_zerozero(goto):
     assert uploaded == []
 
 
-def test_goto_parks_at_safe_z_not_the_search_height(goto):
+def test_goto_parks_at_safe_z_not_the_run_heights(goto):
     """⌖ travels at Safe Z, the height that clears fixtures (owner, 2026-09-22).
-    The Search Height (retract_z) is only where a run's search starts."""
-    _, uploaded = goto(x="100", y="50", safe_z="127", part_z="2.54", retract_z="50.8")
+    Retract Z and the Search Height are only for a run's moves between studs."""
+    _, uploaded = goto(x="100", y="50", safe_z="127", part_z="2.54",
+                       retract_z="76.2", search_z="50.8")
     (program,) = uploaded
     assert "PointsOffsetEnable(0, 100.000, 50.000, 129.540, 0, 0, 0)" in program
     assert "50.8" not in program and "53.34" not in program
+    assert "76.2" not in program and "78.74" not in program
 
 
 def test_goto_without_a_corner_is_front_left(goto):

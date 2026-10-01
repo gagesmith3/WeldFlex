@@ -85,8 +85,10 @@ After a fault, the program parks ~3s on a unique `WaitMs` line site (`1`, `4`, `
 - `Z_CLEARANCE`: The height the caller parked the torch at, measured up from
   `zerozero` in the workpiece frame. The search starts there and the retract
   returns there. `weld.lua` reads it directly and never recomputes it.
-  `WeldFlex.lua` sets it to the recipe's Search Height (`PART_Z + RETRACT_Z`),
-  the height it drops to straight down from Safe Z before each stud.
+  `WeldFlex.lua` sets it to the recipe's Search Height (`PART_Z + SEARCH_Z`),
+  the height it drops to straight down before each stud: from Safe Z for a
+  cycle's first stud, from Retract Z for every later one (since 2026-10-01;
+  `RETRACT_Z` used to carry the Search Height).
   `single_shot.lua` sets it to `PART_Z + SAFE_Z`. The old `WELD_SAFE_Z` and
   `WELD_PART_Z` inputs are gone (2026-09-22).
 - `WELD_RUN`: Set to `1` to execute sequence. Controller upload check executes top-level Lua on upload; without `WELD_RUN = 1`, file is define-only.

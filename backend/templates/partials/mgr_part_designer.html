@@ -170,55 +170,74 @@
 
     <div class="pds-panels">
 
-      <!-- Heights: Safe Z and the Search Height both stack on Part Z. The Search
-           Height is stored as the recipe's retract_z. -->
+      <!-- Heights: Safe Z, Retract Z and the Search Height all stack on Part Z.
+           Two fields to a row, so the tab still fits 800×480 without scrolling. -->
       <section class="pds-panel active" role="tabpanel" id="pds-panel-heights" data-tab="heights" aria-labelledby="pds-tab-heights">
         <div class="pds-heights">
           <div class="pds-fields">
-            <div class="pds-field">
-              <label for="pd-modal-safe-z" class="pds-label">Safe Z</label>
-              <div class="pds-input-wrap">
-                <input type="number" id="pd-modal-safe-z" class="pds-input" step="0.1" inputmode="none" data-kbd="num"
-                       aria-describedby="pd-modal-safe-z-hint pd-modal-safe-z-error">
-                <span class="pds-suffix pd-length-unit">mm</span>
+            <div class="pds-row">
+              <div class="pds-field">
+                <label for="pd-modal-safe-z" class="pds-label">Safe Z</label>
+                <div class="pds-input-wrap">
+                  <input type="number" id="pd-modal-safe-z" class="pds-input" step="0.1" inputmode="none" data-kbd="num"
+                         aria-describedby="pd-modal-safe-z-hint pd-modal-safe-z-error">
+                  <span class="pds-suffix pd-length-unit">mm</span>
+                </div>
+                <p class="pds-hint" id="pd-modal-safe-z-hint">Clear of fixtures. To and from home, and &#8982;.</p>
+                <p class="pds-error" id="pd-modal-safe-z-error"></p>
               </div>
-              <p class="pds-hint" id="pd-modal-safe-z-hint">Above Part Z, clear of fixtures. Every traverse, each lift, and &#8982;.</p>
-              <p class="pds-error" id="pd-modal-safe-z-error"></p>
+              <div class="pds-field">
+                <label for="pd-modal-retract-z" class="pds-label">Retract Z</label>
+                <div class="pds-input-wrap">
+                  <input type="number" id="pd-modal-retract-z" class="pds-input" step="0.1" inputmode="none" data-kbd="num"
+                         aria-describedby="pd-modal-retract-z-hint pd-modal-retract-z-error">
+                  <span class="pds-suffix pd-length-unit">mm</span>
+                </div>
+                <p class="pds-hint" id="pd-modal-retract-z-hint">Lift and travel between studs.</p>
+                <p class="pds-error" id="pd-modal-retract-z-error"></p>
+              </div>
             </div>
-            <div class="pds-field">
-              <label for="pd-modal-retract-z" class="pds-label">Search Height</label>
-              <div class="pds-input-wrap">
-                <input type="number" id="pd-modal-retract-z" class="pds-input" step="0.1" inputmode="none" data-kbd="num"
-                       aria-describedby="pd-modal-retract-z-hint pd-modal-retract-z-error">
-                <span class="pds-suffix pd-length-unit">mm</span>
+            <div class="pds-row">
+              <div class="pds-field">
+                <label for="pd-modal-search-z" class="pds-label">Search Height</label>
+                <div class="pds-input-wrap">
+                  <input type="number" id="pd-modal-search-z" class="pds-input" step="0.1" inputmode="none" data-kbd="num"
+                         aria-describedby="pd-modal-search-z-hint pd-modal-search-z-error">
+                  <span class="pds-suffix pd-length-unit">mm</span>
+                </div>
+                <p class="pds-hint" id="pd-modal-search-z-hint">Each stud drops here, then searches down.</p>
+                <p class="pds-error" id="pd-modal-search-z-error"></p>
               </div>
-              <p class="pds-hint" id="pd-modal-retract-z-hint">Above Part Z. Each stud drops here from Safe Z, then searches down.</p>
-              <p class="pds-error" id="pd-modal-retract-z-error"></p>
-            </div>
-            <div class="pds-field">
-              <label for="pd-modal-part-z" class="pds-label">Part Z</label>
-              <div class="pds-input-wrap">
-                <input type="number" id="pd-modal-part-z" class="pds-input" step="0.1" inputmode="none" data-kbd="num"
-                       aria-describedby="pd-modal-part-z-hint pd-modal-part-z-error">
-                <span class="pds-suffix pd-length-unit">mm</span>
+              <div class="pds-field">
+                <label for="pd-modal-part-z" class="pds-label">Part Z</label>
+                <div class="pds-input-wrap">
+                  <input type="number" id="pd-modal-part-z" class="pds-input" step="0.1" inputmode="none" data-kbd="num"
+                         aria-describedby="pd-modal-part-z-hint pd-modal-part-z-error">
+                  <span class="pds-suffix pd-length-unit">mm</span>
+                </div>
+                <p class="pds-hint" id="pd-modal-part-z-hint">Part's top surface, up from zerozero.</p>
+                <p class="pds-error" id="pd-modal-part-z-error"></p>
               </div>
-              <p class="pds-hint" id="pd-modal-part-z-hint">Top surface of the part, up from the taught zerozero point.</p>
-              <p class="pds-error" id="pd-modal-part-z-error"></p>
             </div>
           </div>
-          <svg class="pds-zdiag" viewBox="0 0 210 230" role="img" aria-label="Safe Z and the search height are measured up from Part Z">
+          <svg class="pds-zdiag" viewBox="0 0 210 230" role="img" aria-label="Safe Z, Retract Z and the search height are measured up from Part Z">
             <defs>
               <marker id="pds-zd-arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
                 <path class="pds-zd-arrowhead" d="M0 0 10 5 0 10z"/>
               </marker>
             </defs>
-            <line class="pds-zd-rise" x1="105" y1="190" x2="105" y2="60" marker-end="url(#pds-zd-arrow)"/>
-            <g id="pds-zd-safe" transform="translate(0 52)">
+            <line class="pds-zd-rise" x1="105" y1="190" x2="105" y2="52" marker-end="url(#pds-zd-arrow)"/>
+            <g id="pds-zd-safe" transform="translate(0 44)">
               <line class="pds-zd-plane is-safe" x1="8" y1="0" x2="202" y2="0"/>
               <text class="pds-zd-name" x="10" y="-7">Safe Z</text>
               <text class="pds-zd-val" id="pds-zd-safe-val" x="200" y="-7" text-anchor="end"></text>
             </g>
-            <g id="pds-zd-search" transform="translate(0 122)">
+            <g id="pds-zd-retract" transform="translate(0 94)">
+              <line class="pds-zd-plane is-retract" x1="8" y1="0" x2="202" y2="0"/>
+              <text class="pds-zd-name" x="10" y="-7">Retract Z</text>
+              <text class="pds-zd-val" id="pds-zd-retract-val" x="200" y="-7" text-anchor="end"></text>
+            </g>
+            <g id="pds-zd-search" transform="translate(0 144)">
               <line class="pds-zd-plane is-search" x1="8" y1="0" x2="202" y2="0"/>
               <text class="pds-zd-name" x="10" y="-7">Search</text>
               <text class="pds-zd-val" id="pds-zd-search-val" x="200" y="-7" text-anchor="end"></text>

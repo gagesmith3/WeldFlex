@@ -44,6 +44,7 @@ from lua_builder import (
     RunMode,
     build_single_shot_lua,
     build_weldflex_lua,
+    check_travel_heights,
     parse_start_stud,
     strip_lua_comments,
 )
@@ -317,7 +318,8 @@ class _Session:
     cycles_target: int = 0
     start_stud: int = 1
     safe_z: float = 60.0
-    retract_z: float = 10.0
+    retract_z: float = 60.0
+    search_z: float = 10.0
     part_z: float = 0.0
     pressure_setting: str = "high"
     stud_type: str = "M4"
@@ -405,7 +407,8 @@ class JobManager:
         kind: str = "part",
         gate_mode: str = "pause",
         safe_z: float = 60.0,
-        retract_z: float = 10.0,
+        retract_z: float | None = None,
+        search_z: float = 10.0,
         part_z: float = 0.0,
         pressure_setting: str = "high",
         stud_type: str = "M4",
@@ -429,7 +432,8 @@ class JobManager:
           number past the part's last stud is refused.
         * **The recipe** — `di_check` (False skips the DI0/DI1 checks, live
           runs included), plus the geometry and press settings from `safe_z`
-          on down. `origin_corner` is the bed corner the studs are measured
+          on down. `retract_z` left out keeps the between-stud travel at
+          Safe Z; one below `search_z` is refused here, at load. `origin_corner` is the bed corner the studs are measured
           from; a part's studs are resolved against it here as well as at
           build time, so a stud that would flip across the bed is refused at
           load rather than when Run is pressed. Single shots ignore it.
@@ -457,6 +461,7 @@ class JobManager:
                 corner_ref = read_corner_ref(origin_corner,
                                              lambda name: self._robot.teach_point_pose(name))
                 check_base_keepout(resolve_studs(studs, origin_corner, corner_ref))
+                check_travel_heights(safe_z if retract_z is None else retract_z, search_z)
             start_stud = parse_start_stud(start_stud, len(studs))
         except ValueError as exc:
             raise JobError(str(exc)) from None
@@ -479,7 +484,8 @@ class JobManager:
                 cycles_target=cycles,
                 start_stud=start_stud,
                 safe_z=float(safe_z),
-                retract_z=float(retract_z),
+                retract_z=float(safe_z if retract_z is None else retract_z),
+                search_z=float(search_z),
                 part_z=float(part_z),
                 pressure_setting=str(pressure_setting),
                 stud_type=str(stud_type),
@@ -771,6 +777,7 @@ class JobManager:
                 run_mode = RunMode(sess.arm_mode, di_check=sess.di_check)
                 safe_z = sess.safe_z
                 retract_z = sess.retract_z
+                search_z = sess.search_z
                 part_z = sess.part_z
                 pressure_setting = sess.pressure_setting
                 stud_type = sess.stud_type
@@ -818,6 +825,7 @@ class JobManager:
                     gate_mode=gate_mode,
                     safe_z=safe_z,
                     retract_z=retract_z,
+                    search_z=search_z,
                     part_z=part_z,
                     pressure_setting=pressure_setting,
                     ft_sensor_num=ft_sensor_num,
@@ -1203,6 +1211,7 @@ class JobManager:
                 "cycle_times": list(sess.cycle_times),
                 "safe_z": sess.safe_z,
                 "retract_z": sess.retract_z,
+                "search_z": sess.search_z,
                 "part_z": sess.part_z,
                 "pressure_setting": sess.pressure_setting,
                 "stud_type": sess.stud_type,

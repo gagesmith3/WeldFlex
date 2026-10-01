@@ -29,6 +29,7 @@ from lua_builder import (
     WELD_PATH,
     WELD_PROGRAM_NAME,
     build_io_monitor_lua,
+    check_travel_heights,
     default_dsc_calibration,
     format_number,
     strip_lua_comments,
@@ -167,14 +168,24 @@ def _recipes_load():
         if 'welder_profile' in r:
             r.setdefault('di_check', r.pop('welder_profile') != 'liberty')
             migrated = True
-        if not r.get('system') and 'retract_z' not in r:
+        # Three heights since 2026-10-01. From 2026-09-22 until then retract_z
+        # held the Search Height; before that safe_z did, and the travel height
+        # was safe_z + high_z_clearance. Retract Z, the new between-stud plane,
+        # starts at Safe Z (or the Search Height, if a part had that higher), so
+        # a part travels as it did until someone lowers it.
+        if not r.get('system') and 'search_z' not in r:
             try:
-                retract_z = float(r.get('safe_z', 10.0))
-                safe_z = retract_z + float(r.get('high_z_clearance', 50.0))
+                if 'retract_z' in r:
+                    search_z = float(r['retract_z'])
+                    safe_z = float(r.get('safe_z', 60.0))
+                else:
+                    search_z = float(r.get('safe_z', 10.0))
+                    safe_z = search_z + float(r.get('high_z_clearance', 50.0))
             except (TypeError, ValueError):
-                retract_z, safe_z = 10.0, 60.0
-            r['retract_z'] = retract_z
+                search_z, safe_z = 10.0, 60.0
+            r['search_z'] = search_z
             r['safe_z'] = safe_z
+            r['retract_z'] = max(safe_z, search_z)
             r.pop('high_z_clearance', None)
             migrated = True
     if migrated:
@@ -200,6 +211,7 @@ def _recipes_enrich(recipes):
     for r in recipes:
         studs = r.get('studs', [])
         is_single_shot = r.get('system') == SINGLE_SHOT_SYSTEM
+        safe_z = float(r.get('safe_z', 10.0 if is_single_shot else 60.0))
         ts = r.get('updated_at') or r.get('created_at', '')
         try:
             label = datetime.fromisoformat(ts).strftime('%b %d, %Y')
@@ -209,8 +221,9 @@ def _recipes_enrich(recipes):
             **r,
             'studs_count': len(studs),
             'updated_label': label,
-            'safe_z': float(r.get('safe_z', 10.0 if is_single_shot else 60.0)),
-            'retract_z': float(r.get('retract_z', 10.0)),
+            'safe_z': safe_z,
+            'retract_z': float(r.get('retract_z', safe_z)),
+            'search_z': float(r.get('search_z', 10.0)),
             'part_z': float(r.get('part_z', 0.0)),
             'units': 'in' if r.get('units') == 'in' else 'mm',
             'stud_type': r.get('stud_type') or 'M4',
@@ -587,10 +600,19 @@ def ui_recipes_save():
     except ValueError:
         safe_z = 60.0
 
-    try:
-        retract_z = float(request.form.get('retract_z') or 10.0)
-    except ValueError:
-        retract_z = 10.0
+    def height(field):
+        """None when the form doesn't carry the field, so the saved value stays."""
+        try:
+            return float(request.form[field])
+        except (KeyError, ValueError):
+            return None
+
+    retract_z = height('retract_z')
+    search_z = height('search_z')
+    # A page loaded before Retract Z existed (2026-10-01) still posts the
+    # Search Height as retract_z, and no search_z. Read it as what it meant.
+    if 'search_z' not in request.form and 'retract_z' in request.form:
+        search_z, retract_z = retract_z, None
 
     try:
         part_z = float(request.form.get('part_z') or 0.0)
@@ -653,12 +675,24 @@ def ui_recipes_save():
             # Never by name onto a tool-owned record: a part that shares the
             # Single Shot record's name must not overwrite its settings.
             existing = next((r for r in recipes if r['name'] == name and not r.get('system')), None)
+        saved = existing or {}
+        if search_z is None:
+            search_z = float(saved.get('search_z', 10.0))
+        if retract_z is None:
+            retract_z = float(saved.get('retract_z', safe_z))
+        if not saved.get('system'):
+            try:
+                check_travel_heights(retract_z, search_z)
+            except ValueError as exc:
+                return render_template('partials/command_result.html', ok=False,
+                                       title='Save Recipe', payload={'error': str(exc)})
         now = datetime.now(timezone.utc).isoformat()
         if existing:
             existing['name']             = name
             existing['studs']            = studs
             existing['safe_z']           = safe_z
             existing['retract_z']        = retract_z
+            existing['search_z']         = search_z
             existing['part_z']           = part_z
             existing.pop('high_z_clearance', None)
             existing['units']            = units
@@ -682,6 +716,7 @@ def ui_recipes_save():
                 'studs': studs,
                 'safe_z': safe_z,
                 'retract_z': retract_z,
+                'search_z': search_z,
                 'part_z': part_z,
                 'units': units,
                 'stud_type': stud_type,
@@ -842,8 +877,9 @@ def ui_job_load():
             arm_mode=arm_mode,
             di_check=recipe["di_check"],
             gate_mode=gate_mode,
-            safe_z=recipe.get("safe_z", 60.0),
-            retract_z=recipe.get("retract_z", 10.0),
+            safe_z=recipe["safe_z"],
+            retract_z=recipe["retract_z"],
+            search_z=recipe["search_z"],
             part_z=recipe.get("part_z", 0.0),
             pressure_setting=recipe.get("pressure_setting", "high"),
             stud_type=recipe.get("stud_type", "M4"),
@@ -1001,7 +1037,6 @@ def ui_single_shot_fire():
             kind="single_shot",
             gate_mode="none",
             safe_z=recipe['safe_z'],
-            retract_z=recipe['retract_z'],
             part_z=recipe['part_z'],
             pressure_setting=recipe['pressure_setting'],
             stud_type=recipe['stud_type'],

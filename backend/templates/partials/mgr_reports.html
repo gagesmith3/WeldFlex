@@ -113,7 +113,8 @@
           <span><strong>Substrate:</strong> <span id="mgr-modal-substrate">—</span></span>
           <span><strong>Pressure:</strong> <span id="mgr-modal-pressure">—</span></span>
           <span><strong>Part Z:</strong> <span id="mgr-modal-part-z">—</span></span>
-          <span><strong>Search:</strong> <span id="mgr-modal-retract-z">—</span></span>
+          <span><strong>Search:</strong> <span id="mgr-modal-search-z">—</span></span>
+          <span><strong>Retract Z:</strong> <span id="mgr-modal-retract-z">—</span></span>
           <span><strong>Safe Z:</strong> <span id="mgr-modal-safe-z">—</span></span>
           <span><strong>Studs:</strong> <span id="mgr-modal-stud-count">—</span></span>
           <span><strong>Mode:</strong> <span id="mgr-modal-mode">—</span></span>
@@ -340,12 +341,16 @@
   }
 
   function heights(run) {
-    // Records from before the 2026-09-22 height rework stored the search height
-    // as safe_z and derived travel height as safe_z + high_z_clearance (50 mm
-    // when unset — the same default the recipe migration used).
-    if (run.retract_z !== undefined) return { search: run.retract_z, safe: run.safe_z };
-    if (run.safe_z === undefined || run.safe_z === null) return { search: null, safe: null };
-    return { search: run.safe_z, safe: run.safe_z + (run.high_z_clearance ?? 50.0) };
+    // Retract Z has been its own height since 2026-10-01; before that a run
+    // travelled between studs at Safe Z. From the 2026-09-22 height rework until
+    // then, retract_z held the search height. Before 09-22, safe_z held it and
+    // travel height was safe_z + high_z_clearance (50 mm when unset — the same
+    // default the recipe migration used).
+    if (run.search_z !== undefined) return { search: run.search_z, retract: run.retract_z, safe: run.safe_z };
+    if (run.retract_z !== undefined) return { search: run.retract_z, retract: run.safe_z, safe: run.safe_z };
+    if (run.safe_z === undefined || run.safe_z === null) return { search: null, retract: null, safe: null };
+    const safe = run.safe_z + (run.high_z_clearance ?? 50.0);
+    return { search: run.safe_z, retract: safe, safe };
   }
 
   window.mgrOpenRunDetailModal = function(runId) {
@@ -368,7 +373,8 @@
     set('mgr-modal-substrate', fmt(run.substrate));
     set('mgr-modal-pressure', fmt(run.pressure_setting, 'lbf'));
     set('mgr-modal-part-z', fmt(run.part_z, 'mm'));
-    set('mgr-modal-retract-z', fmt(h.search, 'mm'));
+    set('mgr-modal-search-z', fmt(h.search, 'mm'));
+    set('mgr-modal-retract-z', fmt(h.retract, 'mm'));
     set('mgr-modal-safe-z', fmt(h.safe, 'mm'));
     set('mgr-modal-stud-count', fmt(run.stud_count));
     const mode = [];

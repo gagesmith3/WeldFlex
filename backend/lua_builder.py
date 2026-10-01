@@ -372,6 +372,20 @@ def parse_start_stud(value: int | str | None, stud_count: int) -> int:
     return max(1, start)
 
 
+def check_travel_heights(retract_z: float | int, search_z: float | int) -> None:
+    """Refuse a Retract Z below the Search Height.
+
+    Between studs the head lifts straight up from the Search Height to Retract Z
+    and travels level there. A Retract Z below it would drive the head down
+    toward the part before that level move instead of lifting it clear.
+    """
+    if float(retract_z) < float(search_z):
+        raise ValueError(
+            f"Retract Z ({format_number(retract_z)} mm) is below the Search Height "
+            f"({format_number(search_z)} mm); set it at or above the Search Height"
+        )
+
+
 def _indent_of(line: str) -> str:
     return line[: len(line) - len(line.lstrip())]
 
@@ -440,6 +454,7 @@ def build_weldflex_lua(
     boundary_ms: int | None = None,
     safe_z: float | int | None = None,
     retract_z: float | int | None = None,
+    search_z: float | int | None = None,
     part_z: float | int | None = None,
     pressure_setting: str | float | int | None = None,
     ft_sensor_num: int = 1,
@@ -455,6 +470,12 @@ def build_weldflex_lua(
     """Substitute the template's markers and report the generated line numbers.
 
     `run_mode` has no default on purpose: every caller states live or dry.
+
+    The three heights all stack on `part_z`. `safe_z` is the plane the legs to
+    and from homewf travel at, `retract_z` the one the head lifts to and
+    travels at between studs, and `search_z` where each search starts.
+    Leaving `retract_z` out keeps the between-stud travel at Safe Z, as it was
+    before Retract Z existed. One below `search_z` is refused.
 
     `start_stud` resumes a part that faulted partway: the first cycle starts
     at that stud (counted from 1, in the part's own stud order) and every
@@ -484,7 +505,9 @@ def build_weldflex_lua(
 
     dwell_ms = default_boundary_ms(gate_mode) if boundary_ms is None else int(boundary_ms)
     safe_z_val = 60.0 if safe_z is None else float(safe_z)
-    retract_z_val = 10.0 if retract_z is None else float(retract_z)
+    retract_z_val = safe_z_val if retract_z is None else float(retract_z)
+    search_z_val = 10.0 if search_z is None else float(search_z)
+    check_travel_heights(retract_z_val, search_z_val)
     part_z_val = 0.0 if part_z is None else float(part_z)
     press_lbf_val = _parse_pressure(pressure_setting)
     ft_sensor_num_val = int(ft_sensor_num)
@@ -533,6 +556,8 @@ def build_weldflex_lua(
             out.append(f"{indent}SAFE_Z = {format_number(safe_z_val)}")
         elif "--{{RETRACT_Z}}" in line:
             out.append(f"{indent}RETRACT_Z = {format_number(retract_z_val)}")
+        elif "--{{SEARCH_Z}}" in line:
+            out.append(f"{indent}SEARCH_Z = {format_number(search_z_val)}")
         elif "--{{PART_Z}}" in line:
             out.append(f"{indent}PART_Z = {format_number(part_z_val)}")
         elif "--{{PRESS_LBF}}" in line:

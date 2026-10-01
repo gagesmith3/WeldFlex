@@ -6,7 +6,8 @@ let _state = {
   selectedPoint: null,
   points: [],
   safe_z: 60.0,
-  retract_z: 10.0,
+  retract_z: 60.0,
+  search_z: 10.0,
   part_z: 0.0,
   units: 'mm',
   stud_type: 'M4',
@@ -315,7 +316,8 @@ function loadPart(id, name, idx) {
       if (data.recipe) {
         _currentRecipe = data.recipe;
         _state.safe_z = data.recipe.safe_z !== undefined ? data.recipe.safe_z : 60.0;
-        _state.retract_z = data.recipe.retract_z !== undefined ? data.recipe.retract_z : 10.0;
+        _state.retract_z = data.recipe.retract_z !== undefined ? data.recipe.retract_z : _state.safe_z;
+        _state.search_z = data.recipe.search_z !== undefined ? data.recipe.search_z : 10.0;
         _state.part_z = data.recipe.part_z !== undefined ? data.recipe.part_z : 0.0;
         _state.units = data.recipe.units === 'in' ? 'in' : 'mm';
         _state.stud_type = data.recipe.stud_type || 'M4';
@@ -510,7 +512,8 @@ function pdSave() {
 
   const studs_json = JSON.stringify(_state.points.map(p => ({ x: p.x, y: p.y })));
   const safe_z = _state.safe_z !== undefined ? _state.safe_z : 60.0;
-  const retract_z = _state.retract_z !== undefined ? _state.retract_z : 10.0;
+  const retract_z = _state.retract_z !== undefined ? _state.retract_z : safe_z;
+  const search_z = _state.search_z !== undefined ? _state.search_z : 10.0;
   const part_z = _state.part_z !== undefined ? _state.part_z : 0.0;
   const units = _state.units === 'in' ? 'in' : 'mm';
   const stud_type = _state.stud_type || 'M4';
@@ -527,6 +530,7 @@ function pdSave() {
     studs_json,
     safe_z,
     retract_z,
+    search_z,
     part_z,
     units,
     stud_type,
@@ -760,7 +764,7 @@ function renderStudList() {
 
 function pdGotoStud(p, btn) {
   if (btn) btn.disabled = true;
-  // Safe Z clears the fixtures; the Search Height is only for a run's search.
+  // Safe Z clears the fixtures; Retract Z and the Search Height are only for a run.
   const safe_z = _state.safe_z !== undefined ? _state.safe_z : 60.0;
   const part_z = _state.part_z !== undefined ? _state.part_z : 0.0;
   fetch('/ui/parts/goto', {
@@ -793,7 +797,7 @@ function svgEl(tag, attrs = {}) {
 // hold to weld.lua and lua_builder.
 
 const PDS_TABS = ['heights', 'weld', 'motion', 'origin'];
-const PDS_LENGTH_IDS = ['pd-modal-safe-z', 'pd-modal-retract-z', 'pd-modal-part-z'];
+const PDS_LENGTH_IDS = ['pd-modal-safe-z', 'pd-modal-retract-z', 'pd-modal-search-z', 'pd-modal-part-z'];
 
 let _pdsTab = 'heights';      // reopens on the tab last used
 let _pdsUnits = 'mm';         // the modal's units until Apply
@@ -837,7 +841,8 @@ function pdOpenJobSettingsModal() {
   pdsText('pd-modal-settings-part-name', _state.activePart || 'Untitled');
 
   pdsSetValue('pd-modal-safe-z', formatLength(_state.safe_z ?? 60.0, _pdsUnits));
-  pdsSetValue('pd-modal-retract-z', formatLength(_state.retract_z ?? 10.0, _pdsUnits));
+  pdsSetValue('pd-modal-retract-z', formatLength(_state.retract_z ?? _state.safe_z ?? 60.0, _pdsUnits));
+  pdsSetValue('pd-modal-search-z', formatLength(_state.search_z ?? 10.0, _pdsUnits));
   pdsSetValue('pd-modal-part-z', formatLength(_state.part_z ?? 0.0, _pdsUnits));
   pdsSetSelect('pd-modal-stud-type', _state.stud_type || 'M4');
   pdsSetSelect('pd-modal-substrate', _state.substrate || 'Mild Steel');
@@ -898,9 +903,16 @@ function pdsReadForm() {
   if (safeZ > 0) values.safe_z = safeZ * factor;
   else errors['pd-modal-safe-z'] = 'Enter a height above 0.';
 
+  const searchZ = pdsNum('pd-modal-search-z');
+  if (searchZ > 0) values.search_z = searchZ * factor;
+  else errors['pd-modal-search-z'] = 'Enter a height above 0.';
+
+  // Between studs the head lifts from the Search Height to Retract Z, so one
+  // below it would lower the head toward the part instead. lua_builder refuses it too.
   const retractZ = pdsNum('pd-modal-retract-z');
-  if (retractZ > 0) values.retract_z = retractZ * factor;
-  else errors['pd-modal-retract-z'] = 'Enter a height above 0.';
+  if (!(retractZ > 0)) errors['pd-modal-retract-z'] = 'Enter a height above 0.';
+  else if (retractZ < searchZ) errors['pd-modal-retract-z'] = 'Set it at or above the Search Height.';
+  else values.retract_z = retractZ * factor;
 
   const partZ = pdsNum('pd-modal-part-z');
   if (Number.isFinite(partZ)) values.part_z = partZ * factor;
@@ -946,7 +958,7 @@ function pdsRefresh() {
   const diOn = pdsEl('pd-modal-di-check')?.checked !== false;
   const dscOn = pdsEl('pd-modal-dsc-enabled')?.checked === true;
 
-  pdsText('pds-sum-heights', `Safe ${raw('pd-modal-safe-z')} · Part ${raw('pd-modal-part-z')} ${unitLabel(_pdsUnits)}`);
+  pdsText('pds-sum-heights', `Safe ${raw('pd-modal-safe-z')} · Retract ${raw('pd-modal-retract-z')} ${unitLabel(_pdsUnits)}`);
   pdsText('pds-sum-weld', `${raw('pd-modal-stud-type')} · ${raw('pd-modal-pressure')} lbf · DI ${diOn ? 'on' : 'off'}`);
   pdsText('pds-sum-motion', `${raw('pd-modal-speed')}% · DSC ${dscOn ? 'on' : 'off'}`);
   pdsText('pds-sum-origin', cornerLabel(_pdsCorner));
@@ -1015,20 +1027,28 @@ function pdsDrawOrigin() {
   place('pds-od-zero', { x: x0 + dx * 22, y: y0 + dy * 20 + 4 });
 }
 
+// The heights drawing's three plane rows, top to bottom, in SVG units.
+const PDS_ZD_SLOTS = [44, 94, 144];
+
 function pdsDrawHeights() {
   const unit = unitLabel(_pdsUnits);
-  const safeZ = pdsNum('pd-modal-safe-z');
-  const searchZ = pdsNum('pd-modal-retract-z');
   const partZ = pdsNum('pd-modal-part-z');
   const show = (value, sign) => (Number.isFinite(value) ? `${sign}${value} ${unit}` : '—');
+  const planes = [
+    { name: 'safe', value: pdsNum('pd-modal-safe-z') },
+    { name: 'retract', value: pdsNum('pd-modal-retract-z') },
+    { name: 'search', value: pdsNum('pd-modal-search-z') },
+  ];
 
-  // The higher plane takes the top slot, so the drawing never puts the search
-  // height above Safe Z unless it really is.
-  const searchOnTop = searchZ > safeZ;
-  pdsEl('pds-zd-safe')?.setAttribute('transform', `translate(0 ${searchOnTop ? 122 : 52})`);
-  pdsEl('pds-zd-search')?.setAttribute('transform', `translate(0 ${searchOnTop ? 52 : 122})`);
-  pdsText('pds-zd-safe-val', show(safeZ, '+'));
-  pdsText('pds-zd-search-val', show(searchZ, '+'));
+  // Higher planes take higher slots, so the drawing never puts one above
+  // another unless it really is. Ties keep this order; a blank field sinks.
+  const height = plane => (Number.isFinite(plane.value) ? plane.value : -Infinity);
+  [...planes]
+    .sort((a, b) => (height(b) - height(a)) || (planes.indexOf(a) - planes.indexOf(b)))
+    .forEach((plane, slot) => {
+      pdsEl(`pds-zd-${plane.name}`)?.setAttribute('transform', `translate(0 ${PDS_ZD_SLOTS[slot]})`);
+    });
+  planes.forEach(plane => pdsText(`pds-zd-${plane.name}-val`, show(plane.value, '+')));
   pdsText('pds-zd-part-val', show(partZ, ''));
 }
 

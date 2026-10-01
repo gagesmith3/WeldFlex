@@ -767,18 +767,15 @@ function pdGotoStud(p, btn) {
   // Safe Z clears the fixtures; Retract Z and the Search Height are only for a run.
   const safe_z = _state.safe_z !== undefined ? _state.safe_z : 60.0;
   const part_z = _state.part_z !== undefined ? _state.part_z : 0.0;
-  fetch('/ui/parts/goto', {
-    method: 'POST',
-    body: new URLSearchParams({
+  // Through htmx, not fetch + innerHTML: the toast dismisses itself from an inline
+  // <script>, and a script set through innerHTML never runs, so the toast stuck.
+  htmx.ajax('POST', '/ui/parts/goto', {
+    target: '#toast-rack', swap: 'innerHTML',
+    values: {
       x: p.x, y: p.y, safe_z, part_z,
       origin_corner: normalizeCorner(_state.origin_corner),
-    }),
+    },
   })
-    .then(r => r.text())
-    .then(html => {
-      const rack = document.getElementById('toast-rack');
-      if (rack) rack.innerHTML = html;
-    })
     .finally(() => { if (btn) btn.disabled = false; });
 }
 

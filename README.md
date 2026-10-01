@@ -35,7 +35,12 @@ cd venv/Scripts && activate.bat
 cd ..
 cd .. 
 python backend\app.py
+
 ```
+
+## Run WebApp
+ssh -i $HOME\.ssh\id_ed25519_weldflex -N -L 8081:127.0.0.1:8081 -L 9999:127.0.0.1:9999 weldflex@192.168.1.132
+
 
 ## Run modes
 

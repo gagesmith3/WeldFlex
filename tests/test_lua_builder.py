@@ -832,11 +832,13 @@ def test_retract_uses_the_trial_pull_off_speed():
     tripped "Force sensor range threshold reached", while a manual jog straight up
     pulled the same stud off clean (2026-09-30). 25 is a trial of a quicker
     pull-off. Resistance dropped on 2026-10-01, but zerozero was re-taught at the
-    same time, so don't read that as proof the speed did it."""
+    same time, so don't read that as proof the speed did it. It still tripped at
+    25 later that day, so 5 is the next trial: slower than both speeds that
+    tripped."""
     weld = WELD_PATH.read_text(encoding="utf-8")
     match = re.search(r"^local RETRACT_SPEED\s*=\s*([\d.]+)", weld, re.M)
     assert match, "weld.lua no longer declares RETRACT_SPEED"
-    assert float(match.group(1)) == 25.0
+    assert float(match.group(1)) == 5.0
 
 
 def test_a_fault_does_not_erase_which_collision_lever_took():

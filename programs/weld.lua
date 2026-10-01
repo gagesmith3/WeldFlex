@@ -125,8 +125,11 @@ local PRESS_COLL_OFF_LEVEL = 10
 -- reached", and the same stud then came off clean on a manual jog straight up.
 -- 25 matches WeldFlex.lua's default travel speed. Live since that day; on
 -- 2026-10-01 the pull-off had less resistance, but zerozero had just been
--- re-taught too, so which change helped is unknown. See docs/weldNotes.md.
-local RETRACT_SPEED = 25
+-- re-taught too, so which change helped is unknown. Later on 2026-10-01 it
+-- still tripped at 25 on three studs, each about 0.2 s into this Lin, so it
+-- came down to 5, under both speeds that have tripped and the Points page's
+-- descent speed. See docs/weldNotes.md.
+local RETRACT_SPEED = 5
 
 
 -- =========================================

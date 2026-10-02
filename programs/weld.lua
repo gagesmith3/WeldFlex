@@ -93,8 +93,12 @@ local PRESS_DIR = 0     -- 0 = negative (FT_LinInsertion encoding; flipped with 
 -- the gun bottoms out near 9 lbf, after which force climbs almost vertically and
 -- the stop lands several lbf late. Overshoot there scales with arrival speed. The
 -- cost is time on the soft spring travel before that point.
-local SEARCH_SPEED_MMS = 5.0
-local PRESS_SPEED_MMS  = 0.10
+--
+-- 2026-10-02 trial: search 5.0 -> 7.5 and press 0.10 -> 0.15, both still under
+-- the 09-14 speeds that stuck short. If the press stops short or overshoots past
+-- the knee again, go back to 5.0/0.10.
+local SEARCH_SPEED_MMS = 7.5
+local PRESS_SPEED_MMS  = 0.15
 
 -- The park height is the caller's global Z_CLEARANCE, read where it is used and
 -- never shadowed here: WeldFlex.lua parks at the Search Height, single_shot.lua at

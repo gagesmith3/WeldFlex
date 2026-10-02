@@ -814,17 +814,18 @@ def test_surface_search_uses_the_commissioned_gentle_speed():
     weld = WELD_PATH.read_text(encoding="utf-8")
     match = re.search(r"^local SEARCH_SPEED_MMS\s*=\s*([\d.]+)", weld, re.M)
     assert match, "weld.lua no longer declares SEARCH_SPEED_MMS"
-    assert float(match.group(1)) == 5.0
+    assert float(match.group(1)) == 7.5
 
 
 def test_force_press_uses_the_commissioned_slow_speed():
     """A 10 mm/s search with the press at 1.0, then 0.5 mm/s, left the press stuck
     short of force live on 2026-09-14. At 0.25 a 10 lbf press overshot to 14-15 lbf
-    once the gun bottomed out near 9 lbf (2026-09-28), so the press went to 0.10."""
+    once the gun bottomed out near 9 lbf (2026-09-28), so the press went to 0.10.
+    0.15 (with a 7.5 mm/s search) is a trial from 2026-10-02."""
     weld = WELD_PATH.read_text(encoding="utf-8")
     match = re.search(r"^local PRESS_SPEED_MMS\s*=\s*([\d.]+)", weld, re.M)
     assert match, "weld.lua no longer declares PRESS_SPEED_MMS"
-    assert float(match.group(1)) == 0.10
+    assert float(match.group(1)) == 0.15
 
 
 def test_retract_uses_the_trial_pull_off_speed():

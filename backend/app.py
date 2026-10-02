@@ -136,6 +136,23 @@ _tcp_lock = threading.Lock()
 _RECIPES_PATH = os.path.join(os.path.dirname(__file__), 'recipes.json')
 _rec_lock = threading.Lock()
 
+# The part's welder voltage. Saved with the part and shown back; nothing in the
+# weld sequence reads it yet. Optional, so None means "not set".
+VOLTAGE_MAX_V = 200
+
+def _parse_voltage(value):
+    """(volts, error) from a form value. Blank is (None, None): not set."""
+    text = (value or '').strip()
+    if not text:
+        return None, None
+    try:
+        volts = float(text)
+    except ValueError:
+        volts = None
+    if volts is None or not volts.is_integer() or not 1 <= volts <= VOLTAGE_MAX_V:
+        return None, f'Voltage must be a whole number from 1 to {VOLTAGE_MAX_V} V, got {text}.'
+    return int(volts), None
+
 def _parse_stud_reload_ms(value):
     try:
         reload_ms = int(float(value))
@@ -167,6 +184,13 @@ def _recipes_load():
             migrated = True
         if 'welder_profile' in r:
             r.setdefault('di_check', r.pop('welder_profile') != 'liberty')
+            migrated = True
+        # The per-part DI check switch was removed 2026-10-02 (it existed to run
+        # the Liberty welder): every part checks DI0/DI1 now. The field and the
+        # run plumbing stay, and the Single Shot record keeps its own toggle.
+        # The switch itself is archived at the archive/di-check-ui tag.
+        if not r.get('system') and r.get('di_check') is not True:
+            r['di_check'] = True
             migrated = True
         # Three heights since 2026-10-01. From 2026-09-22 until then retract_z
         # held the Search Height; before that safe_z did, and the travel height
@@ -230,6 +254,7 @@ def _recipes_enrich(recipes):
             'substrate': r.get('substrate') or 'Mild Steel',
             'pressure_setting': _parse_pressure(r.get('pressure_setting')),
             'di_check': bool(r.get('di_check', True)),
+            'voltage': r.get('voltage'),
             'dsc_enabled': bool(r.get('dsc_enabled', False)),
             'stud_reload_ms': _parse_stud_reload_ms(r.get('stud_reload_ms')),
             # Parts saved before corners existed were all measured from zerozero.
@@ -635,8 +660,16 @@ def ui_recipes_save():
     dsc_enabled = request.form.get('dsc_enabled') == '1'
     stud_reload_ms = _parse_stud_reload_ms(request.form.get('stud_reload_ms'))
     di_check_raw = request.form.get('di_check')
-    # A form without the field keeps the saved value instead of resetting it.
+    # Only the Single Shot record still has a DI check to set; a part's is
+    # always on (see _recipes_load). A form without the field keeps the saved value.
     di_check = None if di_check_raw is None else di_check_raw.strip() != '0'
+    # Same keep-if-missing rule: only the part designer sends a voltage.
+    voltage, voltage_error = (None, None)
+    if 'voltage' in request.form:
+        voltage, voltage_error = _parse_voltage(request.form.get('voltage'))
+        if voltage_error:
+            return render_template('partials/command_result.html', ok=False,
+                                   title='Save Recipe', payload={'error': voltage_error})
     # Same for the origin corner: only the part designer sends it, and the
     # operator Parts editor's save must not reset a part to front-left.
     origin_corner_raw = request.form.get('origin_corner')
@@ -699,8 +732,13 @@ def ui_recipes_save():
             existing['stud_type']        = stud_type
             existing['substrate']       = substrate
             existing['pressure_setting'] = pressure_setting
-            if di_check is not None:
-                existing['di_check']     = di_check
+            if existing.get('system'):
+                if di_check is not None:
+                    existing['di_check'] = di_check
+            else:
+                existing['di_check']     = True
+            if 'voltage' in request.form:
+                existing['voltage']      = voltage
             if origin_corner is not None:
                 existing['origin_corner'] = origin_corner
             existing['speed']            = speed
@@ -722,7 +760,8 @@ def ui_recipes_save():
                 'stud_type': stud_type,
                 'substrate': substrate,
                 'pressure_setting': pressure_setting,
-                'di_check': True if di_check is None else di_check,
+                'di_check': True,
+                'voltage': voltage,
                 'origin_corner': origin_corner or part_origin.DEFAULT_CORNER,
                 'speed': speed,
                 'dsc_enabled': dsc_enabled,

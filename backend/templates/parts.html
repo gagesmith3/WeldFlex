@@ -51,7 +51,6 @@
       <button type="button" class="btn arm-mode-btn" data-arm-mode="dry" aria-pressed="false"
               onclick="runModalPickArm('dry')">Dry</button>
     </div>
-    <p id="run-modal-di-note" class="arm-mode-di-note" hidden>DI check is off for this part: DI0 welder ready and DI1 stud on work are not checked.</p>
     <div class="wf-modal-actions">
       <button type="button" class="btn wf-cancel" onclick="runModalCancel()">Cancel</button>
       <button type="button" class="btn run" id="run-modal-confirm" onclick="runModalConfirm()" disabled>Run</button>
@@ -85,7 +84,6 @@ document.querySelectorAll('.js-table-run').forEach(function(btn) {
     document.getElementById('run-modal-part-name').textContent = btn.dataset.recipeName;
     document.getElementById('run-modal-cycles').value = '1';
     document.getElementById('run-modal-start-stud').value = '1';
-    document.getElementById('run-modal-di-note').hidden = btn.dataset.diCheck !== '0';
     runModalPickArm(null);
     document.getElementById('run-modal').removeAttribute('hidden');
     document.getElementById('run-modal-cycles').focus();
@@ -112,8 +110,8 @@ function runModalStartStud() {
   return start <= Math.max(1, _runStudCount) ? start : null;
 }
 // Run needs a weld mode and a starting stud that exists; a resume says what it
-// will skip before it is loaded. Both notes are kept to one line: with the DI
-// note showing too, the modal is close to the kiosk's 500 px.
+// will skip before it is loaded. The note is kept to one line, so the modal
+// stays inside the kiosk's 500 px.
 function runModalSync() {
   const start = runModalStartStud();
   const note = document.getElementById('run-modal-start-note');

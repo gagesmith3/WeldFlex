@@ -78,9 +78,11 @@ def test_job_load_refuses_a_run_without_live_or_dry(run_app):
 
 
 @pytest.mark.parametrize("arm_mode", ["live", "dry"])
-@pytest.mark.parametrize("di_check", [True, False])
-def test_job_load_takes_arm_mode_from_the_run_and_di_check_from_the_part(run_app, arm_mode, di_check):
-    run_app.write([_recipe(di_check=di_check)])
+@pytest.mark.parametrize("saved_di_check", [True, False])
+def test_job_load_takes_arm_mode_from_the_run_and_always_checks_di_on_a_part(run_app, arm_mode, saved_di_check):
+    """The per-part DI check switch is gone (2026-10-02): a part saved with it
+    off before then still loads with the checks on."""
+    run_app.write([_recipe(di_check=saved_di_check)])
     response = run_app.client.post(
         "/ui/job/load", data={"recipe_id": "part-1", "cycles": "3", "arm_mode": arm_mode}
     )
@@ -88,7 +90,7 @@ def test_job_load_takes_arm_mode_from_the_run_and_di_check_from_the_part(run_app
     (args, kwargs), = run_app.job.loads
     assert args[0] == "part-1" and args[1] == "Bracket" and args[3] == 3
     assert kwargs["arm_mode"] == arm_mode
-    assert kwargs["di_check"] is di_check
+    assert kwargs["di_check"] is True
     assert "welder_profile" not in kwargs
 
 
@@ -188,23 +190,79 @@ def test_recipes_migrate_off_the_welder_profile_and_the_name_keyed_faceplate(run
         recipes = run_app.module._recipes_load()
 
     by_id = {recipe["id"]: recipe for recipe in recipes}
+    # Liberty ran with DI off; since the per-part switch went, every part checks.
     assert by_id["a"]["di_check"] is True
-    assert by_id["l"]["di_check"] is False
+    assert by_id["l"]["di_check"] is True
     assert by_id["f"]["system"] == "single_shot"
     assert all("welder_profile" not in recipe for recipe in run_app.read())
     assert [r["id"] for r in run_app.module._hide_system_recipes(recipes)] == ["a", "l"]
 
 
-def test_recipe_save_sets_di_check_and_keeps_it_when_the_form_omits_it(run_app):
-    run_app.write([_recipe()])
+def test_recipe_load_turns_the_di_check_back_on_for_every_part_but_single_shot(run_app):
+    run_app.write([
+        _recipe(id="off", name="Off", di_check=False),
+        _recipe(id="unset", name="Unset"),
+        _recipe(id="shot", name="Single Shot", system="single_shot", di_check=False),
+    ])
+    with run_app.module._rec_lock:
+        run_app.module._recipes_load()
+    by_id = {recipe["id"]: recipe for recipe in run_app.read()}
+    assert by_id["off"]["di_check"] is True
+    assert by_id["unset"]["di_check"] is True
+    assert by_id["shot"]["di_check"] is False
+
+
+def test_part_save_ignores_a_di_check_off(run_app):
+    run_app.write([_recipe(di_check=True)])
     form = {"recipe_id": "part-1", "recipe_name": "Bracket", "studs_text": "10,20"}
+    run_app.client.post("/ui/recipes/save", data={**form, "di_check": "0"})
+    assert run_app.read()[0]["di_check"] is True
+
+    run_app.client.post("/ui/recipes/save", data={"recipe_name": "New part", "studs_text": "1,2",
+                                                  "di_check": "0"})
+    assert next(r for r in run_app.read() if r["name"] == "New part")["di_check"] is True
+
+
+def test_single_shot_save_sets_di_check_and_keeps_it_when_the_form_omits_it(run_app):
+    run_app.write([_recipe(id="shot", name="Single Shot", system="single_shot", di_check=True)])
+    form = {"recipe_id": "shot", "recipe_name": "Single Shot", "target_x": "10", "target_y": "20"}
     run_app.client.post("/ui/recipes/save", data={**form, "di_check": "0"})
     assert run_app.read()[0]["di_check"] is False
 
-    # The part designer and the Single Shot settings form post without every
-    # field; a missing di_check must not quietly turn the checks back on.
+    # A form without the field must not quietly turn the checks back on.
     run_app.client.post("/ui/recipes/save", data=form)
     assert run_app.read()[0]["di_check"] is False
+
+
+def test_recipe_save_sets_the_voltage_and_keeps_it_when_the_form_omits_it(run_app):
+    run_app.write([_recipe()])
+    form = {"recipe_id": "part-1", "recipe_name": "Bracket", "studs_text": "10,20"}
+    run_app.client.post("/ui/recipes/save", data={**form, "voltage": "120"})
+    assert run_app.read()[0]["voltage"] == 120
+
+    # Only the part designer sends it; the operator Parts editor must not clear it.
+    run_app.client.post("/ui/recipes/save", data=form)
+    assert run_app.read()[0]["voltage"] == 120
+
+    # Blank is "not set".
+    run_app.client.post("/ui/recipes/save", data={**form, "voltage": ""})
+    assert run_app.read()[0]["voltage"] is None
+
+
+@pytest.mark.parametrize("voltage", ["0", "201", "12.5", "abc", "-5"])
+def test_recipe_save_refuses_a_voltage_out_of_range(run_app, voltage):
+    run_app.write([_recipe(voltage=120)])
+    response = run_app.client.post("/ui/recipes/save", data={
+        "recipe_id": "part-1", "recipe_name": "Bracket", "studs_text": "10,20", "voltage": voltage,
+    })
+    assert "Voltage must be a whole number" in response.get_data(as_text=True)
+    assert run_app.read()[0]["voltage"] == 120
+
+
+def test_a_new_part_starts_with_no_voltage(run_app):
+    run_app.write([])
+    run_app.client.post("/ui/recipes/save", data={"recipe_name": "Fresh", "studs_text": "1,2"})
+    assert run_app.read()[0]["voltage"] is None
 
 
 def test_recipe_save_sets_the_origin_corner_and_keeps_it_when_the_form_omits_it(run_app):

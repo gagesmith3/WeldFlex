@@ -274,7 +274,7 @@
             </select>
           </div>
         </div>
-        <p class="pds-note">Stud size and substrate are saved with the part. The weld sequence doesn't use them yet.</p>
+        <p class="pds-note">Stud size, substrate and voltage are saved with the part. The weld sequence doesn't use them yet.</p>
         <div class="pds-row">
           <div class="pds-field">
             <label for="pd-modal-pressure" class="pds-label">Target Pressure</label>
@@ -288,16 +288,17 @@
             <p class="pds-error" id="pd-modal-pressure-error"></p>
           </div>
           <div class="pds-field">
-            <label for="pd-modal-di-check" class="pds-label">DI Check</label>
-            <label class="pds-switch">
-              <input type="checkbox" id="pd-modal-di-check" aria-describedby="pd-modal-di-check-hint">
-              <span class="pds-switch-track" aria-hidden="true"></span>
-              <span class="pds-switch-state" aria-hidden="true"></span>
-            </label>
-            <p class="pds-hint" id="pd-modal-di-check-hint">Waits for welder ready (DI0) and checks stud on work (DI1).</p>
+            <label for="pd-modal-voltage" class="pds-label">Voltage</label>
+            <div class="pds-input-wrap">
+              <!-- Optional: blank saves as not set. max = app.VOLTAGE_MAX_V. -->
+              <input type="number" id="pd-modal-voltage" class="pds-input" step="1" min="1" max="200" inputmode="none" data-kbd="num"
+                     aria-describedby="pd-modal-voltage-hint pd-modal-voltage-error">
+              <span class="pds-suffix">V</span>
+            </div>
+            <p class="pds-hint" id="pd-modal-voltage-hint">Saved with the part. Not used by the weld yet.</p>
+            <p class="pds-error" id="pd-modal-voltage-error"></p>
           </div>
         </div>
-        <p class="pds-note is-warn" id="pds-di-note" hidden>DI check is off for this part: DI0 welder ready and DI1 stud on work are not checked, on live runs too.</p>
       </section>
 
       <!-- Motion: how fast the arm travels between studs and home. -->
@@ -313,6 +314,9 @@
             <p class="pds-hint" id="pd-modal-speed-hint">Home, approach and stud-to-stud moves.</p>
             <p class="pds-error" id="pd-modal-speed-error"></p>
           </div>
+        </div>
+        <div class="pds-row">
+          <!-- The reload time sits beside the DSC switch: it only matters when it's on. -->
           <div class="pds-field">
             <label for="pd-modal-dsc-enabled" class="pds-label">Dynamic Speed Compensation</label>
             <label class="pds-switch">
@@ -322,10 +326,7 @@
             </label>
             <p class="pds-hint" id="pd-modal-dsc-enabled-hint">Times each stud-to-stud move so the next stud has reloaded on arrival.</p>
           </div>
-        </div>
-        <div class="pds-row">
-          <!-- Sits under the DSC switch: the reload time only matters when it's on. -->
-          <div class="pds-field pds-sub">
+          <div class="pds-field">
             <label for="pd-modal-stud-reload-ms" class="pds-label">Stud Reload Time</label>
             <div class="pds-input-wrap">
               <!-- min/max = lua_builder STUD_RELOAD_MS_MIN/MAX. -->

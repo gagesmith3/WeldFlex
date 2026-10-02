@@ -71,6 +71,17 @@ def test_pressure_limit_is_weld_lua_press_limit(client):
     assert float(_input_attr(_designer(client), "pd-modal-pressure", "max")) == limit
 
 
+def test_voltage_limit_is_the_save_routes_limit(client):
+    html = _designer(client)
+    assert int(_input_attr(html, "pd-modal-voltage", "min")) == 1
+    assert int(_input_attr(html, "pd-modal-voltage", "max")) == importlib.import_module("app").VOLTAGE_MAX_V
+
+
+def test_the_di_check_switch_is_gone_from_part_settings(client):
+    """Removed 2026-10-02; every part checks DI0/DI1. Archived at archive/di-check-ui."""
+    assert "pd-modal-di-check" not in _designer(client)
+
+
 def test_stud_reload_limits_are_lua_builder_limits(client):
     html = _designer(client)
     assert int(_input_attr(html, "pd-modal-stud-reload-ms", "min")) == STUD_RELOAD_MS_MIN

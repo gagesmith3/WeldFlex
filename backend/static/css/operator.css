@@ -5309,6 +5309,7 @@ body.kiosk .pd-part-delete-btn { opacity: 1; }
   align-items: center;
   gap: 10px;
   height: 44px;
+  margin: 0;  /* it is a <label>: drop the global label margin */
   padding: 0 10px;
   background: var(--panel);
   border: 1px solid var(--line);
@@ -5383,18 +5384,11 @@ body.kiosk .pd-part-delete-btn { opacity: 1; }
   color: var(--muted);
 }
 
-/* Same amber as the run modal's DI-off note. */
+/* Amber, for a setting this machine can't run yet. */
 .pds-note.is-warn {
   border: 1px solid #e2c07a;
   background: #fdf6e6;
   color: #6b4a00;
-}
-
-/* A field that only matters when the switch above it is on. */
-.pds-sub {
-  margin-left: 14px;
-  padding-left: 12px;
-  border-left: 2px solid var(--line);
 }
 
 .pds-zdiag {
@@ -5580,9 +5574,9 @@ body.kiosk .pd-part-delete-btn { opacity: 1; }
   }
 }
 
-/* 800×480: every tab fits without scrolling, so the DI check switch never sits
-   below the fold. The part name moves beside the title, summaries go and the
-   vertical rhythm tightens; touch targets keep their 44px. */
+/* 800×480: every tab fits without scrolling, so no field sits below the fold.
+   The part name moves beside the title, summaries go and the vertical rhythm
+   tightens; touch targets keep their 44px. */
 @media (max-height: 520px) {
   .wf-modal.pds-modal {
     max-height: calc(100vh - 16px);
@@ -5613,11 +5607,6 @@ body.kiosk .pd-part-delete-btn { opacity: 1; }
   .pds-fields,
   .pds-row {
     gap: 8px;
-  }
-
-  .pds-switch {
-    min-height: 48px;
-    padding-block: 6px;
   }
 
   .pds-note:not(.is-warn) {

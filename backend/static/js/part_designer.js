@@ -16,7 +16,7 @@ let _state = {
   speed: 25,
   dsc_enabled: false,
   stud_reload_ms: 600,
-  di_check: true,
+  voltage: null,      // volts, or null when not set; saved only, nothing reads it yet
   origin_corner: 'front_left',
   isDirty: false,
 };
@@ -328,7 +328,7 @@ function loadPart(id, name, idx) {
           : 25;
         _state.dsc_enabled = data.recipe.dsc_enabled === true;
         _state.stud_reload_ms = normalizeStudReloadMs(data.recipe.stud_reload_ms);
-        _state.di_check = data.recipe.di_check !== false;
+        _state.voltage = normalizeVoltage(data.recipe.voltage);
         _state.origin_corner = normalizeCorner(data.recipe.origin_corner);
       }
       renderPoints();
@@ -471,7 +471,7 @@ function pdStartNewPart(name) {
   _state.speed         = 25;
   _state.dsc_enabled   = false;
   _state.stud_reload_ms = 600;
-  _state.di_check      = true;
+  _state.voltage       = null;
   _state.origin_corner = PD_CORNERS[0];
 
   const titleEl = document.getElementById('pd-canvas-part-title');
@@ -522,7 +522,7 @@ function pdSave() {
   const speed = _state.speed !== undefined ? _state.speed : 25;
   const dsc_enabled = _state.dsc_enabled === true ? '1' : '0';
   const stud_reload_ms = normalizeStudReloadMs(_state.stud_reload_ms);
-  const di_check = _state.di_check === false ? '0' : '1';
+  const voltage = _state.voltage === null ? '' : _state.voltage;
   const origin_corner = normalizeCorner(_state.origin_corner);
 
   const body = new URLSearchParams({
@@ -539,7 +539,7 @@ function pdSave() {
     speed,
     dsc_enabled,
     stud_reload_ms,
-    di_check,
+    voltage,
     origin_corner,
   });
   if (_state.activeId) body.set('recipe_id', _state.activeId);
@@ -846,8 +846,7 @@ function pdOpenJobSettingsModal() {
   pdsSetValue('pd-modal-pressure', _state.pressure_setting ?? 20.0);
   pdsSetValue('pd-modal-speed', _state.speed ?? 25);
   pdsSetValue('pd-modal-stud-reload-ms', normalizeStudReloadMs(_state.stud_reload_ms));
-  const diCheck = pdsEl('pd-modal-di-check');
-  if (diCheck) diCheck.checked = _state.di_check !== false;
+  pdsSetValue('pd-modal-voltage', _state.voltage ?? '');
   const dsc = pdsEl('pd-modal-dsc-enabled');
   if (dsc) dsc.checked = _state.dsc_enabled === true;
   modal.querySelectorAll('.pds-input').forEach(input => { delete input.dataset.touched; });
@@ -923,7 +922,14 @@ function pdsReadForm() {
   if (pressure > 0 && pressure <= pressureMax) values.pressure_setting = pressure;
   else errors['pd-modal-pressure'] = `Enter more than 0, up to ${pressureMax} lbf.`;
 
-  values.di_check = pdsEl('pd-modal-di-check')?.checked !== false;
+  // Optional: blank means not set. Whole volts only.
+  const voltageRaw = (pdsEl('pd-modal-voltage')?.value || '').trim();
+  const voltage = Number(voltageRaw);
+  const voltageMin = pdsLimit('pd-modal-voltage', 'min');
+  const voltageMax = pdsLimit('pd-modal-voltage', 'max');
+  if (voltageRaw === '') values.voltage = null;
+  else if (Number.isInteger(voltage) && voltage >= voltageMin && voltage <= voltageMax) values.voltage = voltage;
+  else errors['pd-modal-voltage'] = `Enter a whole number, ${voltageMin} to ${voltageMax} V, or leave it blank.`;
 
   const speed = Math.round(pdsNum('pd-modal-speed'));
   const speedMin = pdsLimit('pd-modal-speed', 'min');
@@ -952,16 +958,14 @@ function pdsRefresh() {
   if (!modal) return form;
 
   const raw = id => (pdsEl(id)?.value || '').trim() || '—';
-  const diOn = pdsEl('pd-modal-di-check')?.checked !== false;
   const dscOn = pdsEl('pd-modal-dsc-enabled')?.checked === true;
 
   pdsText('pds-sum-heights', `Safe ${raw('pd-modal-safe-z')} · Retract ${raw('pd-modal-retract-z')} ${unitLabel(_pdsUnits)}`);
-  pdsText('pds-sum-weld', `${raw('pd-modal-stud-type')} · ${raw('pd-modal-pressure')} lbf · DI ${diOn ? 'on' : 'off'}`);
+  const voltageText = (pdsEl('pd-modal-voltage')?.value || '').trim();
+  pdsText('pds-sum-weld', `${raw('pd-modal-stud-type')} · ${raw('pd-modal-pressure')} lbf${voltageText ? ` · ${voltageText} V` : ''}`);
   pdsText('pds-sum-motion', `${raw('pd-modal-speed')}% · DSC ${dscOn ? 'on' : 'off'}`);
   pdsText('pds-sum-origin', cornerLabel(_pdsCorner));
 
-  const diNote = pdsEl('pds-di-note');
-  if (diNote) diNote.hidden = diOn;
   const calibrationNote = pdsEl('pds-dsc-cal-note');  // rendered only on an uncalibrated machine
   if (calibrationNote) calibrationNote.hidden = !dscOn;
   const reload = pdsEl('pd-modal-stud-reload-ms');
@@ -982,7 +986,7 @@ function pdsRefresh() {
     }
   });
 
-  const warnings = { weld: !diOn, motion: dscOn && !!calibrationNote };
+  const warnings = { motion: dscOn && !!calibrationNote };
   modal.querySelectorAll('.pds-tab').forEach(tab => {
     const name = tab.dataset.tab;
     tab.dataset.state = tabsWithErrors.has(name) ? 'error' : (warnings[name] ? 'warn' : '');
@@ -1113,6 +1117,12 @@ function pdsOnKeydown(e) {
 function normalizeStudReloadMs(value) {
   const reloadMs = Math.round(parseFloat(value));
   return Number.isFinite(reloadMs) ? Math.max(1, Math.min(10000, reloadMs)) : 600;
+}
+
+// A saved voltage, or null when the part has none.
+function normalizeVoltage(value) {
+  const volts = Number(value);
+  return value === null || value === undefined || value === '' || !Number.isInteger(volts) ? null : volts;
 }
 
 function pdOpenJobReportsModal() {

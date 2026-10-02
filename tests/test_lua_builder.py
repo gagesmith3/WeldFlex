@@ -861,6 +861,24 @@ def test_retract_lifts_straight_up_from_where_the_head_is():
     assert run.index("parkPose = readPose()") < run.index("waitForWeldReady()")
 
 
+def test_the_lift_turns_the_ft_collision_guard_off_first():
+    """Owner's call, 2026-10-02: turn FT_Guard off before every lift as a test
+    against the retract trip. weld.lua never turns the guard on, so this only
+    matters if something else left it on. It must not depend on USE_FT_GUARD
+    (which is 0, so ftGuardPress(0) never calls FT_Guard), and it must use the
+    sensor number read from the controller."""
+    code = strip_lua_comments(WELD_PATH.read_text(encoding="utf-8"))
+    guard_off = code.split("local function ftGuardOff()", 1)[1].split("local function ", 1)[0]
+    assert "USE_FT_GUARD" not in guard_off
+    assert "FT_Guard(0, FTC_SENSOR_NUM," in guard_off
+
+    depart = code.split("local function departFromStud()", 1)[1].split("local function ", 1)[0]
+    assert depart.index("ftGuardOff()") < depart.index("Lin(zerozero, RETRACT_SPEED"), \
+        "the guard must be off before the lift starts"
+    # Defined above departFromStud(), or the call would look up a nil global.
+    assert code.index("local function ftGuardOff()") < code.index("local function departFromStud()")
+
+
 def test_a_fault_does_not_erase_which_collision_lever_took():
     """fault() runs forceControlOff() on its way out, which releases the collision
     guard. The release used to publish GUARD_RELEASED unconditionally, so every

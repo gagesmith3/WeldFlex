@@ -273,6 +273,27 @@ local function readPose()
     return p
 end
 
+-- ===== F/T Collision Guard Off For The Lift =====
+-- FT_Guard(0) turns off the force sensor's collision guard. It does not switch
+-- the sensor itself off, and no Lua instruction can. weld.lua never turns that
+-- guard on (USE_FT_GUARD = 0), so this only changes anything if something else
+-- left it on, such as a pendant program. Owner's call, 2026-10-02, as a test
+-- against "Force sensor range threshold reached" at the retract: if the trips
+-- stop, a guard was on; if they don't, FT_Guard is ruled out. Unconditional,
+-- unlike ftGuardPress(), and all six axes in case the off is per-axis.
+local function ftGuardOff()
+    if type(FT_Guard) ~= "function" then
+        print("[WELD] FT_Guard is not available; lifting without turning the guard off.")
+        return
+    end
+    FT_Guard(0, FTC_SENSOR_NUM,
+        1, 1, 1, 1, 1, 1,
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    print("[WELD] F/T collision guard off for the lift.")
+end
+
 -- ===== Departure: Straight Up Off The Bed =====
 -- The lift goes straight up the workpiece Z from wherever the head actually is,
 -- the way the Points page lifts (backend/point_moves.py): only Z changes. A side
@@ -318,6 +339,8 @@ local function departFromStud()
     else
         print("[WELD] WARNING: no pose reading; retracing the descent instead of lifting straight up.")
     end
+
+    ftGuardOff()
 
     -- flag=0: workpiece frame, matching WeldFlex.lua's traverse (see its comment).
     PointsOffsetEnable(0, liftX, liftY, Z_CLEARANCE, 0, 0, 0)

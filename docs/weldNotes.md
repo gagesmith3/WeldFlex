@@ -103,7 +103,7 @@ After a fault, the program parks ~3s on a unique `WaitMs` line site (`1`, `4`, `
 ### Run Mode Globals (resolved once by `lua_builder.RunMode`):
 Both callers publish these once, above their cycle loop, through the `--{{RUN_MODE}}` marker. Neither derives or changes them in Lua.
 - `WELD_ARMED`: `1` fires the weld trigger output for real. Any other value (or unset) suppresses the weld pulse while search, press, hold, retract, and feeder advance still run. Comes from the Live/Dry choice made for every run.
-- `WELD_DI_CHECK`: The recipe's DI check. `0` skips the `DI0` welder-ready wait, the `DI1` stud-on-work check after search, and the pre-fire re-check of both, **on live runs too** (owner decision, 2026-09-14). Any other value, or unset, keeps all three checks.
+- `WELD_DI_CHECK`: The recipe's DI check, always `1` for a customer part since `9e5677e` (the per-part switch was removed); only Admin's Single Shot record can still set `0`. `0` skips the `DI0` welder-ready wait, the `DI1` stud-on-work check after search, and the pre-fire re-check of both, **on live runs too** (owner decision, 2026-09-14). Any other value, or unset, keeps all three checks.
 
 ### Optional Globals:
 - `WELD_PRESS_LBF`: Press target in lbf, overriding 20.0 lbf default (clamped up to `PRESS_TARGET_MAX_LBF = 22.0 lbf` / 97.9 N), keeping `FT_LinInsertion` below its documented 100 N threshold limit.

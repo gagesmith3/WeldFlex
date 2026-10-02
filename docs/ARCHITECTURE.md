@@ -17,8 +17,8 @@ at the repo root; that file is the spec, this one maps it onto the code.
 
 > **A live run welds for real.** As of the 2026-08-03 rewrite (commits
 > `11aff8c`/`e55a18b`) the generated program calls `programs/weld.lua` per
-> stud, which fires the arc once its two DI checks pass, or without them when
-> the recipe's DI check is off. Live or Dry is picked for every run. A dry run
+> stud, which fires the arc once its two DI checks pass (a part always checks;
+> only a Single Shot can turn them off). Live or Dry is picked for every run. A dry run
 > follows the same search, press, hold, retract, and feeder sequence, but sets
 > `WELD_ARMED = 0` so it never pulses the weld trigger output.
 
@@ -97,13 +97,18 @@ Consequences worth knowing:
 - **The run mode is emitted the same way, through one marker.** A run's mode is
   two switches, resolved once by `lua_builder.RunMode`: `arm_mode` (Live or
   Dry, chosen for every run, with no default at any layer) and `di_check`
-  (saved on the recipe, default on). `--{{RUN_MODE}}` expands to `WELD_ARMED`
+  (saved on the recipe). `--{{RUN_MODE}}` expands to `WELD_ARMED`
   and `WELD_DI_CHECK` above the cycle loop, and neither caller template derives
   or changes them. DI check off skips the DI0 welder-ready wait and both DI1
   stud-on-work checks, **live runs included**. That was the owner's decision on
   2026-09-14, which also removed the `atlas`/`liberty` welder profile, its
   dry-only guards, and the configurable trigger output (now fixed in `weld.lua`
-  at DO0 for 250 ms).
+  at DO0 for 250 ms). Since `9e5677e` a customer part's `di_check` is always
+  true: `_recipes_load()` migrates every non-system recipe to it and
+  `/ui/recipes/save` ignores the field for them, because the per-part switch
+  existed only to run the Liberty welder. The Single Shot record keeps its
+  toggle, so `RunMode` and `WELD_DI_CHECK` still carry both values; the removed
+  switch is archived at the `archive/di-check-ui` tag.
 - **A run can start partway through the stud list** (2026-09-30). A fault
   cancels the program and nothing resumes it, so finishing the part used to
   mean deleting the studs already welded from the recipe. The run modal's

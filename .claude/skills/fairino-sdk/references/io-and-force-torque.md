@@ -158,7 +158,7 @@ prove XML-RPC"). Whether the stream actually fills `ForceSnapshot` on this
 firmware is still unverified, but force no longer depends on the answer.
 
 Per [[no-adhoc-robot-probes]] this needs an app-based, read-only check (watch
-`/operator/robot-diagnostics` or the weld-test page for changing force values
+Settings → Robot Diagnostics (`/operator/settings/diagnostics`) for changing force values
 while idle) rather than a standalone script — see
 `error-handling-and-connection.md`'s recovery procedure and
 `docs/ROBOT_TELEMETRY.md`'s recovery section.

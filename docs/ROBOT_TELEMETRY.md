@@ -234,10 +234,12 @@ cycle tracking here — that entry is retired, not merely reworded.
 
 ## Recovery Procedure
 
-1. Read the connection state and telemetry age on Robot Diagnostics. The Status
-   Feed panel shows frame counters, checksum failures, resyncs and `LEN`, side
-   by side with the XML-RPC values. (The Weld Test page this step used to name
-   as an alternative was deleted in `11aff8c`.)
+1. Read the Commands and Status feed lights on Settings → Robot Diagnostics
+   (`/operator/settings/diagnostics`). For frame counters, checksum failures,
+   resyncs and `LEN` side by side with the XML-RPC values, open
+   `/ui/diagnostics/feed` directly; no page has linked that panel since the
+   diagnostics page was condensed in `173f068`. (The Weld Test page this step
+   used to name as an alternative was deleted in `11aff8c`.)
 2. `TELEMETRY` (amber) means the robot is fine and commands are not getting
    through — normal during a force operation, and it should clear on its own.
    It is not a reason to reconnect mid-run.
@@ -246,8 +248,8 @@ cycle tracking here — that entry is retired, not merely reworded.
 4. If controller faults persist, clear them through the approved operator UI or
    the pendant. Code `14` on every raw read after a program has stopped is a
    latched fault and is not fixed by reconnecting alone.
-5. Verify a new connection generation and fresh frames before resuming
-   observation.
+5. Verify the Commands light is back to Online, and fresh frames with a new
+   feed generation on `/ui/diagnostics/feed`, before resuming observation.
 
 Do not run ad-hoc XML-RPC, CNDE or 8083 scripts against the live controller — a
 diagnostic script crashed it on 2026-07-28. Validation is app-based and

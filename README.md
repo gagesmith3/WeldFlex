@@ -44,11 +44,12 @@ ssh -i $HOME\.ssh\id_ed25519_weldflex -N -L 8081:127.0.0.1:8081 -L 9999:127.0.0.
 
 ## Run modes
 
-Every run is **Live** or **Dry**, picked in the run modal each time; there is no
+Every run is **Live** or **Dry**, picked in the **Load** modal each time; there is no
 default. Dry runs the full search, press, retract and feed sequence without
-pulsing the weld output. Each part also saves a **DI check** setting, on by
-default. With it off, the DI0 welder-ready and DI1 stud-on-work checks are
-skipped, on live runs too, and the job panel shows **DI OFF**.
+pulsing the weld output. Every part runs the DI0 welder-ready and DI1
+stud-on-work checks; the per-part **DI check** setting was removed. Only the
+Single Shot tool below still has one. With it off, those checks are skipped, on
+live runs too, and the job panel shows **DI OFF**.
 
 Admin's **Single Shot** tool welds one stud at a saved target point, with the
 same Live/Dry choice, then feeds the next stud and stays over the target.
@@ -56,7 +57,7 @@ same Live/Dry choice, then feeds the next stud and stays over the target.
 ## Resuming a part after a fault
 
 A fault cancels the program, and a run cannot be picked back up. To finish the
-part on the bed, run it again and set **Starting stud** in the run modal to the
+part on the bed, run it again and set **Starting stud** in the **Load** modal to the
 next stud after the last one welded. Studs are counted from 1 in the order the
 part lists them. The first cycle starts there; any further cycles weld every
 stud. Left at 1, the default, a run welds the whole part. The job panel shows

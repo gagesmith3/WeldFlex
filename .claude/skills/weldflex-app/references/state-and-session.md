@@ -76,11 +76,29 @@ write sites in `app.py`, both just `"pause_points": []` — and read by nothing;
 not exist yet; see `docs/ARCHITECTURE.md`. Do not build anything that assumes
 this field means something.
 
+**Optional fields keep their saved value when a form omits them.** Not every
+save form posts every field (the operator Parts editor and the Single Shot form
+post fewer than the part designer), so a field that is missing from the form
+leaves the saved value alone instead of resetting it. That keep-if-missing rule
+is what the fields below follow.
+
+**`di_check` is always `true` on a customer part** (since `9e5677e`).
+`_recipes_load()` migrates every non-`system` recipe to it and
+`/ui/recipes/save` ignores the field for them; only the Single Shot record
+honours a posted `di_check`, under the keep-if-missing rule. `RunMode` and
+`WELD_DI_CHECK` still carry both values for that record. The removed per-part
+switch is archived at the `archive/di-check-ui` tag.
+
+**`voltage`** is whole volts, 1 to `VOLTAGE_MAX_V` (200), or `null` when not
+set. It is saved and shown back (Part Settings → Weld, the operator's part
+details) and read by nothing else yet. On save it follows the keep-if-missing
+rule; blank posts `null`, and anything else out of range is refused.
+
 **`origin_corner` says which bed corner the studs are measured from**:
 `front_left` (the taught `zerozero`), `front_right`, `back_left` or
 `back_right`, with X/Y running inward from it. A record without it reads as
 `front_left` in `_recipes_enrich()`, so no migration writes it. On save it
-follows `di_check`'s keep-if-missing rule, because only the part designer sends
+follows the keep-if-missing rule, because only the part designer sends
 it and the operator Parts editor's save must not re-corner a part. An unknown
 value is refused, not defaulted. **Stored studs are therefore not robot
 offsets.** Anything that moves to a stud must resolve it through
@@ -101,7 +119,7 @@ a migrated part travels as it did until someone lowers it. Run records follow
 the same split, and `mgr_reports.html`'s `heights()` reads all three formats.
 A `retract_z` below `search_z` is refused on save, at `JobManager.load` and in
 `build_weldflex_lua` (`lua_builder.check_travel_heights`). On save both follow
-`di_check`'s keep-if-missing rule, except that a form posting `retract_z` with
+the keep-if-missing rule, except that a form posting `retract_z` with
 no `search_z` is a page loaded before the change, and its `retract_z` is read
 as the Search Height. The Single Shot record uses only `safe_z`: a shot
 searches from it and retracts back to it.

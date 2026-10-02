@@ -73,7 +73,7 @@ in).
 
 ## Oddball: out-of-band swap
 
-`partials/diagnostics_readout.html`'s `#diagnostics-error` block uses an HTMX out-of-band swap
-(`hx-swap-oob="innerHTML"` on `#diagnostics-error`) to push an error into a
-sibling panel. This is unique to the diagnostics page — treat it as a one-off
-for that specific layout, not a fourth general convention to reuse elsewhere.
+None left. The old diagnostics readout pushed its connection error into a
+sibling panel with `hx-swap-oob`; that page was condensed in `173f068` and the
+error now renders inside `partials/diagnostics_summary.html` itself. Don't
+reintroduce out-of-band swaps as a fourth convention.

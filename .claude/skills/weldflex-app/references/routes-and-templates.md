@@ -2,7 +2,7 @@
 
 ## Route inventory
 
-Page routes (`app.py`) — verified against the code 2026-09-09:
+Page routes (`app.py`) — verified against the code at `173f068`:
 ```
 /                                   landing.html
 /operator                           operator.html
@@ -14,9 +14,10 @@ Page routes (`app.py`) — verified against the code 2026-09-09:
 /operator/calibration               calibration.html   (menu page)
 /operator/jog                       jog.html
 /operator/calibration/force-sensor  force_sensor.html
-/operator/points                    points.html   (calibration menu — send the TCP to a taught point, see `points` below)
+/operator/points                    points.html   (home Navigation panel since `986e4e2` — send the TCP to a taught point, see `points` below)
 /operator/tcp-calibrate             tcp_calibrate.html
-/operator/robot-diagnostics         robot_diagnostics.html
+/operator/settings/diagnostics      robot_diagnostics.html   (Settings tile; one-screen summary, see `diagnostics` below)
+/operator/robot-diagnostics         redirects to /operator/settings/diagnostics (the URL before `986e4e2`)
 /operator/settings                  settings.html   (menu: 3×2 grid of calib-menu-card tiles; an href-less tile is a dimmed placeholder)
 /operator/settings/wifi             settings_wifi.html      (Wi-Fi card — partials/wifi_card.html, /ui/wifi/*)
 /operator/settings/hotspot          settings_hotspot.html   (hotspot card — partials/hotspot_card.html, /ui/wifi/hotspot/*)
@@ -38,7 +39,8 @@ confuse the next reader, but that's a code fix, not a doc one.
 
 **`/operator/liberty`, `liberty.html` and `/operator/faceplate` are gone**
 (2026-09-14). The Liberty endurance page went with the `welder_profile` recipe
-field and its `WELDFLEX_LIBERTY_*` settings; a recipe's DI check replaced both.
+field and its `WELDFLEX_LIBERTY_*` settings; a recipe's DI check replaced both,
+and was itself removed for customer parts in `9e5677e` (only Single Shot keeps it).
 The Faceplate page became Single Shot. There is still no `/operator/calibrate`;
 `calibrate.html` is orphaned (see below).
 
@@ -221,8 +223,8 @@ through `job.stop()` so a running job still finalizes. Load-bearing:
   from `zerozero`, like the studs of a front-left part. A shot has no origin
   corner. The fields are separate because the on-screen number pad has no
   comma key, so a single `"X, Y"` box cannot be filled in on the kiosk.
-  `/ui/recipes/save` holds both to `app.BED_MM` (0–762 mm, the part designer's
-  `BED`) and refuses a bad target with an error toast instead of saving no
+  `/ui/recipes/save` holds both to `app.BED_MM` (0–762 mm, `bed_map.js`'s
+  `BED`, the bed the part designer draws) and refuses a bad target with an error toast instead of saving no
   target; an unparseable `studs_text` from the parts page is refused the same
   way. The modal only closes and reloads when the response carries
   `X-Recipe-Id`. `tests/test_lua_builder.py` resolves both programs' approach
@@ -235,6 +237,21 @@ through `job.stop()` so a running job still finalizes. Load-bearing:
   `homewf`; the page's Move Home button does. The job runs under part_id
   `__single_shot__`, which matches no recipe, so shots never fold into part
   stats.
+
+`diagnostics` is `/ui/diagnostics`, the one-screen summary
+(`partials/diagnostics_summary.html`) that `/operator/settings/diagnostics`
+polls, plus `/ui/diagnostics/{reconnect,reset-errors,stop-program}`. Every value
+is a cache read, and the fault tile reuses `_fault_view()`. `/ui/diagnostics/feed`
+(`partials/feed_readout.html`) has had no page mounting it since `173f068`, but
+it must stay: `tools/feed_continuity.py` scrapes its text.
+
+`parts` on the operator side: the row button says **Load** (it queues the job;
+Run on the operator page starts it), and the part name opens a read-only details
+modal in `parts.html`, fed by JSON rendered into the page (`app._part_details`).
+Its bed is drawn by `static/js/bed_map.js`, the module the part designer's
+`buildGrid()`/`renderPoints()` now wrap, so corner mirroring has one
+implementation. `tests/test_part_origin.py` and `tests/test_app_run_modes.py`
+read `CORNERS` and `BED` out of that file.
 
 **Flat exceptions** — only two remain: `/ui/connection` and `/ui/studs-preview`.
 The old flat run verbs (`/ui/run`, `/ui/pause`, `/ui/resume`, `/ui/stop`) and
@@ -260,8 +277,8 @@ still in the code (see the audit log).
 | Item | Status | Build on this instead |
 |---|---|---|
 | `partials/recipe_library.html` | Not included/rendered anywhere. References `/ui/recipes/load`, `/ui/recipes/delete`, `GET /ui/recipes` — none exist. | `parts.html` + `partials/parts_editor.html` + `partials/parts_recipe_list.html` |
-| `partials/status.html` + `live_status_mount` macro (`components/ui.html`, default endpoint `/ui/status`) | Neither the macro nor the partial is invoked from any template; `/ui/status` doesn't exist. | `partials/connection_chips.html` via `/ui/connection`, or `partials/diagnostics_readout.html` via `/ui/diagnostics` |
-| `/operator/calibrate` + `/ui/calibrate/status\|enable-drag\|record-pin\|goto-clearance\|apply\|reset` | Unlinked since 2026-09-24 (the calibration menu is Jog, Force Sensor and Points); `calibrate.html`/`partials/calibrate_steps.html` exist and target all 6 endpoints — **none of these routes exist in `app.py` yet.** | This is the next planned feature — see `state-and-session.md` and the `fairino-sdk` skill's `coordinate-calibration.md` |
+| `partials/status.html` + `live_status_mount` macro (`components/ui.html`, default endpoint `/ui/status`) | Neither the macro nor the partial is invoked from any template; `/ui/status` doesn't exist. | `partials/connection_chips.html` via `/ui/connection`, or `partials/diagnostics_summary.html` via `/ui/diagnostics` |
+| `/operator/calibrate` + `/ui/calibrate/status\|enable-drag\|record-pin\|goto-clearance\|apply\|reset` | Unlinked since 2026-09-24 (the calibration menu is Jog and Force Sensor; Points moved to the home page in `986e4e2`); `calibrate.html`/`partials/calibrate_steps.html` exist and target all 6 endpoints — **none of these routes exist in `app.py` yet.** | This is the next planned feature — see `state-and-session.md` and the `fairino-sdk` skill's `coordinate-calibration.md` |
 
 `home.html` and `partials/home_current_run.html` have since been deleted —
 earlier revisions of this file listed them as orphans. (`liberty.html` and

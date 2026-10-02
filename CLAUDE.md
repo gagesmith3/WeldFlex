@@ -47,9 +47,12 @@ true against the committed code.
 
 **A run's mode is two switches, and nothing else** (2026-09-14). **Live or
 Dry** is picked for every run: the parts run modal and the Single Shot confirm
-have no default, and neither does `JobManager.load()`. **DI check** is saved on
-the recipe, on by default; off skips the DI0 welder-ready wait and both DI1
-stud-on-work checks, **live runs included**. That replaced the welder profile
+have no default, and neither does `JobManager.load()`. **DI check** is always
+on for customer parts: the per-part switch was removed in `9e5677e`, recipes
+migrate to `di_check: true` when loaded, and a part save ignores the field. Only
+Admin's Single Shot record still has a DI check toggle; off skips the DI0
+welder-ready wait and both DI1 stud-on-work checks, **live runs included**. The
+removed switch is archived at the `archive/di-check-ui` tag. That replaced the welder profile
 (`atlas`/`liberty`) and the Liberty "dry-run only" guards, which the owner
 removed deliberately on 2026-09-14. `lua_builder.RunMode` resolves both once and
 `WeldFlex.lua`/`single_shot.lua` publish them verbatim. Don't reintroduce mode

@@ -67,7 +67,9 @@ by `lua_builder.RunMode` and published verbatim by both callers through their
 every run (no default anywhere); dry runs the full
 search/press/hold/retract/feed sequence without pulsing the weld trigger.
 `WELD_DI_CHECK` comes from the recipe's `di_check`; `0` skips the DI0 wait and
-both DI1 checks, live runs included.
+both DI1 checks, live runs included. Since `9e5677e` a customer part's
+`di_check` is always true (migrated on load, ignored on save); only the Single
+Shot record can be off. Stale if a doc says a part can save DI check off.
 
 ```bash
 grep -n 'WELD_ARMED\|WELD_DI_CHECK' programs/weld.lua programs/WeldFlex.lua programs/single_shot.lua

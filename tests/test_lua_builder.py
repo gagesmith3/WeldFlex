@@ -879,6 +879,31 @@ def test_the_lift_turns_the_ft_collision_guard_off_first():
     assert code.index("local function ftGuardOff()") < code.index("local function departFromStud()")
 
 
+def test_the_travel_guard_is_on_between_studs_and_off_for_the_weld():
+    """Owner's call, 2026-10-02: turn the F/T guard back on once a stud is
+    done, so travel to the next stud stops on a hit. It must be off again before
+    the search and press, which load the sensor far past the travel window, and
+    it is armed only after the feed and only on a clean finish: a fault leaves it
+    off for the recovery."""
+    code = strip_lua_comments(WELD_PATH.read_text(encoding="utf-8"))
+    travel = code.split("local function ftGuardTravel()", 1)[1].split("local function ", 1)[0]
+    assert "FT_Guard(1, FTC_SENSOR_NUM," in travel
+    assert "TRAVEL_GUARD_N, TRAVEL_GUARD_N, TRAVEL_GUARD_N, 0.0, 0.0, 0.0" in travel
+    assert "USE_TRAVEL_GUARD" in travel
+
+    run = code.split("local function weldOneStud()", 1)[1]
+    assert run.index("ftGuardOff()") < run.index("searchForStud()"), \
+        "the press would trip the travel guard"
+    assert run.index("feedNextStud()") < run.index("ftGuardTravel()"), \
+        "a stud blown into the chuck can spike the reading"
+    assert run.count("ftGuardTravel()") == 1
+
+    for name in ("local function fault(msg, site)", "local function departFromStud()",
+                 "local function retract()"):
+        body = code.split(name, 1)[1].split("local function ", 1)[0]
+        assert "ftGuardTravel()" not in body, f"{name} must not arm the travel guard"
+
+
 def test_a_fault_does_not_erase_which_collision_lever_took():
     """fault() runs forceControlOff() on its way out, which releases the collision
     guard. The release used to publish GUARD_RELEASED unconditionally, so every

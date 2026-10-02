@@ -275,15 +275,16 @@ end
 
 -- ===== F/T Collision Guard Off For The Lift =====
 -- FT_Guard(0) turns off the force sensor's collision guard. It does not switch
--- the sensor itself off, and no Lua instruction can. weld.lua never turns that
--- guard on (USE_FT_GUARD = 0), so this only changes anything if something else
--- left it on, such as a pendant program. Owner's call, 2026-10-02, as a test
--- against "Force sensor range threshold reached" at the retract: if the trips
--- stop, a guard was on; if they don't, FT_Guard is ruled out. Unconditional,
--- unlike ftGuardPress(), and all six axes in case the off is per-axis.
+-- the sensor itself off, and no Lua instruction can. weld.lua never turned that
+-- guard on before ftGuardTravel() below, so the first FT_Guard(0) only changed
+-- anything if something else had left it on, such as a pendant program. It did:
+-- with it before the lift, "Force sensor range threshold reached" stopped
+-- tripping at the retract (owner, 2026-10-02, b885e56). Unconditional, unlike
+-- ftGuardPress(), and all six axes in case the off is per-axis. Also runs before
+-- every search, since the travel guard is armed by then.
 local function ftGuardOff()
     if type(FT_Guard) ~= "function" then
-        print("[WELD] FT_Guard is not available; lifting without turning the guard off.")
+        print("[WELD] FT_Guard is not available; continuing without turning the guard off.")
         return
     end
     FT_Guard(0, FTC_SENSOR_NUM,
@@ -291,7 +292,38 @@ local function ftGuardOff()
         0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
         0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
         0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
-    print("[WELD] F/T collision guard off for the lift.")
+    print("[WELD] F/T collision guard off.")
+end
+
+-- ===== F/T Collision Guard On For Travel =====
+-- Owner's call, 2026-10-02: with the guard off for the lift, turn it back
+-- on once the stud is done, so the caller's travel to the next stud (and home)
+-- stops on a hit. Armed after the feed, since a stud blown into the chuck can
+-- spike the reading, and only on a clean finish: after a fault it stays off for
+-- the recovery. Off again before the next search (weldOneStud()), because the
+-- search and press load the sensor far past this window.
+--
+-- This is weld.lua's own guard, not whatever was on before: nothing can read a
+-- guard's settings back. The window is +/-TRAVEL_GUARD_N on Fx, Fy and Fz around
+-- zero, since Lua cannot read force to take a starting value; the head is in
+-- free air here, so the zeroed reading should be near 0. A side hit at the gun
+-- tip reaches the sensor as the same force, so the moments are left out. The
+-- guard stays on after the run ends, until the next search turns it off.
+local USE_TRAVEL_GUARD = 1
+local TRAVEL_GUARD_N   = 30.0   -- ~6.7 lbf; the first value tried, fine in the 2026-10-02 test runs
+
+local function ftGuardTravel()
+    if USE_TRAVEL_GUARD ~= 1 then return end
+    if type(FT_Guard) ~= "function" then
+        print("[WELD] FT_Guard is not available; travelling without a force guard.")
+        return
+    end
+    FT_Guard(1, FTC_SENSOR_NUM,
+        1, 1, 1, 0, 0, 0,
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+        TRAVEL_GUARD_N, TRAVEL_GUARD_N, TRAVEL_GUARD_N, 0.0, 0.0, 0.0,
+        TRAVEL_GUARD_N, TRAVEL_GUARD_N, TRAVEL_GUARD_N, 0.0, 0.0, 0.0)
+    print(string.format("[WELD] F/T collision guard on for travel, +/-%.0f N on Fx/Fy/Fz.", TRAVEL_GUARD_N))
 end
 
 -- ===== Departure: Straight Up Off The Bed =====
@@ -693,6 +725,8 @@ local function weldOneStud()
     waitForWeldReady()
     if WELD_FAULT == 1 or faulting then return end
 
+    -- The travel guard from the last stud (or a run before this one) is still on.
+    ftGuardOff()
     searchForStud()
     if WELD_FAULT == 1 or faulting then return end
 
@@ -706,6 +740,7 @@ local function weldOneStud()
     holdAfterWeld()
     retract()
     feedNextStud()
+    ftGuardTravel()
     pub(SV_PHASE, PH_DONE)
 end
 

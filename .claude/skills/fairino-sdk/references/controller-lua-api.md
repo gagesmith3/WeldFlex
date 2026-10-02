@@ -214,7 +214,16 @@ asserts the ban against the **stripped** text for that reason.
   `f_p, f_i, f_d, m_p, m_i, m_d`.
 - `FT_Guard` (Table 3-217) is the only over-force instruction Lua has — with no
   force read, a script cannot enforce a ceiling itself. Flattened: `flag,
-  tool_id, select[6], value[6], max_threshold[6], min_threshold[6]`.
+  tool_id, select[6], value[6], max_threshold[6], min_threshold[6]` (the SDK
+  manual calls the second argument `sensor_num`). It only ever adds a trip:
+  `flag = 0` turns a guard off. `weld.lua` calls
+  `FT_Guard(0, FTC_SENSOR_NUM, …)` before every lift (`ftGuardOff()`,
+  `b885e56`, when it never armed one itself). With that build the retract's
+  "Force sensor range threshold reached" stopped tripping (owner, 2026-10-02),
+  which suggests a guard armed outside `weld.lua` was the cause. Unconfirmed; see
+  `docs/weldNotes.md` step 5. Since then `weld.lua` arms its own guard for the
+  travel between studs (`ftGuardTravel()`, `FT_Guard(1, …)` with reference 0,
+  since Lua cannot read force) and turns it off before each search (step 6).
 
 ## Known-bad reference in this repo
 

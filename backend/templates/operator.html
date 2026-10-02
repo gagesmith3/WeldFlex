@@ -14,8 +14,8 @@
   {% call panel_shell('Navigation', class_name='operator-links-panel') %}
     <section class="home-nav-grid">
       {{ nav_card('/operator/parts', 'pen_tool', 'Parts', 'Create, edit, and run stud welding programs.') }}
-      {{ nav_card('/operator/calibration', 'crosshair', 'Calibration', 'Jog robot, capture origin, and dry-run positions.') }}
-      {{ nav_card('/operator/robot-diagnostics', 'activity', 'Robot Diagnostics', 'Inspect connection, runtime state, and faults.') }}
+      {{ nav_card('/operator/calibration', 'crosshair', 'Calibration', 'Jog the robot and set up the force sensor.') }}
+      {{ nav_card('/operator/points', 'map_pin', 'Points', 'Send the tool to zerozero, home and other taught points.') }}
       {{ nav_card('/operator/settings', 'settings', 'Settings', 'Configure application and robot integration.') }}
     </section>
   {% endcall %}

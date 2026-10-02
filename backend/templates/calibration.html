@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
 {% block body %}
-<div class="calib-menu-body">
+<div class="calib-menu-body calib-menu-body-2">
   <a class="calib-menu-card" href="/operator/jog">
     <div class="calib-menu-icon">{{ icon_safe('move_3d', fallback='move', width=48, height=48) }}</div>
     <h2>Jog</h2>
@@ -11,11 +11,6 @@
     <div class="calib-menu-icon">{{ icon_safe('activity', fallback='activity', width=48, height=48) }}</div>
     <h2>Force Sensor</h2>
     <p>Initialize the sensor and view the live force readout (lbs)</p>
-  </a>
-  <a class="calib-menu-card" href="/operator/points">
-    <div class="calib-menu-icon">{{ icon_safe('map_pin', fallback='crosshair', width=48, height=48) }}</div>
-    <h2>Points</h2>
-    <p>Send the tool to zerozero, home and other taught points</p>
   </a>
 </div>
 {% endblock %}

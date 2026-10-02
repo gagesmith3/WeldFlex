@@ -2049,10 +2049,15 @@ def ui_connection_disconnect():
         ok, payload = False, {"error": str(e)}
     return render_template("partials/command_result.html", ok=ok, title="Disconnect", payload=payload)
 
-@app.route("/operator/robot-diagnostics")
+@app.route("/operator/settings/diagnostics")
 def robot_diagnostics_page():
     return render_template("robot_diagnostics.html", page_title="Robot Diagnostics",
                            status_interval_ms=int(os.getenv("WELDFLEX_STATUS_INTERVAL_MS", "1000")))
+
+@app.route("/operator/robot-diagnostics")
+def robot_diagnostics_old_url():
+    # Diagnostics moved under Settings (2026-10-02); old bookmarks still land.
+    return redirect("/operator/settings/diagnostics")
 
 @app.route("/ui/diagnostics")
 def ui_diagnostics():

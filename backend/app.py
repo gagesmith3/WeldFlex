@@ -468,6 +468,12 @@ _ICONS = {
     "octagon_x":        '<path d="M2.586 16.726A2 2 0 0 1 2 15.312V8.688a2 2 0 0 1 .586-1.414l4.688-4.688A2 2 0 0 1 8.688 2h6.624a2 2 0 0 1 1.414.586l4.688 4.688A2 2 0 0 1 22 8.688v6.624a2 2 0 0 1-.586 1.414l-4.688 4.688a2 2 0 0 1-1.414.586H8.688a2 2 0 0 1-1.414-.586z"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/>',
     "rotate_ccw":       '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>',
     "map_pin":          '<path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/>',
+    # static/img/stud-icon.svg. A filled shape, unlike the stroked set above, so the
+    # group overrides the fill and stroke icon_safe() puts on the <svg>.
+    "stud":             '<g fill="currentColor" stroke="none" transform="rotate(225 12 12)">'
+                        '<path d="M4 4C4 3.17 4.67 2.5 5.5 2.5h4.8V0.4h3.4v2.1h4.8C19.33 2.5 20 3.17 20 4v1.5C20 6.33 19.33 7 18.5 7H16v1.3l-7.5 2.5v-2.1H8V7H5.5C4.67 7 4 6.33 4 5.5V4z"/>'
+                        '<path d="M8.5 8.3l7.5-2.5v2.1l-7.5 2.5V8.3zm0 3.3l7.5-2.5v2.1l-7.5 2.5v-2.1zm0 3.3l7.5-2.5v2.1l-7.5 2.5v-2.1zm0 3.3l7.5-2.5v2.1l-7.5 2.5v-2.1zm0 3.3l7.5-2.5v2.8a1.2 1.2 0 0 1-1.2 1.2h-5.1a1.2 1.2 0 0 1-1.2-1.2v-0.3z"/>'
+                        '</g>',
 }
 
 def icon_safe(name, fallback="circle", width=14, height=14, class_=""):

@@ -19,8 +19,10 @@
     <header class="app-header universal-navbar">
       <div class="app-header-left">
         {{ icon_link('/operator', 'home', '', 'home-btn', 'Back to Home') }}
+        <img class="app-logo" src="{{ url_for('static', filename='img/weldflex-logo.png') }}"
+             alt="WeldFlex" draggable="false">
         <div class="title-block">
-          <h1>WeldFlex Operator</h1>
+          <h1>Operator</h1>
           <span class="title-version">BETA {{ git_sha }}</span>
         </div>
       </div>

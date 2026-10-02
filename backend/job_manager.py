@@ -58,6 +58,7 @@ from part_origin import (
     read_corner_ref,
     resolve_studs,
 )
+from weld_tuning import WeldTuning
 
 log = logging.getLogger("weldflex.job")
 
@@ -264,6 +265,10 @@ class JobSnapshot:
     cycles_target: int = 0
     cycles_done: int = 0
     pressure_setting: str | None = None
+    # weld.lua's search/press speeds this run was built with, in mm/s. Read
+    # from the Admin page's Weld Tuning when Run is pressed; None until then.
+    search_speed_mms: float | None = None
+    press_speed_mms: float | None = None
     started_at: str | None = None
     ended_at: str | None = None
     error: str | None = None
@@ -325,6 +330,8 @@ class _Session:
     stud_type: str = "M4"
     substrate: str = "Mild Steel"
     speed: float | int | None = None
+    search_speed_mms: float | None = None
+    press_speed_mms: float | None = None
     dsc_enabled: bool = False
     stud_reload_ms: int | None = None
     origin_corner: str = DEFAULT_CORNER
@@ -379,6 +386,7 @@ class JobManager:
         events_path: str | os.PathLike | None = None,
         on_finish: Callable[[dict], None] | None = None,
         state_map: dict[int | None, str] | None = None,
+        weld_tuning: Callable[[], WeldTuning] | None = None,
     ) -> None:
         self._robot = robot
         base = Path(__file__).resolve().parent
@@ -386,6 +394,9 @@ class JobManager:
         self._events_path = Path(events_path or base / "run_events.jsonl")
         self._on_finish = on_finish
         self._state_map = state_map
+        # Called once per Run for weld.lua's search/press speeds. app.py passes
+        # weld_tuning.load; left out, every run gets the defaults.
+        self._weld_tuning = weld_tuning or WeldTuning
 
         self._lock = threading.Lock()
         self._session: _Session | None = None
@@ -748,6 +759,8 @@ class JobManager:
             cycles_target=sess.cycles_target,
             cycles_done=sess.cycles_done,
             pressure_setting=sess.pressure_setting,
+            search_speed_mms=sess.search_speed_mms,
+            press_speed_mms=sess.press_speed_mms,
             started_at=sess.started_at,
             ended_at=sess.ended_at,
             error=sess.error,
@@ -766,10 +779,13 @@ class JobManager:
     def _launch(self, run_id: str) -> None:
         """Build → upload → run, on our own thread. Any failure ends the job."""
         try:
+            tuning = self._weld_tuning()
             with self._lock:
                 sess = self._session
                 if sess is None or sess.run_id != run_id:
                     return
+                sess.search_speed_mms = tuning.search_speed_mms
+                sess.press_speed_mms = tuning.press_speed_mms
                 kind = sess.kind
                 studs = list(sess.studs)
                 cycles = sess.cycles_target
@@ -816,6 +832,8 @@ class JobManager:
                     stud_type=stud_type,
                     substrate=substrate,
                     speed=speed,
+                    search_speed_mms=tuning.search_speed_mms,
+                    press_speed_mms=tuning.press_speed_mms,
                 )
             else:
                 built = build_weldflex_lua(
@@ -832,6 +850,8 @@ class JobManager:
                     stud_type=stud_type,
                     substrate=substrate,
                     speed=speed,
+                    search_speed_mms=tuning.search_speed_mms,
+                    press_speed_mms=tuning.press_speed_mms,
                     dsc_enabled=dsc_enabled,
                     stud_reload_ms=stud_reload_ms,
                     origin_corner=origin_corner,
@@ -877,15 +897,18 @@ class JobManager:
                 sess.cycle_start_ts = time.time()
 
             log.info("job running run_id=%s program=%s cycles=%d loop_start=%d marker=%d "
-                     "gate=%d boundary_ms=%d",
+                     "gate=%d boundary_ms=%d search_mms=%g press_mms=%g",
                      run_id, uploaded, cycles, built.loop_start_line,
-                     built.cycle_marker_line, built.gate_line, built.boundary_ms)
+                     built.cycle_marker_line, built.gate_line, built.boundary_ms,
+                     tuning.search_speed_mms, tuning.press_speed_mms)
             self._event(run_id, "running", {
                 "program": uploaded,
                 "loop_start_line": built.loop_start_line,
                 "cycle_marker_line": built.cycle_marker_line,
                 "gate_line": built.gate_line,
                 "boundary_ms": built.boundary_ms,
+                "search_speed_mms": tuning.search_speed_mms,
+                "press_speed_mms": tuning.press_speed_mms,
             })
             self._start_monitor(run_id)
         except Exception as exc:  # noqa: BLE001
@@ -1214,6 +1237,8 @@ class JobManager:
                 "search_z": sess.search_z,
                 "part_z": sess.part_z,
                 "pressure_setting": sess.pressure_setting,
+                "search_speed_mms": sess.search_speed_mms,
+                "press_speed_mms": sess.press_speed_mms,
                 "stud_type": sess.stud_type,
                 "substrate": sess.substrate,
             }

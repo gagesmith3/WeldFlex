@@ -23,3 +23,5 @@ fairino-python-sdk-main/**/__pycache__/
 
 backend/jog_settings.json
 backend/jog_settings.json.tmp
+backend/weld_tuning.json
+backend/weld_tuning.json.tmp

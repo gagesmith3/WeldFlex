@@ -27,6 +27,14 @@ from lua_builder import (
     strip_lua_comments,
 )
 from part_origin import CornerRef
+from weld_tuning import (
+    DEFAULT_PRESS_SPEED_MMS,
+    DEFAULT_SEARCH_SPEED_MMS,
+    PRESS_SPEED_MAX_MMS,
+    PRESS_SPEED_MIN_MMS,
+    SEARCH_SPEED_MAX_MMS,
+    SEARCH_SPEED_MIN_MMS,
+)
 
 # Most tests here are about something other than the run mode; they build live.
 LIVE = RunMode("live")
@@ -826,6 +834,106 @@ def test_force_press_uses_the_commissioned_slow_speed():
     match = re.search(r"^local PRESS_SPEED_MMS\s*=\s*([\d.]+)", weld, re.M)
     assert match, "weld.lua no longer declares PRESS_SPEED_MMS"
     assert float(match.group(1)) == 0.15
+
+
+def test_weld_lua_falls_back_to_the_same_speeds_and_bounds_as_weld_tuning():
+    """Since 2026-10-02 the Admin page's Weld Tuning sets both speeds, and
+    weld.lua's own copies are only the fallback. Nothing ties the two files
+    together across the language boundary, so pin them here."""
+    weld = WELD_PATH.read_text(encoding="utf-8")
+    for name, value in (
+        ("SEARCH_SPEED_MMS", DEFAULT_SEARCH_SPEED_MMS),
+        ("PRESS_SPEED_MMS", DEFAULT_PRESS_SPEED_MMS),
+        ("SEARCH_SPEED_MIN_MMS", SEARCH_SPEED_MIN_MMS),
+        ("SEARCH_SPEED_MAX_MMS", SEARCH_SPEED_MAX_MMS),
+        ("PRESS_SPEED_MIN_MMS", PRESS_SPEED_MIN_MMS),
+        ("PRESS_SPEED_MAX_MMS", PRESS_SPEED_MAX_MMS),
+    ):
+        match = re.search(rf"^local {name}\s*=\s*([\d.]+)", weld, re.M)
+        assert match, f"weld.lua no longer declares {name}"
+        assert float(match.group(1)) == value, name
+
+
+@pytest.mark.parametrize("published,local,lo,hi,call_site", [
+    ("WELD_SEARCH_SPEED_MMS", "SEARCH_SPEED_MMS", "SEARCH_SPEED_MIN_MMS",
+     "SEARCH_SPEED_MAX_MMS", "SEARCH_SPEED_MMS, FIND_ACC, SEARCH_MAX_MM"),
+    ("WELD_PRESS_SPEED_MMS", "PRESS_SPEED_MMS", "PRESS_SPEED_MIN_MMS",
+     "PRESS_SPEED_MAX_MMS", "PRESS_SPEED_MMS, 0.0, PRESS_MAX_MM"),
+], ids=["search", "press"])
+def test_weld_lua_takes_a_published_speed_only_within_its_bounds(published, local, lo, hi, call_site):
+    weld = WELD_PATH.read_text(encoding="utf-8")
+    guard = (f'if type({published}) == "number"\n'
+             f"   and {published} >= {lo}\n"
+             f"   and {published} <= {hi} then\n"
+             f"    {local} = {published}\n"
+             "end")
+    assert guard in weld
+    assert weld.index(guard) < weld.index(call_site)
+
+
+_TUNED_BUILDS = pytest.mark.parametrize(
+    "build",
+    [
+        lambda **kw: build_weldflex_lua([{"x": 1, "y": 2}], cycles=1, run_mode=LIVE, **kw),
+        lambda **kw: build_single_shot_lua(1, 2, cycles=1, run_mode=LIVE, **kw),
+    ],
+    ids=["weldflex", "single_shot"],
+)
+
+
+@_TUNED_BUILDS
+def test_the_weld_tuning_speeds_are_published_to_weld_lua(build):
+    built = build(search_speed_mms=9, press_speed_mms=0.3)
+    lines = _lines(built)
+    assert "SEARCH_SPEED = 9" in lines
+    assert "PRESS_SPEED = 0.3" in lines
+    dofile = next(i for i, line in enumerate(lines, 1)
+                  if "NewDofile(" in line and not line.strip().startswith("--"))
+    for row in ("WELD_SEARCH_SPEED_MMS = SEARCH_SPEED", "WELD_PRESS_SPEED_MMS = PRESS_SPEED"):
+        at = next(i for i, line in enumerate(lines, 1) if line.strip() == row)
+        assert built.loop_start_line < at < dofile, row
+
+
+@_TUNED_BUILDS
+def test_left_out_the_weld_tuning_speeds_are_the_defaults(build):
+    lines = _lines(build())
+    assert f"SEARCH_SPEED = {format_number(DEFAULT_SEARCH_SPEED_MMS)}" in lines
+    assert f"PRESS_SPEED = {format_number(DEFAULT_PRESS_SPEED_MMS)}" in lines
+
+
+@_TUNED_BUILDS
+@pytest.mark.parametrize("speeds,error", [
+    ({"search_speed_mms": 10.5}, "Search speed"),
+    ({"search_speed_mms": 0.4}, "Search speed"),
+    ({"press_speed_mms": 1.01}, "Press speed"),
+    ({"press_speed_mms": 0}, "Press speed"),
+])
+def test_the_builders_refuse_a_speed_out_of_bounds(build, speeds, error):
+    """Refused here, with a message, rather than uploaded for weld.lua to
+    quietly swap for its fallback."""
+    with pytest.raises(ValueError, match=error):
+        build(**speeds)
+
+
+@pytest.mark.parametrize("marker", ["--{{SEARCH_SPEED}}", "--{{PRESS_SPEED}}"])
+@pytest.mark.parametrize(
+    "template,build",
+    [
+        (TEMPLATE_PATH,
+         lambda path: build_weldflex_lua([], cycles=1, run_mode=LIVE, template_path=path)),
+        (SINGLE_SHOT_TEMPLATE_PATH,
+         lambda path: build_single_shot_lua(0, 0, cycles=1, run_mode=LIVE, template_path=path)),
+    ],
+    ids=["weldflex", "single_shot"],
+)
+def test_dropping_a_weld_tuning_marker_fails_loudly(tmp_path, template, build, marker):
+    """Without it the Admin page's speed would never reach weld.lua."""
+    stripped = [line for line in template.read_text(encoding="utf-8").splitlines()
+                if marker not in line]
+    bad = tmp_path / template.name
+    bad.write_text("\n".join(stripped) + "\n", encoding="utf-8")
+    with pytest.raises(RuntimeError, match=r"missing required marker.*" + re.escape(marker)):
+        build(bad)
 
 
 def test_retract_uses_the_trial_pull_off_speed():

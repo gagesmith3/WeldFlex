@@ -97,8 +97,28 @@ local PRESS_DIR = 0     -- 0 = negative (FT_LinInsertion encoding; flipped with 
 -- 2026-10-02 trial: search 5.0 -> 7.5 and press 0.10 -> 0.15, both still under
 -- the 09-14 speeds that stuck short. If the press stops short or overshoots past
 -- the knee again, go back to 5.0/0.10.
+--
+-- Since 2026-10-02 these two are only the fallback. While in beta the Admin
+-- page's Weld Tuning panel sets both for every run, and the caller publishes them
+-- as WELD_SEARCH_SPEED_MMS and WELD_PRESS_SPEED_MMS. A value that is missing or
+-- outside the bounds below is ignored. Each ceiling is the fastest that speed has
+-- run on hardware. backend/weld_tuning.py holds the same numbers.
 local SEARCH_SPEED_MMS = 7.5
 local PRESS_SPEED_MMS  = 0.15
+local SEARCH_SPEED_MIN_MMS = 0.5
+local SEARCH_SPEED_MAX_MMS = 10.0
+local PRESS_SPEED_MIN_MMS  = 0.05
+local PRESS_SPEED_MAX_MMS  = 1.0
+if type(WELD_SEARCH_SPEED_MMS) == "number"
+   and WELD_SEARCH_SPEED_MMS >= SEARCH_SPEED_MIN_MMS
+   and WELD_SEARCH_SPEED_MMS <= SEARCH_SPEED_MAX_MMS then
+    SEARCH_SPEED_MMS = WELD_SEARCH_SPEED_MMS
+end
+if type(WELD_PRESS_SPEED_MMS) == "number"
+   and WELD_PRESS_SPEED_MMS >= PRESS_SPEED_MIN_MMS
+   and WELD_PRESS_SPEED_MMS <= PRESS_SPEED_MAX_MMS then
+    PRESS_SPEED_MMS = WELD_PRESS_SPEED_MMS
+end
 
 -- The park height is the caller's global Z_CLEARANCE, read where it is used and
 -- never shadowed here: WeldFlex.lua parks at the Search Height, single_shot.lua at

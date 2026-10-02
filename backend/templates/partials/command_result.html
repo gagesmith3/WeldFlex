@@ -5,6 +5,9 @@
     {% if not ok and payload.error is defined %}
     <p class="toast-msg">{{ payload.error }}</p>
     {% endif %}
+    {% if ok and payload.summary is defined %}
+    <p class="toast-msg">{{ payload.summary }}</p>
+    {% endif %}
   </div>
 </div>
 <script>

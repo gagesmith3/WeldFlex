@@ -41,6 +41,7 @@ from lua_builder import (
 import part_origin
 import base_keepout
 import point_moves
+import weld_tuning
 import wifi
 from robot_service import STATE_MAP as ROBOT_STATE_MAP, WeldFlexRobotService
 
@@ -423,7 +424,8 @@ def _on_job_finish(record: dict) -> None:
         _recipes_save(recipes)
 
 
-job = JobManager(robot, on_finish=_on_job_finish, state_map=ROBOT_STATE_MAP)
+job = JobManager(robot, on_finish=_on_job_finish, state_map=ROBOT_STATE_MAP,
+                 weld_tuning=weld_tuning.load)
 
 _ICONS = {
     "home":        '<path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>',
@@ -525,7 +527,8 @@ def admin():
         "studs_data_path": os.getenv("WELDFLEX_STUDS_DATA_PATH", "/fruser/studs/"),
         "status_interval_ms": os.getenv("WELDFLEX_STATUS_INTERVAL_MS", "1000"),
     }
-    return render_template("admin.html", page_title="Admin", settings=settings)
+    return render_template("admin.html", page_title="Admin", settings=settings,
+                           tuning=weld_tuning.load(), tuning_limits=weld_tuning)
 
 @app.route("/operator/robot-web")
 def robot_web_page():
@@ -545,6 +548,25 @@ def robot_web_page():
         hide_header=True,
         robot_web_url=os.getenv("WELDFLEX_ROBOT_WEB_URL", default_url),
         direct_url=f"http://{robot.robot_ip}/",
+    )
+
+@app.route("/ui/weld-tuning/save", methods=["POST"])
+def ui_weld_tuning_save():
+    """Save weld.lua's search/press speeds. They apply from the next Run, so a
+    job already running keeps the speeds it started with."""
+    try:
+        tuning = weld_tuning.WeldTuning(
+            search_speed_mms=request.form.get("search_speed_mms", ""),
+            press_speed_mms=request.form.get("press_speed_mms", ""),
+        )
+        weld_tuning.save(tuning)
+    except (ValueError, OSError) as e:
+        return render_template("partials/command_result.html", ok=False, title="Weld Tuning",
+                               payload={"error": str(e)})
+    return render_template(
+        "partials/command_result.html", ok=True, title="Weld Tuning",
+        payload={"summary": f"Search {tuning.search_speed_mms:g} mm/s, press "
+                            f"{tuning.press_speed_mms:g} mm/s from the next Run."},
     )
 
 @app.route("/ui/settings/save", methods=["POST"])

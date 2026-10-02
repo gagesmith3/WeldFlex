@@ -19,6 +19,7 @@
         <th>Part</th>
         <th>Cycles</th>
         <th>Avg</th>
+        <th>Search / Press</th>
         <th>Result</th>
       </tr>
     </thead>
@@ -32,6 +33,12 @@
         <td>{{ run.get('part_name') or '—' }}</td>
         <td>{{ run.get('cycles_done', 0) }} / {{ run.get('cycles_target', 0) }}</td>
         <td>{{ '%.1fs'|format(times | sum / times | length) if times else '—' }}</td>
+        {# Weld Tuning speeds, mm/s. Runs from before 2026-10-02 don't record them. #}
+        <td>
+          {%- if run.get('search_speed_mms') is not none and run.get('press_speed_mms') is not none -%}
+            {{ '%g'|format(run.search_speed_mms) }} / {{ '%g'|format(run.press_speed_mms) }}
+          {%- else -%}—{%- endif -%}
+        </td>
         <td>
           <span class="last-run-tag state-badge state-badge--{{ run.get('status', 'idle') }}"
                 {% if run.get('error') %}title="{{ run.get('error') }}"{% endif %}>

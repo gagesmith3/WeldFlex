@@ -588,6 +588,24 @@ def ui_settings_save():
         ok, payload = False, {"error": str(e)}
     return render_template("partials/command_result.html", ok=ok, title="Save Settings", payload=payload)
 
+# What the operator's part details modal shows. Sent with the page, so tapping a
+# part name opens it with no round trip.
+_PART_DETAIL_KEYS = (
+    'id', 'name', 'studs_count', 'safe_z', 'retract_z', 'search_z', 'part_z',
+    'units', 'stud_type', 'substrate', 'pressure_setting', 'voltage', 'speed',
+    'dsc_enabled', 'stud_reload_ms', 'origin_corner',
+)
+
+def _part_details(recipes):
+    details = []
+    for r in recipes:
+        studs = r.get('studs')
+        details.append({
+            **{key: r.get(key) for key in _PART_DETAIL_KEYS},
+            'studs': studs if isinstance(studs, list) else [],
+        })
+    return details
+
 @app.route("/operator/parts")
 def parts():
     recipe_name = request.args.get('recipe_name', None)
@@ -608,6 +626,7 @@ def parts():
     return render_template('parts.html',
                            page_title='Parts',
                            recipes=enriched,
+                           part_details=_part_details(enriched),
                            recipe=recipe,
                            recipe_name=recipe_name,
                            studs_text=studs_text)

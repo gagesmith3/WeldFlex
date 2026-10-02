@@ -21,10 +21,10 @@
 
 </div>
 
-<!-- Run Part modal -->
+<!-- Load Part modal: queues the job; the operator page is where it is started. -->
 <div id="run-modal" class="wf-modal-overlay" hidden>
   <div class="wf-modal">
-    <p class="wf-modal-msg">Run "<span id="run-modal-part-name"></span>"</p>
+    <p class="wf-modal-msg">Load "<span id="run-modal-part-name"></span>"</p>
     <div class="run-modal-fields">
       <div>
         <label class="run-modal-label" for="run-modal-cycles">Number of cycles</label>
@@ -53,10 +53,36 @@
     </div>
     <div class="wf-modal-actions">
       <button type="button" class="btn wf-cancel" onclick="runModalCancel()">Cancel</button>
-      <button type="button" class="btn run" id="run-modal-confirm" onclick="runModalConfirm()" disabled>Run</button>
+      <button type="button" class="btn run" id="run-modal-confirm" onclick="runModalConfirm()" disabled>Load</button>
     </div>
   </div>
 </div>
+
+{% if recipe_name is none %}
+<!-- Part details: read-only. The bed is drawn by bed_map.js, as the part designer draws it. -->
+<div id="part-detail-modal" class="wf-modal-overlay" hidden>
+  <div class="wf-modal part-detail-modal" role="dialog" aria-modal="true" aria-labelledby="part-detail-title">
+    <div class="part-detail-head">
+      <p class="part-detail-title" id="part-detail-title"></p>
+      <span class="part-detail-sub" id="part-detail-sub"></span>
+    </div>
+    <div class="part-detail-body">
+      <svg class="part-detail-bed" viewBox="0 0 762 762" preserveAspectRatio="xMidYMid meet"
+           xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Stud locations on the bed">
+        <g id="part-detail-grid"></g>
+        <g id="part-detail-path"></g>
+        <g id="part-detail-points"></g>
+      </svg>
+      <div class="part-detail-specs" id="part-detail-specs"></div>
+    </div>
+    <div class="wf-modal-actions part-detail-actions">
+      <button type="button" class="btn wf-cancel" onclick="partDetailClose()">Close</button>
+      <button type="button" class="btn run" onclick="partDetailLoad()">Load</button>
+    </div>
+  </div>
+</div>
+<script type="application/json" id="parts-data">{{ part_details | tojson }}</script>
+{% endif %}
 
 {% endblock %}
 
@@ -73,22 +99,114 @@ function syncPartsEditorUrl() {
 }
 </script>
 {% else %}
+<script src="{{ url_for('static', filename='js/bed_map.js') }}"></script>
 <script>
 let _runRecipeId = null;
 let _runArmMode = null;
 let _runStudCount = 0;
+// From a row's Load button, or the part details' Load.
+function openLoadModal(id, name, studCount) {
+  _runRecipeId = id;
+  _runStudCount = studCount || 0;
+  document.getElementById('run-modal-part-name').textContent = name;
+  document.getElementById('run-modal-cycles').value = '1';
+  document.getElementById('run-modal-start-stud').value = '1';
+  runModalPickArm(null);
+  document.getElementById('run-modal').removeAttribute('hidden');
+  document.getElementById('run-modal-cycles').focus();
+  document.getElementById('run-modal-cycles').select();
+}
 document.querySelectorAll('.js-table-run').forEach(function(btn) {
   btn.addEventListener('click', function() {
-    _runRecipeId = btn.dataset.recipeId;
-    _runStudCount = parseInt(btn.dataset.studCount, 10) || 0;
-    document.getElementById('run-modal-part-name').textContent = btn.dataset.recipeName;
-    document.getElementById('run-modal-cycles').value = '1';
-    document.getElementById('run-modal-start-stud').value = '1';
-    runModalPickArm(null);
-    document.getElementById('run-modal').removeAttribute('hidden');
-    document.getElementById('run-modal-cycles').focus();
-    document.getElementById('run-modal-cycles').select();
+    openLoadModal(btn.dataset.recipeId, btn.dataset.recipeName, parseInt(btn.dataset.studCount, 10));
   });
+});
+
+// ── Part details ────────────────────────────────────────────────────────────
+// Read-only: the bed as the part designer draws it, and the part's settings in
+// its own units. Nothing here saves.
+const _parts = JSON.parse(document.getElementById('parts-data').textContent);
+let _detailPart = null;
+
+function partDetailGroup(title, rows) {
+  const group = document.createElement('section');
+  group.className = 'part-detail-group';
+  const head = document.createElement('h3');
+  head.textContent = title;
+  group.appendChild(head);
+  rows.forEach(function([label, value]) {
+    const row = document.createElement('div');
+    row.className = 'part-detail-row';
+    const name = document.createElement('span');
+    name.textContent = label;
+    const val = document.createElement('strong');
+    val.textContent = value;
+    row.append(name, val);
+    group.appendChild(row);
+  });
+  return group;
+}
+
+function openPartDetail(id) {
+  const part = _parts.find(function(p) { return p.id === id; });
+  if (!part) return;
+  _detailPart = part;
+  const units = part.units === 'in' ? 'in' : 'mm';
+  const len = function(mm) { return BedMap.formatLength(mm ?? 0, units) + ' ' + units; };
+  const corner = BedMap.normalizeCorner(part.origin_corner);
+
+  document.getElementById('part-detail-title').textContent = part.name;
+  document.getElementById('part-detail-sub').textContent =
+    part.studs_count + (part.studs_count === 1 ? ' stud' : ' studs') +
+    ' · 0,0 at ' + BedMap.cornerLabel(corner).toLowerCase();
+
+  BedMap.drawGrid(document.getElementById('part-detail-grid'),
+                  { corner: corner, units: units, idPrefix: 'part-detail' });
+  BedMap.drawStuds(document.getElementById('part-detail-path'),
+                   document.getElementById('part-detail-points'), part.studs, { corner: corner });
+
+  // A part with no saved speed runs at lua_builder's default: 25% live, 10% dry.
+  const motion = [
+    ['Travel speed', part.speed == null ? 'Default' : part.speed + '%'],
+    ['DSC', part.dsc_enabled ? 'On' : 'Off'],
+  ];
+  if (part.dsc_enabled) motion.push(['Stud reload', part.stud_reload_ms + ' ms']);
+  document.getElementById('part-detail-specs').replaceChildren(
+    partDetailGroup('Weld', [
+      ['Stud size', part.stud_type],
+      ['Substrate', part.substrate],
+      ['Pressure', part.pressure_setting + ' lbf'],
+      ['Voltage', part.voltage == null ? '—' : part.voltage + ' V'],
+    ]),
+    partDetailGroup('Heights', [
+      ['Safe Z', len(part.safe_z)],
+      ['Retract Z', len(part.retract_z)],
+      ['Search height', len(part.search_z)],
+      ['Part Z', len(part.part_z)],
+    ]),
+    partDetailGroup('Motion', motion),
+  );
+  document.getElementById('part-detail-modal').removeAttribute('hidden');
+}
+
+function partDetailClose() {
+  document.getElementById('part-detail-modal').setAttribute('hidden', '');
+}
+
+function partDetailLoad() {
+  const part = _detailPart;
+  partDetailClose();
+  if (part) openLoadModal(part.id, part.name, part.studs_count);
+}
+
+document.querySelectorAll('.js-part-detail').forEach(function(btn) {
+  btn.addEventListener('click', function() { openPartDetail(btn.dataset.recipeId); });
+});
+document.getElementById('part-detail-modal').addEventListener('click', function(e) {
+  if (e.target === e.currentTarget) partDetailClose();
+});
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape' && !document.getElementById('part-detail-modal').hidden) partDetailClose();
 });
 // Live or Dry is picked for every run; opening the modal clears the last choice.
 function runModalPickArm(mode) {

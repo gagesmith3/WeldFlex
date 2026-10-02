@@ -1,5 +1,3 @@
-const NS = 'http://www.w3.org/2000/svg';
-
 let _state = {
   activeId:     null,  // UUID — primary key for all backend ops
   activePart:   null,  // display name
@@ -105,133 +103,30 @@ function pdInit() {
   });
 }
 
-// ── Coordinate helpers (part ↔ SVG) ──────────────────────────────────────────
-// The bed is drawn as the operator faces it: front at the bottom, zerozero at
-// the bottom-left. A part's X/Y are measured inward from its origin corner, so a
-// right corner mirrors X and a back corner mirrors Y. SVG 0,0 is top-left.
+// ── Bed geometry ─────────────────────────────────────────────────────────────
+// The bed and its drawing live in bed_map.js, shared with the operator's part
+// details. These wrappers default to the part being edited; the Part Settings
+// modal passes its own corner and units until Apply.
 
-const BED = 762; // 30in bed, in mm
-const MM_PER_INCH = 25.4;
+const BED = BedMap.BED;
+const PD_CORNERS = BedMap.CORNERS;
 
-// Same keys as part_origin.CORNERS; tests/test_part_origin.py holds them together.
-const PD_CORNERS = ['front_left', 'front_right', 'back_left', 'back_right'];
-const PD_CORNER_LABELS = {
-  front_left: 'Front-left',
-  front_right: 'Front-right',
-  back_left: 'Back-left',
-  back_right: 'Back-right',
-};
-
-function normalizeCorner(value) { return PD_CORNERS.includes(value) ? value : PD_CORNERS[0]; }
-function cornerLabel(corner = _state.origin_corner) { return PD_CORNER_LABELS[normalizeCorner(corner)]; }
-function cornerMirrors(corner = _state.origin_corner) {
-  const c = normalizeCorner(corner);
-  return { x: c.endsWith('_right'), y: c.startsWith('back_') };
-}
-
-// Length helpers default to the part's units; the Part Settings modal passes its
-// own until Apply.
-function toSVG(px, py, corner = _state.origin_corner) {
-  const m = cornerMirrors(corner);
-  const bedY = m.y ? BED - py : py;
-  return { x: m.x ? BED - px : px, y: BED - bedY };
-}
-function toPhys(sx, sy, corner = _state.origin_corner) {
-  const m = cornerMirrors(corner);
-  const bedY = BED - sy;
-  return { x: m.x ? BED - sx : sx, y: m.y ? BED - bedY : bedY };
-}
-function isInches(units = _state.units) { return units === 'in'; }
-function lengthFactor(units = _state.units) { return isInches(units) ? MM_PER_INCH : 1; }
-function lengthStep(units = _state.units) { return isInches(units) ? '0.0001' : '0.001'; }
-function formatLength(mm, units = _state.units) {
-  const decimals = isInches(units) ? 4 : 3;
-  return Number((mm / lengthFactor(units)).toFixed(decimals)).toString();
-}
+function normalizeCorner(value) { return BedMap.normalizeCorner(value); }
+function cornerLabel(corner = _state.origin_corner) { return BedMap.cornerLabel(corner); }
+function cornerMirrors(corner = _state.origin_corner) { return BedMap.cornerMirrors(corner); }
+function toSVG(px, py, corner = _state.origin_corner) { return BedMap.toSVG(px, py, corner); }
+function toPhys(sx, sy, corner = _state.origin_corner) { return BedMap.toPhys(sx, sy, corner); }
+function isInches(units = _state.units) { return BedMap.isInches(units); }
+function lengthFactor(units = _state.units) { return BedMap.lengthFactor(units); }
+function lengthStep(units = _state.units) { return BedMap.lengthStep(units); }
+function formatLength(mm, units = _state.units) { return BedMap.formatLength(mm, units); }
 function parseLength(value) { return parseFloat(value) * lengthFactor(); }
-function unitLabel(units = _state.units) { return isInches(units) ? 'in' : 'mm'; }
-
-// ── Grid ────────────────────────────────────────────────────────────────────
+function unitLabel(units = _state.units) { return BedMap.unitLabel(units); }
+function svgEl(tag, attrs = {}) { return BedMap.svgEl(tag, attrs); }
 
 function buildGrid() {
-  const g = document.getElementById('pd-grid');
-  if (!g) return;
-  g.innerHTML = '';
-  const SIZE = BED, STEP = 50;
-  const m = cornerMirrors();
-
-  const gridLines = Array.from(
-    { length: Math.floor(SIZE / STEP) + 1 },
-    (_, index) => index * STEP,
-  );
-  if (gridLines.at(-1) !== SIZE) gridLines.push(SIZE);
-
-  for (const i of gridLines) {
-    const major = i % 100 === 0;
-    const color = major ? '#c8d8e6' : '#e4ecf2';
-    const w     = major ? 0.7 : 0.35;
-
-    g.appendChild(svgEl('line', {x1:i, y1:0,    x2:i,    y2:SIZE, stroke:color, 'stroke-width':w}));
-    g.appendChild(svgEl('line', {x1:0, y1:i,    x2:SIZE, y2:i,    stroke:color, 'stroke-width':w}));
-
-    // Axis labels count from the part's corner, along the two edges that meet
-    // there: X on the front or back edge, Y on the left or right edge.
-    if (major && i > 0 && i < SIZE) {
-      const tx = svgEl('text', {
-        x: i + 4, y: m.y ? 16 : SIZE - 6,
-        fill:'#7c95a8', 'font-size':'13', 'font-weight':'600', 'font-family':'monospace',
-      });
-      tx.textContent = formatLength(m.x ? SIZE - i : i);
-      g.appendChild(tx);
-
-      const ty = svgEl('text', {
-        x: m.x ? SIZE - 4 : 4, y: i - 4, 'text-anchor': m.x ? 'end' : 'start',
-        fill:'#7c95a8', 'font-size':'13', 'font-weight':'600', 'font-family':'monospace',
-      });
-      ty.textContent = formatLength(m.y ? i : SIZE - i);
-      g.appendChild(ty);
-    }
-  }
-
-  // Bed border, under the origin arrows that run along it.
-  g.appendChild(svgEl('rect', {
-    x:0, y:0, width:SIZE, height:SIZE,
-    fill:'none', stroke:'#b0c8dc', 'stroke-width':1,
-  }));
-
-  // The part's 0,0: the corner it is tooled against, with X and Y running inward.
-  // Sized to stay legible on the ~190px kiosk bed without crowding the studs.
-  const ORIGIN = '#b4232f', AXIS = 130;
-  const ox = m.x ? SIZE : 0, oy = m.y ? 0 : SIZE;
-  const dx = m.x ? -1 : 1, dy = m.y ? 1 : -1;
-  const origin = svgEl('g', {opacity:0.75});
-  const defs = svgEl('defs');
-  const arrow = svgEl('marker', {
-    id:'pd-origin-arrow', viewBox:'0 0 10 10', refX:5, refY:5,
-    markerWidth:4, markerHeight:4, orient:'auto-start-reverse',
-  });
-  arrow.appendChild(svgEl('path', {d:'M0 0 10 5 0 10z', fill:ORIGIN}));
-  defs.appendChild(arrow);
-  origin.appendChild(defs);
-  for (const [x2, y2] of [[ox + dx * AXIS, oy], [ox, oy + dy * AXIS]]) {
-    origin.appendChild(svgEl('line', {
-      x1:ox, y1:oy, x2, y2, stroke:ORIGIN, 'stroke-width':4,
-      'marker-end':'url(#pd-origin-arrow)',
-    }));
-  }
-  origin.appendChild(svgEl('circle', {cx:ox, cy:oy, r:10, fill:ORIGIN, stroke:'#ffffff', 'stroke-width':3}));
-
-  const labelAttrs = {fill:ORIGIN, 'font-size':'24', 'font-weight':'600', 'font-family':'monospace'};
-  const axisX = svgEl('text', {...labelAttrs, x: ox + dx * (AXIS - 10), y: oy + dy * 32 + 9, 'text-anchor':'middle'});
-  axisX.textContent = 'X';
-  const axisY = svgEl('text', {...labelAttrs, x: ox + dx * 32, y: oy + dy * (AXIS - 10) + 9, 'text-anchor':'middle'});
-  axisY.textContent = 'Y';
-  const zero = svgEl('text', {
-    ...labelAttrs, x: ox + dx * 28, y: oy + dy * 44 + 9, 'text-anchor': m.x ? 'end' : 'start',
-  });
-  zero.textContent = '0,0';
-  origin.append(axisX, axisY, zero);
-  g.appendChild(origin);
+  BedMap.drawGrid(document.getElementById('pd-grid'),
+                  { corner: _state.origin_corner, units: _state.units, idPrefix: 'pd' });
 }
 
 // ── Parts list (real data) ────────────────────────────────────────────────────
@@ -346,63 +241,20 @@ function loadPart(id, name, idx) {
 // ── Weld points ──────────────────────────────────────────────────────────────
 
 function renderPoints() {
-  const pathG = document.getElementById('pd-path');
-  const ptG   = document.getElementById('pd-points');
-  if (!pathG || !ptG) return;
-  pathG.innerHTML = '';
-  ptG.innerHTML   = '';
-
-  const pts = _state.points;
-  if (pts.length === 0) return;
-
-  // Travel path
-  for (let i = 0; i < pts.length - 1; i++) {
-    const a = toSVG(pts[i].x, pts[i].y);
-    const b = toSVG(pts[i+1].x, pts[i+1].y);
-    pathG.appendChild(svgEl('line', {
-      x1:a.x, y1:a.y, x2:b.x, y2:b.y,
-      stroke:'#275f84', 'stroke-width':1.2,
-      'stroke-dasharray':'5 3', opacity:0.45,
-    }));
-  }
-
-  // Points
-  pts.forEach(p => {
-    const sv  = toSVG(p.x, p.y);
-    const g   = svgEl('g', {'data-pid':p.id, style:'cursor:pointer'});
-    const sel = _state.selectedPoint === p.id;
-
-    if (sel) {
-      g.appendChild(svgEl('circle', {cx:sv.x, cy:sv.y, r:11, fill:'none', stroke:'#275f84', 'stroke-width':1.5, opacity:0.35}));
-    }
-    g.appendChild(svgEl('circle', {
-      cx:sv.x, cy:sv.y, r:7,
-      fill: sel ? '#275f84' : '#ffffff',
-      stroke:'#275f84', 'stroke-width':1.8,
-    }));
-
-    const lbl = svgEl('text', {
-      x:sv.x, y:sv.y + 4,
-      'text-anchor':'middle',
-      fill: sel ? '#ffffff' : '#275f84',
-      'font-size':'10', 'font-weight':'bold',
-      'font-family':'Segoe UI, sans-serif',
-      style:'pointer-events:none; user-select:none',
-    });
-    lbl.textContent = p.id;
-    g.appendChild(lbl);
-
-    g.addEventListener('click', e => {
-      e.stopPropagation();
-      _state.selectedPoint = _state.selectedPoint === p.id ? null : p.id;
-      renderPoints();
-      setCoords(_state.selectedPoint ? p : null);
-    });
-
-    g.addEventListener('mouseenter', () => showTooltip(p));
-    g.addEventListener('mouseleave', hideTooltip);
-
-    ptG.appendChild(g);
+  BedMap.drawStuds(document.getElementById('pd-path'), document.getElementById('pd-points'), _state.points, {
+    corner: _state.origin_corner,
+    selectedId: _state.selectedPoint,
+    onStud: (g, p) => {
+      g.style.cursor = 'pointer';
+      g.addEventListener('click', e => {
+        e.stopPropagation();
+        _state.selectedPoint = _state.selectedPoint === p.id ? null : p.id;
+        renderPoints();
+        setCoords(_state.selectedPoint ? p : null);
+      });
+      g.addEventListener('mouseenter', () => showTooltip(p));
+      g.addEventListener('mouseleave', hideTooltip);
+    },
   });
 }
 
@@ -777,14 +629,6 @@ function pdGotoStud(p, btn) {
     },
   })
     .finally(() => { if (btn) btn.disabled = false; });
-}
-
-// ── SVG helper ────────────────────────────────────────────────────────────────
-
-function svgEl(tag, attrs = {}) {
-  const el = document.createElementNS(NS, tag);
-  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
-  return el;
 }
 
 // ── Part Settings modal ───────────────────────────────────────────────────────

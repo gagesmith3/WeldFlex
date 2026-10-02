@@ -26,7 +26,7 @@ from part_origin import (
     to_bed,
 )
 
-DESIGNER_JS = Path(__file__).resolve().parents[1] / "backend" / "static" / "js" / "part_designer.js"
+BED_MAP_JS = Path(__file__).resolve().parents[1] / "backend" / "static" / "js" / "bed_map.js"
 
 # Deliberately not square and not nominal, so a swapped axis or a hard-coded 762
 # shows up.
@@ -171,8 +171,9 @@ def test_an_unknown_corner_is_refused_when_strict():
         to_bed(1, 1, "top_right", ZERO_REF)
 
 
-def test_the_designer_uses_the_same_corner_keys():
-    js = DESIGNER_JS.read_text(encoding="utf-8")
-    keys = re.search(r"const PD_CORNERS = \[([^\]]*)\];", js)
-    assert keys, "PD_CORNERS not found in part_designer.js"
+def test_the_bed_map_uses_the_same_corner_keys():
+    """bed_map.js draws every part designer and operator bed."""
+    js = BED_MAP_JS.read_text(encoding="utf-8")
+    keys = re.search(r"const CORNERS = \[([^\]]*)\];", js)
+    assert keys, "CORNERS not found in bed_map.js"
     assert tuple(re.findall(r"'(\w+)'", keys.group(1))) == CORNERS

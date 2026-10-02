@@ -14,7 +14,13 @@
     <tbody>
       {% for recipe in recipes %}
       <tr>
-        <td class="parts-library-name-cell">{{ recipe.name }}</td>
+        <td class="parts-library-name-cell">
+          {# Opens the read-only part details: the bed map and the part's settings. #}
+          <button type="button" class="parts-name-btn js-part-detail" data-recipe-id="{{ recipe.id }}">
+            <span class="parts-name-text">{{ recipe.name }}</span>
+            {{ icon_safe('map_pin', width=14, height=14, class_='parts-name-icon') }}
+          </button>
+        </td>
         <td class="parts-library-studs-cell">{{ recipe.studs_count }}</td>
         <td class="parts-library-spec-cell">{{ recipe.stud_type }} · {{ recipe.substrate }}</td>
         <td class="parts-library-pressure-cell"><span class="badge badge--neutral">{{ recipe.pressure_setting }} lbf</span></td>
@@ -23,7 +29,7 @@
           <button type="button" class="btn run js-table-run parts-run-btn"
                   data-recipe-id="{{ recipe.id }}"
                   data-recipe-name="{{ recipe.name }}"
-                  data-stud-count="{{ recipe.studs_count }}">Run</button>
+                  data-stud-count="{{ recipe.studs_count }}">Load</button>
         </td>
       </tr>
       {% endfor %}

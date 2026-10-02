@@ -156,6 +156,25 @@ def test_the_run_modal_asks_for_a_starting_stud_that_defaults_to_the_first(run_a
     assert "fd.append('start_stud', startStud)" in html
 
 
+def test_the_parts_list_loads_and_opens_each_parts_details(run_app):
+    """The row button queues the job, so it says Load. The name opens the
+    read-only details, drawn from data sent with the page."""
+    run_app.write([
+        _recipe(voltage=120, origin_corner="back_right", studs=[{"x": 1, "y": 2}, {"x": 3, "y": 4}]),
+        _recipe(id="shot", name="Single Shot", system="single_shot"),
+    ])
+    html = run_app.client.get("/operator/parts").get_data(as_text=True)
+    assert re.search(r'<button[^>]*\bjs-table-run\b[^>]*>Load</button>', html)
+    assert re.search(r'<button[^>]*\bjs-part-detail\b[^>]*\bdata-recipe-id="part-1"', html)
+    assert 'id="part-detail-modal"' in html and "bed_map.js" in html
+
+    data = re.search(r'<script type="application/json" id="parts-data">(.*?)</script>', html, re.S)
+    parts = json.loads(data.group(1))
+    assert [part["id"] for part in parts] == ["part-1"]  # the Single Shot record stays hidden
+    assert parts[0]["studs"] == [{"x": 1, "y": 2}, {"x": 3, "y": 4}]
+    assert (parts[0]["voltage"], parts[0]["origin_corner"], parts[0]["studs_count"]) == (120, "back_right", 2)
+
+
 def test_the_job_panel_says_when_a_run_is_resumed(run_app):
     """On the Cycles card, not beside LIVE and DI OFF: a third tag in that row
     is clipped to an ellipsis on the kiosk, and a resume nobody can see is the
@@ -600,7 +619,7 @@ def test_recipe_save_refuses_unparseable_studs_instead_of_erasing_them(run_app):
 
 
 def test_single_shot_target_range_is_the_part_designers_bed(run_app):
-    js = Path(run_app.module.__file__).parent / "static" / "js" / "part_designer.js"
+    js = Path(run_app.module.__file__).parent / "static" / "js" / "bed_map.js"
     bed = re.search(r"const BED = ([\d.]+);", js.read_text(encoding="utf-8"))
     assert float(bed.group(1)) == run_app.module.BED_MM
 

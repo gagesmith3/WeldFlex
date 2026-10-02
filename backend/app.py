@@ -1361,7 +1361,7 @@ POINTS = [
      "desc": "Front-left bed corner, the part origin"},
     {"name": "homewf",   "label": "Home",      "icon": "home",      "taught": True,
      "desc": "WeldFlex home, where every run starts and ends"},
-    {"name": "pitstop",  "label": "Pit Stop",  "icon": "map_pin",   "taught": False,
+    {"name": "pitstop",  "label": "Pit Stop",  "icon": "map_pin",   "taught": True,
      "desc": "Service position"},
 ]
 _POINTS_BY_NAME = {p["name"]: p for p in POINTS}

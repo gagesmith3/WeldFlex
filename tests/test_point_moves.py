@@ -102,7 +102,7 @@ class FakeRobot:
         return _pose(450, -150, 60)
 
     def teach_point_pose(self, name):
-        return {"zerozero": ZZ, "homewf": _pose(600, 0, 110)}[name]
+        return {"zerozero": ZZ, "homewf": _pose(600, 0, 110), "pitstop": _pose(300, 150, 200)}[name]
 
     def upload_and_run(self, path):
         with open(path, encoding="utf-8") as f:
@@ -125,6 +125,9 @@ class IdleJob:
 def points_app(monkeypatch):
     monkeypatch.setattr(WeldFlexRobotService, "start", lambda self: None)
     module = importlib.import_module("app")
+    # Every real point is taught now; one that isn't keeps the refusal covered.
+    monkeypatch.setitem(module._POINTS_BY_NAME, "untaught",
+                        {"name": "untaught", "label": "Untaught", "taught": False})
     robot = FakeRobot()
     # Patch the calls the Points routes make; the rest of the real service stays,
     # because every render's context processor reads it.
@@ -149,8 +152,14 @@ def test_wrong_active_frame_refuses_without_moving(points_app):
     assert points_app.robot.uploaded == []
 
 
-def test_untaught_point_refuses(points_app):
+def test_pitstop_moves(points_app):
     resp = points_app.client.post("/ui/points/move", data={"point": "pitstop", "mode": "to"})
+    assert b"OK" in resp.data
+    assert "Lin(pitstop" in points_app.robot.uploaded[0]
+
+
+def test_untaught_point_refuses(points_app):
+    resp = points_app.client.post("/ui/points/move", data={"point": "untaught", "mode": "to"})
     assert b"not taught" in resp.data
     assert points_app.robot.uploaded == []
 

@@ -21,6 +21,7 @@ from lua_builder import (
     build_single_shot_lua,
     build_weldflex_lua,
     check_travel_heights,
+    default_dsc_calibration,
     dynamic_stud_legs,
     format_lua_string,
     format_number,
@@ -131,6 +132,29 @@ def test_dynamic_stud_legs_require_an_accepted_machine_calibration(monkeypatch):
 
     with pytest.raises(ValueError, match="WELDFLEX_DSC_CALIBRATED=1"):
         dynamic_stud_legs([{"x": 0, "y": 0}, {"x": 20, "y": 0}])
+
+
+def test_dsc_default_rate_is_the_rated_speed(monkeypatch):
+    """With no rate in .env, DSC times legs at the FR-16's rated 1000 mm/s.
+
+    The old 180 default let the 2026-10-02 testing part's 25 mm leg run at 34%,
+    and the next stud seated only during the push. At 1000 it slows to 6%.
+    """
+    monkeypatch.setenv("WELDFLEX_DSC_CALIBRATED", "1")
+    monkeypatch.delenv("WELDFLEX_DSC_RATE_100_PCT_MMS", raising=False)
+    monkeypatch.delenv("WELDFLEX_DSC_FIXED_OVERHEAD_MS", raising=False)
+    monkeypatch.delenv("WELDFLEX_DSC_SAFETY_MARGIN_MS", raising=False)
+
+    assert default_dsc_calibration().rate_100_pct_mms == 1000.0
+
+    legs = dynamic_stud_legs(
+        [{"x": 325, "y": 50}, {"x": 350, "y": 50}, {"x": 525, "y": 50}],
+        stud_reload_ms=600,
+        feed_pulse_ms=250,
+    )
+
+    assert (legs[1].speed_pct, legs[1].wait_ms) == (6, 0)
+    assert (legs[2].speed_pct, legs[2].wait_ms) == (43, 0)
 
 
 def test_weldflex_lua_emits_dynamic_stud_to_stud_travel(monkeypatch):

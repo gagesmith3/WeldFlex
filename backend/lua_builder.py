@@ -60,13 +60,20 @@ ARM_MODES = ("live", "dry")
 # Dynamic speed compensation stays opt-in until measurements from the actual
 # controller motion path have established a conservative timing model. The
 # default rate is deliberately not used while calibration is disabled.
+#
+# The rate is the FR-16's rated 1000 mm/s at 100%. Until 2026-10-02 it was 180,
+# a number nobody measured, which made DSC think a leg took 4-5x longer than it
+# did: on a 25 mm leg the next stud seated in the chuck only during the push,
+# while a 175 mm leg was fine. A rate the robot cannot exceed keeps the model a
+# lower bound on travel time with no measurement at all; measuring the real
+# rate could only let DSC go faster.
 DSC_CALIBRATED_ENV = "WELDFLEX_DSC_CALIBRATED"
 DSC_RATE_100_PCT_MMS_ENV = "WELDFLEX_DSC_RATE_100_PCT_MMS"
 DSC_FIXED_OVERHEAD_MS_ENV = "WELDFLEX_DSC_FIXED_OVERHEAD_MS"
 DSC_SAFETY_MARGIN_MS_ENV = "WELDFLEX_DSC_SAFETY_MARGIN_MS"
 FEED_PULSE_MS_ENV = "WELDFLEX_FEED_PULSE_MS"
 
-DSC_DEFAULT_RATE_100_PCT_MMS = 180.0
+DSC_DEFAULT_RATE_100_PCT_MMS = 1000.0
 DSC_DEFAULT_FIXED_OVERHEAD_MS = 0.0
 DSC_DEFAULT_SAFETY_MARGIN_MS = 50
 FEED_PULSE_MS_DEFAULT = 250

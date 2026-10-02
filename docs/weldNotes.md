@@ -132,6 +132,21 @@ the recipe's normal motion speed. It is disabled by default and refuses to build
 actual `Lin` timing model. The machine-level calibration values live in `.env`;
 restart the backend after changing them.
 
+The model's rate, `WELDFLEX_DSC_RATE_100_PCT_MMS`, must be no slower than the
+robot really moves, or DSC thinks a leg takes longer than it does and lets the
+head reach the next stud before the feeder has reloaded. Since 2026-10-02 it is
+**1000 mm/s, the FR-16's rated speed at 100%**, which no move can beat, so the
+model cannot err that way. Until then it was 180, a default nobody measured. With
+that, a 25 mm leg ran at 34% for about 0.1 s while DSC planned on 0.41 s, and the
+next stud seated in the chuck only during the push (live, Auto Speed 75%); a
+175 mm leg at 100% (about 0.23 s real, 0.97 s planned) was fine. Measuring the
+real rate could only let DSC go faster.
+
+Each leg is timed only from the feed to its arrival over the next stud at
+Retract Z. The drop to the Search Height and the search are extra time the model
+does not count. Since `5bd87ea` (2026-10-02) the feed fires at Retract Z, after
+the retract lift, so that lift no longer adds time between the feed and the push.
+
 ### Commissioning Preconditions
 
 The FAIRINO pendant's **Auto Speed** is a global cap on the program's requested
@@ -139,7 +154,8 @@ motion percentage. It must be set to **100%** before timing DSC, running a DSC
 part, or accepting a calibration. A pendant Auto Speed of 25% made a generated
 100% long stud-to-stud move run at roughly a quarter of its expected speed during
 the 2026-09-02 `allentown_mini` validation; the DSC model cannot compensate past
-its own 100% ceiling.
+its own 100% ceiling. Below 100% every leg only runs slower than planned, which
+gives the feeder more time, never less; it costs cycle time, not a late stud.
 
 Use percentage-mode linear moves with no inline offset while a
 `PointsOffsetEnable(0, ...)` global workpiece offset is active:

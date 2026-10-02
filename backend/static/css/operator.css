@@ -1081,36 +1081,6 @@ select {
   color: var(--muted);
 }
 
-.diag-calls {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-
-.diag-call {
-  padding: 10px 12px;
-  border-radius: 10px;
-  border: 1px solid transparent;
-}
-
-.diag-call-ok    { background: var(--ok-bg);  border-color: var(--ok-line); }
-.diag-call-error { background: var(--err-bg); border-color: var(--err-line); }
-
-.diag-call-name {
-  font-size: 0.68rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--muted);
-  margin-bottom: 6px;
-}
-
-.diag-call-code {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 4px;
-}
-
 .diag-code-num {
   display: inline-flex;
   align-items: center;
@@ -1129,11 +1099,6 @@ select {
 .diag-code-label {
   font-size: 0.82rem;
   font-weight: 600;
-}
-
-.diag-call-value {
-  font-size: 0.8rem;
-  color: var(--muted);
 }
 
 .diag-meta {
@@ -1174,11 +1139,6 @@ select {
   gap: 8px;
 }
 
-.diag-health-state {
-  padding: 3px 10px;
-  font-size: 0.8rem;
-}
-
 .diag-health-line {
   font-size: 0.78rem;
   color: var(--muted);
@@ -1190,13 +1150,145 @@ select {
   opacity: 0.75;
 }
 
-.diag-meta-section-overflow {
-  overflow: hidden;
+/* ── Robot Diagnostics page, condensed (Settings → Robot Diagnostics) ──
+   Fills the 800×500 kiosk without scrolling: the summary takes what the
+   action row leaves. Six columns: the two channel lights take half each, the
+   status tiles a third, IO two thirds beside the force tile. */
+.diag-page {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 100%;
+  min-height: 0;
+  padding: 10px 12px;
+  box-sizing: border-box;
 }
 
-.diag-path-value {
-  font-size: 0.72rem;
-  word-break: break-all;
+.diag-page-summary {
+  flex: 1;
+  min-height: 0;
+}
+
+.dg-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.dg-name {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.dg-detail {
+  font-size: 0.78rem;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dg-channel {
+  grid-column: span 3;
+  padding: 8px 12px;
+  min-width: 0;
+}
+
+.dg-channel-body {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.dg-channel-body strong {
+  font-size: 1rem;
+  white-space: nowrap;
+}
+
+.dg-tile {
+  grid-column: span 2;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 8px 12px;
+  background: #f6fbff;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.dg-tile > strong {
+  font-size: 1.05rem;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dg-tile-io {
+  grid-column: span 4;
+}
+
+.dg-io {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px 16px;
+}
+
+.dg-io-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.85rem;
+  line-height: 1.6;
+}
+
+.dg-io-row span {
+  color: var(--muted);
+}
+
+.dg-last-error {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  padding: 2px 4px;
+}
+
+.dg-last-error-text {
+  font-size: 0.82rem;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dg-good { color: #065f46 !important; }
+.dg-bad  { color: #b91c1c !important; }
+.dg-muted { color: var(--muted) !important; }
+.dg-high { color: #065f46; }
+.dg-low  { color: var(--muted); }
+
+.diag-page-actions {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.diag-page-actions .btn {
+  justify-content: center;
+  min-height: 48px;
+  padding-inline: 8px;
+  white-space: nowrap;
+}
+
+.diag-meta-section-overflow {
+  overflow: hidden;
 }
 
 /* ── Collision sensitivity dot-slider ── */

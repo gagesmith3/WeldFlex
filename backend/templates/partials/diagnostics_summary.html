@@ -1,0 +1,120 @@
+{# Robot Diagnostics, condensed to one screen (2026-10-02). Every value is a cache
+   read; the full feed view is still at /ui/diagnostics/feed, unlinked.
+
+   Commands and Feed are separate lights on purpose: XML-RPC (commands) dies for
+   the whole of a force operation while the 8083 feed keeps streaming, so one
+   can be red while the other is green. See docs/ROBOT_TELEMETRY.md. #}
+
+{% macro level(value) -%}
+  {%- if value is none %}<strong class="dg-muted">—</strong>
+  {%- else %}<strong class="{{ 'dg-high' if value else 'dg-low' }}">{{ 'HIGH' if value else 'low' }}</strong>
+  {%- endif -%}
+{%- endmacro %}
+
+{% set commands = {
+    'connected':    ('Online',       'diag-health-ok'),
+    'degraded':     ('Unstable',     'diag-health-warn'),
+    'connecting':   ('Connecting',   'diag-health-warn'),
+    'telemetry':    ('No commands',  'diag-health-warn'),
+    'faulted':      ('Offline',      'diag-health-error'),
+    'disconnected': ('Disconnected', 'diag-health-error'),
+  } %}
+{% set cmd_label, cmd_class = commands.get(ustate.state, ('Unknown', 'diag-health-error')) %}
+
+{% set feeds = {
+    'streaming':    ('Streaming',  'diag-health-ok'),
+    'connecting':   ('Connecting', 'diag-health-warn'),
+    'error':        ('No stream',  'diag-health-error'),
+    'layout_error': ('Bad frames', 'diag-health-error'),
+    'stopped':      ('Stopped',    'diag-health-error'),
+  } %}
+{% set feed_label, feed_class = feeds.get(stats.state, ('Unknown', 'diag-health-error')) %}
+{% if stats.state == 'streaming' and not feed_fresh %}
+  {% set feed_label, feed_class = 'Stalled', 'diag-health-warn' %}
+{% endif %}
+
+<div class="dg-grid">
+
+  <div class="diag-health dg-channel {{ cmd_class }}">
+    <div class="diag-health-dot"></div>
+    <div class="dg-channel-body">
+      <span class="dg-name">Commands</span>
+      <strong>{{ cmd_label }}</strong>
+      <span class="dg-detail">
+        {{ status.ip }}
+        {%- if ustate.commands_available and status.probe_latency_ms is not none %} · {{ '%.0f'|format(status.probe_latency_ms) }} ms{% endif %}
+        {%- if not ustate.commands_available and status.retry_in_s is not none %} · retry in {{ '%.0f'|format(status.retry_in_s) }} s{% endif %}
+      </span>
+    </div>
+  </div>
+
+  <div class="diag-health dg-channel {{ feed_class }}">
+    <div class="diag-health-dot"></div>
+    <div class="dg-channel-body">
+      <span class="dg-name">Status feed</span>
+      <strong>{{ feed_label }}</strong>
+      <span class="dg-detail">
+        port {{ stats.port }}
+        {%- if feed_fresh and stats.frame_rate is not none %} · {{ '%.0f'|format(stats.frame_rate) }} fps{% endif %}
+      </span>
+    </div>
+  </div>
+
+  <div class="dg-tile">
+    <span class="dg-name">Program</span>
+    <strong>{{ ustate.program_state }}</strong>
+    <span class="dg-detail">
+      {%- if ustate.current_line is not none %}line {{ ustate.current_line }}{% else %}&nbsp;{% endif -%}
+    </span>
+  </div>
+
+  {% set fault_tone = {'estop': 'dg-bad', 'fault': 'dg-bad', 'clear': 'dg-good', 'unknown': 'dg-muted'}[fault.status] %}
+  <div class="dg-tile dg-tile-fault">
+    <span class="dg-name">Fault</span>
+    <strong class="{{ fault_tone }}">
+      {%- if fault.status == 'estop' %}E-stop engaged
+      {%- elif fault.status == 'fault' %}{{ fault.code or fault.label or 'Fault' }}
+      {%- elif fault.status == 'clear' %}None
+      {%- else %}No reading{% endif -%}
+    </strong>
+    <span class="dg-detail">
+      {%- if fault.status == 'fault' and fault.description %}{{ fault.description }}
+      {%- elif fault.status == 'fault' and fault.label %}{{ fault.label }}
+      {%- elif fault.status == 'unknown' %}Neither channel can answer
+      {%- else %}&nbsp;{% endif -%}
+    </span>
+  </div>
+
+  <div class="dg-tile">
+    <span class="dg-name">E-stop</span>
+    <strong class="{{ 'dg-bad' if ustate.emergency_stop else ('dg-good' if ustate.emergency_stop is not none else 'dg-muted') }}">
+      {{ 'ENGAGED' if ustate.emergency_stop else ('Clear' if ustate.emergency_stop is not none else '—') }}
+    </strong>
+    <span class="dg-detail">Mode: {{ robot_mode or '—' }}</span>
+  </div>
+
+  <div class="dg-tile dg-tile-io">
+    <span class="dg-name">Inputs &amp; outputs</span>
+    <div class="dg-io">
+      <div class="dg-io-row"><span>DI{{ ready_di }} welder ready</span>{{ level(ustate.weld_ready) }}</div>
+      <div class="dg-io-row"><span>DI{{ stud_di }} stud on work</span>{{ level(ustate.stud_on_work) }}</div>
+      <div class="dg-io-row"><span>DO0 weld trigger</span>{{ level(trigger_do) }}</div>
+      <div class="dg-io-row"><span>DO1 feeder</span>{{ level(feeder_do) }}</div>
+    </div>
+  </div>
+
+  <div class="dg-tile">
+    <span class="dg-name">Force sensor</span>
+    <strong>
+      {%- if ustate.force_fresh and ustate.fz_lbf is not none %}{{ '%.1f'|format(ustate.fz_lbf) }} lbf
+      {%- else %}<span class="dg-muted">—</span>{% endif -%}
+    </strong>
+    <span class="dg-detail">{{ 'Active' if ft_active else ('Not active' if ft_active is not none else 'No reading') }}</span>
+  </div>
+
+  <div class="dg-last-error">
+    <span class="dg-name">Last error</span>
+    <span class="dg-last-error-text">{{ status.last_error or '—' }}</span>
+  </div>
+
+</div>

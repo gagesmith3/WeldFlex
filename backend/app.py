@@ -2061,22 +2061,32 @@ def robot_diagnostics_old_url():
 
 @app.route("/ui/diagnostics")
 def ui_diagnostics():
-    # robot.robot_ip is the live target, which can differ from the .env value after a
-    # settings change — show what we are actually talking to.
-    controller_host = os.getenv("WELDFLEX_CONTROLLER_HOST", robot.robot_ip)
-    program_path = os.getenv("WELDFLEX_PROGRAM_PATH", "/fruser/")
+    """The Robot Diagnostics card: the two channels, program, fault, IO and force.
+
+    Condensed 2026-10-02 to what an operator or tech acts on. Link internals,
+    the feed-vs-XML-RPC table and frame integrity are still served, unlinked,
+    by /ui/diagnostics/feed. Every value is a cache read, so polling this costs
+    no robot I/O.
+    """
+    ustate = robot.get_universal_state()
     status = robot.diagnostics()
-    snapshot = {
-        "online": status["connected"],
-        "state": status["state"],
-        "robot_ip": status["ip"],
-        "controller_host": controller_host,
-        "program_path": program_path,
-        "error": status["last_error"],
-    }
-    return render_template("partials/diagnostics_readout.html",
-                           ok=True, status=status, snapshot=snapshot,
-                           uptime=robot.uptime())
+    feed = robot.feed_snapshot()
+    stats = robot.feed_stats()
+    fresh = feed.is_fresh()
+    return render_template(
+        "partials/diagnostics_summary.html",
+        ustate=ustate,
+        status=status,
+        stats=stats,
+        feed_fresh=fresh,
+        fault=_fault_view(ustate),
+        robot_mode=f8.ROBOT_MODES.get(feed.robot_mode) if fresh else None,
+        trigger_do=feed.do(0) if fresh else None,
+        feeder_do=feed.do(1) if fresh else None,
+        ft_active=feed.ft_active if fresh else None,
+        stud_di=WELD_STUD_DI,
+        ready_di=WELD_READY_DI,
+    )
 
 def _feed_compare_rows(feed, rpc) -> list[dict]:
     """The four signals the 8083 feed is slated to take over, side by side.
@@ -2122,6 +2132,10 @@ def ui_diagnostics_feed():
     of its own, reading the feed's cached frame the same way every other panel
     reads cache. That is what makes it safe to poll during a live run, and what
     `tools/feed_continuity.py` relies on.
+
+    No page mounts it since the diagnostics page was condensed (2026-10-02). It
+    stays because feed_continuity.py scrapes this panel's text; open the URL
+    directly for the full feed view.
     """
     feed = robot.feed_snapshot()
     stats = robot.feed_stats()

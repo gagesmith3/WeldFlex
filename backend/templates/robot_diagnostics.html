@@ -1,44 +1,25 @@
 {% extends "base.html" %}
-{% from "components/ui.html" import action_button, htmx_mount, panel_shell with context %}
+{% from "components/ui.html" import action_button, htmx_mount with context %}
 
+{# One screen at 800×500: the summary polls, the actions stay put so a poll
+   can't swallow a tap, and results land in the toast rack. #}
 {% block body %}
-<div class="page-body">
-  <div class="settings-sections">
-    {% call panel_shell('Robot Diagnostics', 'Live robot state, communication health, and error context.', class_name='diagnostics-shell') %}
-      {{ htmx_mount('diagnostics-readout', '/ui/diagnostics', 'load, every ' ~ (status_interval_ms or 1000) ~ 'ms', 'innerHTML') }}
-    {% endcall %}
+<div class="page-body diag-page">
+  {{ htmx_mount('diagnostics-summary', '/ui/diagnostics', 'load, every ' ~ (status_interval_ms or 1000) ~ 'ms', 'innerHTML',
+                class_name='diag-page-summary') }}
 
-    {% call panel_shell('Status Feed (port 8083)', 'Pushed controller telemetry, shown beside the XML-RPC values it replaces. State, line and fault codes now come from here; force and DI do not yet.', class_name='diagnostics-shell') %}
-      {{ htmx_mount('feed-readout', '/ui/diagnostics/feed', 'load, every ' ~ (status_interval_ms or 1000) ~ 'ms', 'innerHTML') }}
-    {% endcall %}
-
-    {% call panel_shell('Connection', 'Connect, release, or rebuild the link to the controller.', class_name='settings-shell') %}
-      {# Split across two rows so five controls still fit the 800px kiosk width. #}
-      <div class="btn-row">
-        {{ action_button('Connect', variant='run', icon='link_2',
-            hx_post='/ui/connection/connect', hx_target='#diag-action-result', hx_swap='innerHTML') }}
-        {{ action_button('Reconnect', variant='recipe-edit', icon='refresh_cw',
-            hx_post='/ui/diagnostics/reconnect', hx_target='#diag-action-result', hx_swap='innerHTML') }}
-        {{ action_button('Disconnect', variant='stop', icon='link_2_off',
-            hx_post='/ui/connection/disconnect', hx_target='#diag-action-result', hx_swap='innerHTML',
-            confirm='Disconnect from the robot? It will stay disconnected until you press Connect. Running programs are not stopped.') }}
-      </div>
-      <div id="diag-action-result" class="command-result"></div>
-    {% endcall %}
-
-    {% call panel_shell('Actions', 'Reset robot errors or stop an active program.', class_name='settings-shell') %}
-      <div class="btn-row">
-        {{ action_button('Reset Errors', variant='recipe-delete', icon='shield_alert',
-            hx_post='/ui/diagnostics/reset-errors', hx_target='#diag-action-result', hx_swap='innerHTML') }}
-        {{ action_button('Stop Program', variant='stop', icon='square',
-            hx_post='/ui/diagnostics/stop-program', hx_target='#diag-action-result', hx_swap='innerHTML') }}
-      </div>
-    {% endcall %}
-
-    {% call panel_shell('Connection Error', 'Last connection or communication error.', class_name='settings-shell') %}
-      <div id="diagnostics-error"></div>
-    {% endcall %}
-
+  <div class="diag-page-actions">
+    {{ action_button('Connect', variant='run', icon='link_2',
+        hx_post='/ui/connection/connect', hx_target='#toast-rack', hx_swap='innerHTML') }}
+    {{ action_button('Reconnect', variant='primary', icon='refresh_cw',
+        hx_post='/ui/diagnostics/reconnect', hx_target='#toast-rack', hx_swap='innerHTML') }}
+    {{ action_button('Disconnect', variant='stop', icon='link_2_off',
+        hx_post='/ui/connection/disconnect', hx_target='#toast-rack', hx_swap='innerHTML',
+        confirm='Disconnect from the robot? It will stay disconnected until you press Connect. Running programs are not stopped.') }}
+    {{ action_button('Reset Errors', variant='recipe-delete', icon='shield_alert',
+        hx_post='/ui/diagnostics/reset-errors', hx_target='#toast-rack', hx_swap='innerHTML') }}
+    {{ action_button('Stop Program', variant='stop', icon='square',
+        hx_post='/ui/diagnostics/stop-program', hx_target='#toast-rack', hx_swap='innerHTML') }}
   </div>
 </div>
 {% endblock %}

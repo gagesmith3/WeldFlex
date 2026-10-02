@@ -41,8 +41,8 @@ trusting that it's been exercised locally.
 full desktop chrome, not the touch-target CSS breakpoints. **The kiosk touch
 UI cannot be visually verified on this machine** without either setting
 `WELDFLEX_KIOSK=1` locally or testing on the actual RPi hardware — don't
-assume a change "looks fine" on Windows dev implies it's fine at 800×480
-touch scale.
+assume a change "looks fine" on Windows dev implies it's fine on the kiosk's
+800×500 CSS viewport.
 
 ## Settings → Wi-Fi and Settings → Hotspot need the Pi
 

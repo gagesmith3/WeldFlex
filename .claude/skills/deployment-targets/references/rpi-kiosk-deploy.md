@@ -1,7 +1,8 @@
 # RPi kiosk deploy — install pipeline, session stacks, networking
 
 Production target: Raspberry Pi OS **Lite**, full-screen touchscreen kiosk
-(800×480 — see the `weldflex-app` skill's touch/CSS notes), no keyboard/mouse in
+(a 1280×800 panel at `KIOSK_SCALE` 1.6, so 800×500 CSS px — see the
+`weldflex-app` skill's touch/CSS notes), no keyboard/mouse in
 normal operation. Everything under `deploy/rpi/` implements this.
 
 Lite is the intended base: it ships no compositor, no display manager, and no

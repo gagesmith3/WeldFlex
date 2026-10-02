@@ -75,9 +75,15 @@ the saved networks, since an access point cannot scan. Each page holds its own
 sheet: `#wifi-modal` in `settings_wifi.html`, `#hotspot-modal` in
 `settings_hotspot.html`.
 
-`ft` is `/ui/ft/{reading,stream,inspect}` — that's the whole route set;
+`ft` is `/ui/ft/{reading,stream,inspect,value}` — that's the whole route set;
 `setup` and `zero` don't exist as routes (an earlier revision of this file
-listed them as wired to Initialize/Zero buttons — that UI is gone).
+listed them as wired to Initialize/Zero buttons — that UI is gone). `value` is
+the operator home page's force figure as plain text, a pure cache read that
+`operator.html` polls every 250 ms between job-panel swaps.
+
+The only JSON routes are `/api/reports/{summary,parts/<part_id>,runs/<run_id>}`:
+read-only views over `job.history(limit=500)` (plus `job.events_for_run()` for a
+run), fetched by `partials/mgr_reports.html` and `part_designer.js`.
 `force_sensor.html` today has exactly one action button, `/ui/ft/inspect`
 (toast response), and says outright that "F/T configuration, zeroing, and
 payload identification are managed from the pendant during commissioning."
@@ -175,9 +181,10 @@ through `job.stop()` so a running job still finalizes. Load-bearing:
   `commands_available` false, or an active tool/wobj other than
   `point_moves.MOVE_TOOL`/`MOVE_WOBJ`; `_check_base_keepout()` refuses a target
   or level leg inside the robot-base no-go circle (`backend/base_keepout.py`, a
-  no-op unless `WELDFLEX_BASE_X_MM`/`_Y_MM`/`_KEEPOUT_MM` are all set). It is
-  **not commissioned**: the frame assumption behind the pose read is unverified
-  on hardware, which is why the modal shows the planned distances first.
+  no-op unless `WELDFLEX_BASE_X_MM`/`_Y_MM`/`_KEEPOUT_MM` are all set). Gage
+  confirmed it works on hardware, which also settles the frame assumption
+  behind the pose read; small UI tweaks are still planned. The modal still shows
+  the planned distances before anything moves.
 - **The part designer's Goto (`/ui/parts/goto`) makes the same move.** It
   plans with `point_moves.plan_offset_move()` to a stud's offset from
   `zerozero` and goes through the same `_live_move_poses()` and
@@ -294,7 +301,11 @@ icon names found this session — check it before assuming an icon works.)
 
 ## Kiosk / touch CSS
 
-`backend/static/css/operator.css` targets an 800×480 production touchscreen:
+`backend/static/css/operator.css`'s kiosk layouts were tuned for an 800×480
+panel and fire on `max-width: 820px`. The production HMI is a 1280×800 panel at
+scale 1.6 (`KIOSK_SCALE` in `deploy/rpi/kiosk-session-cage.sh`), an 800×500 CSS
+viewport, so the same layouts apply with 20 px more height. The CSS comments
+still say 800×480:
 ```css
 /* 800x480 kiosk display — compact header, touch targets, no-scroll layouts */
 @media (max-width: 820px) {

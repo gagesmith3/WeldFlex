@@ -4,7 +4,8 @@ Host-side control software for a **FAIRINO FR-16 cobot doing stud welding**.
 Fairino's controller does the motion; WeldFlex owns everything around it — the
 part library, generating the Lua program from a part, pushing it to the
 controller over the vendor SDK, and running the job (state, progress, controls,
-history) from an 800×480 kiosk touchscreen.
+history) from a kiosk touchscreen: a 1280×800 panel at scale 1.6, so the UI
+gets 800×500 CSS px.
 
 Operator flow: pick a part → enter a cycle count → job loads into the Job
 Manager → hit Run → runs that many cycles → completes.

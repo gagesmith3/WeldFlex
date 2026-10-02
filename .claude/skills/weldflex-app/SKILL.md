@@ -7,7 +7,8 @@ description: What WeldFlex is for, plus the conventions for its own Flask app co
 
 WeldFlex is a Flask + HTMX app (`backend/app.py`, `backend/robot_service.py`,
 `backend/templates/**`) that drives a FAIRINO FR-16 cobot for stud welding,
-running full-screen on an 800×480 kiosk touchscreen. For the SDK calls
+running full-screen on a kiosk touchscreen (a 1280×800 panel at scale 1.6, so
+800×500 CSS px). For the SDK calls
 themselves (not how this app wraps them), see the `fairino-sdk` skill.
 
 ## What the app is for

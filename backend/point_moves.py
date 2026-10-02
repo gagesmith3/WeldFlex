@@ -24,8 +24,8 @@ The host plans the move and does every check. The program it uploads is
 straight-line code with no branches, because the controller's upload check
 executes top-level Lua (a runtime `error()` there refuses the upload).
 
-**Frame assumption, unverified on hardware:** `GetActualTCPPose` reports the
-TCP in the active tool/work-object frame. The route refuses unless tool 2 and
+**Frame assumption, confirmed on hardware by the owner:** `GetActualTCPPose`
+reports the TCP in the active tool/work-object frame. The route refuses unless tool 2 and
 wobj 2 are active, and the confirm modal shows the planned distances so a
 wrong frame shows up as absurd numbers before anything moves.
 """

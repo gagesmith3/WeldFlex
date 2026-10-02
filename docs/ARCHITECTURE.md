@@ -224,8 +224,10 @@ height `homewf` is taught at: the legs between home and the part then slope
 between the two heights. Nothing reads `homewf`'s height to catch that yet.
 
 The part designer's move-to-stud button (⌖) goes to the stud at Safe Z, not the
-Search Height, so it clears fixtures too. It is not bound by the rule above: it
-is a single `PTP` from wherever the head is, so it can move Z and X/Y together.
+Search Height, so it clears fixtures too. Since 2026-09-25 (`5096d39`) it keeps
+the rule as well: `ui_parts_goto` plans it with `point_moves.plan_offset_move`,
+the Points page's straight up, level, straight down. It used to be a single
+`PTP`, and that joint-space sweep swung the head into the arm.
 
 ## Where to go next
 

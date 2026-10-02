@@ -241,8 +241,8 @@ report `-4`. Report it loudly before touching any prose.
 Do not attempt to verify these from the repo. If a change makes one of them
 look outdated, **report it for Gage** rather than editing:
 
-- The production display is 800×480 and the operator UI must fit without
-  scrolling.
+- The production display is a 1280×800 panel at scale 1.6 (since `be46085`),
+  so the operator UI gets 800×500 CSS px and must fit without scrolling.
 - 20 lbf press is ~89% of the controller's 0–100 N collision scale, which is
   why STAGE 2 faulted axis 3.
 - `FT_GetConfig()` returns the real F/T sensor number; `FTC_SENSOR_NUM = 1` in

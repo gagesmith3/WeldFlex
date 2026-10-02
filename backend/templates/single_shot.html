@@ -130,16 +130,18 @@
                value="{{ target.y if target else '' }}" required>
       </div>
       <div>
-        <label for="ss_safe_z">Safe Z Level (mm)</label>
+        <label for="ss_safe_z">Shot Height (mm)</label>
         <input id="ss_safe_z" name="safe_z" type="text" inputmode="none" data-kbd="num"
                value="{{ recipe.safe_z }}" required>
       </div>
       <div>
-        <label for="ss_part_z">Work Object Z Level (mm)</label>
+        <label for="ss_part_z">Part Z (mm)</label>
         <input id="ss_part_z" name="part_z" type="text" inputmode="none" data-kbd="num"
                value="{{ recipe.part_z }}" required>
       </div>
-      {# No Retract Z or Search Height: a shot searches from Safe Z and retracts back to it. #}
+      {# A shot has one height above Part Z, stored as safe_z: it approaches at it,
+         searches from it, lifts back to it and feeds there. No Retract Z or Search
+         Height; the Parts designer's Safe Z means something else. #}
       <div>
         <label for="ss_stud_type">Stud Selector</label>
         <select id="ss_stud_type" name="stud_type">

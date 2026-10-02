@@ -111,18 +111,21 @@ field; its target is always measured from `zerozero`.
 
 **A part has three heights, all in mm above `part_z`** (since 2026-10-01):
 `safe_z` is the plane the legs to and from `homewf` travel at, `retract_z` the
-plane the head lifts to and travels at between studs, and `search_z` where each
-search starts. **`retract_z` changed meaning that day.** From 2026-09-22 until
+plane `weld.lua` lifts to after each stud (since 2026-10-02, published as
+`Z_RETRACT`; the next stud feeds there) and the head travels at between studs,
+and `search_z` where each search starts. **`retract_z` changed meaning that day.** From 2026-09-22 until
 then it held the Search Height and a run travelled between studs at Safe Z;
 `_recipes_load()` moves it to `search_z` and starts `retract_z` at `safe_z`, so
 a migrated part travels as it did until someone lowers it. Run records follow
 the same split, and `mgr_reports.html`'s `heights()` reads all three formats.
-A `retract_z` below `search_z` is refused on save, at `JobManager.load` and in
-`build_weldflex_lua` (`lua_builder.check_travel_heights`). On save both follow
+Heights out of the order `search_z` ≤ `retract_z` ≤ `safe_z` are refused on
+save, at `JobManager.load` and in `build_weldflex_lua`
+(`lua_builder.check_travel_heights`; the Safe Z half since 2026-10-02). On save both follow
 the keep-if-missing rule, except that a form posting `retract_z` with
 no `search_z` is a page loaded before the change, and its `retract_z` is read
-as the Search Height. The Single Shot record uses only `safe_z`: a shot
-searches from it and retracts back to it.
+as the Search Height. The Single Shot record uses only `safe_z`, labelled
+"Shot Height" on its page: a shot searches from it, retracts back to it and
+feeds there.
 
 `_recipes_load()` auto-migrates any recipe missing an `id` by assigning a fresh
 UUID and re-saving. `_recipes_enrich()` derives `studs_count` and

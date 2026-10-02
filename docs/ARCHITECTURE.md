@@ -212,16 +212,20 @@ from `zerozero` in the workpiece frame and stacked on Part Z:
 1. `homewf`, which is taught at Safe Z (`PART_Z + SAFE_Z`). Nothing offsets it.
 2. Level at Safe Z to above the cycle's first stud.
 3. Straight down to the Search Height (`PART_Z + SEARCH_Z`).
-4. `weld.lua`: search down from there, press, weld, then retract back to it.
-5. Straight up to Retract Z (`PART_Z + RETRACT_Z`), level to above the next
-   stud, then step 3 again.
+4. `weld.lua`: search down from there, press, weld, then retract straight up to
+   Retract Z (`PART_Z + RETRACT_Z`, published as `Z_RETRACT`) and feed the next
+   stud there.
+5. Level at Retract Z to above the next stud, then step 3 again.
 
-Retract Z became its own height on 2026-10-01. Before that step 5 climbed all
+Retract Z became its own height on 2026-10-01. Before that, the head climbed all
 the way back to Safe Z between every stud, and `retract_z` was where the recipe
 stored the Search Height (now `search_z`; see the migration in
-`_recipes_load()`). A Retract Z equal to the Search Height travels between
-studs at the height `weld.lua` retracted to, and the lift and descent are
-skipped. One below it is refused.
+`_recipes_load()`). Until 2026-10-02 `weld.lua`'s retract went only back up to
+the Search Height and fed there, just above the stud just welded, and
+`WeldFlex.lua` lifted to Retract Z afterwards. The lift and the feed height now
+belong to `weld.lua`. Heights must run Search Height ≤ Retract Z ≤ Safe Z;
+`lua_builder.check_travel_heights` refuses anything else on save, at load and at
+build. A Retract Z equal to the Search Height skips the descent.
 
 After the last stud of a cycle, the head goes straight up to Safe Z and then
 level into `homewf`. The one case that breaks the rule is a recipe whose Safe Z is not the

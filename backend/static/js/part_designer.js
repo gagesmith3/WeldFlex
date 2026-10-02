@@ -754,6 +754,13 @@ function pdsReadForm() {
   else if (retractZ < searchZ) errors['pd-modal-retract-z'] = 'Set it at or above the Search Height.';
   else values.retract_z = retractZ * factor;
 
+  // The end of a cycle lifts from Retract Z to Safe Z, so one below it would
+  // lower the head toward the part on the way home. lua_builder refuses it too.
+  if (values.safe_z !== undefined && retractZ > 0 && safeZ < retractZ) {
+    delete values.safe_z;
+    errors['pd-modal-safe-z'] = 'Set it at or above Retract Z.';
+  }
+
   const partZ = pdsNum('pd-modal-part-z');
   if (Number.isFinite(partZ)) values.part_z = partZ * factor;
   else errors['pd-modal-part-z'] = 'Enter a height.';

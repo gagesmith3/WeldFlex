@@ -2,7 +2,8 @@
 -- weld.lua — Weld sub-process for one stud
 --
 -- Executed per stud by WeldFlex.lua (and once by single_shot.lua) with the
--- torch parked over the stud at the caller's Z_CLEARANCE.
+-- torch parked over the stud at the caller's Z_CLEARANCE. The retract lifts
+-- to the caller's Z_RETRACT, and the next stud feeds there.
 -- Sequence: SEARCH -> PRESS -> WELD -> HOLD -> RETRACT -> FEED
 -- See docs/weldNotes.md for full technical documentation & bring-up notes.
 -- =========================================
@@ -122,7 +123,9 @@ end
 
 -- The park height is the caller's global Z_CLEARANCE, read where it is used and
 -- never shadowed here: WeldFlex.lua parks at the Search Height, single_shot.lua at
--- its Safe Z. The search starts there and the retract returns there.
+-- its Safe Z. The search starts there. The retract lifts to the caller's
+-- Z_RETRACT instead (see departFromStud()), so the feed never fires over the
+-- stud just welded at the Search Height (owner, 2026-10-02).
 local SEARCH_MAX_MM   = 100.0
 local PRESS_MAX_MM    = 60.0
 local PRESS_ADJUST_MM = 60.0
@@ -369,7 +372,14 @@ end
 -- used, so the reading's origin cancels out. It must share the workpiece frame's
 -- axes, the same assumption the Points page makes. With either reading missing,
 -- or the head more than LIFT_MAX_DRIFT_MM off the park pose, it falls back to the
--- old Lin back to the park pose.
+-- old Lin to the park pose's X/Y, which runs back close to the descent.
+--
+-- It lifts to the caller's Z_RETRACT (a run's Retract Z), not back to the park
+-- height, and feedNextStud() runs after it. Until 2026-10-02 it returned to
+-- Z_CLEARANCE, the Search Height, so the next stud fed just above the stud
+-- just welded, and the caller lifted to Retract Z only afterwards. One Lin at
+-- RETRACT_SPEED the whole way, so it stays slow for however long the chuck is
+-- still on the stud. A Z_RETRACT below the park height is not lowered to.
 --
 -- A Lin, not PTP or MoveCart: those interpolate in joint space, which bows the
 -- path while the collet is still on the stud.
@@ -377,6 +387,11 @@ end
 -- Every departure from a stud goes through here, faults included: a fault
 -- during press leaves the collet on the stud exactly like a good weld does.
 local parkPose = nil
+
+local function liftHeight()
+    if Z_RETRACT > Z_CLEARANCE then return Z_RETRACT end
+    return Z_CLEARANCE
+end
 
 local function departFromStud()
     local liftX, liftY = weldX, weldY
@@ -399,7 +414,7 @@ local function departFromStud()
     ftGuardOff()
 
     -- flag=0: workpiece frame, matching WeldFlex.lua's traverse (see its comment).
-    PointsOffsetEnable(0, liftX, liftY, Z_CLEARANCE, 0, 0, 0)
+    PointsOffsetEnable(0, liftX, liftY, liftHeight(), 0, 0, 0)
     Lin(zerozero, RETRACT_SPEED, -1, 0, 0)
     PointsOffsetDisable()
 end
@@ -540,6 +555,9 @@ local function requireContract()
     end
     if type(Z_CLEARANCE) ~= "number" then
         error("[WELD] Z_CLEARANCE not set — the caller must publish the height it parked at")
+    end
+    if type(Z_RETRACT) ~= "number" then
+        error("[WELD] Z_RETRACT not set — the caller must publish the height to lift and feed at")
     end
 end
 

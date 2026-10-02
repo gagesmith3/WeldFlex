@@ -185,9 +185,23 @@ def test_weldflex_lua_publishes_the_search_height_as_weld_lua_park_height():
     assert "SEARCH_Z = 50.8" in built.text
     assert "PARK_Z = PART_Z + SEARCH_Z" in built.text
     assert "Z_CLEARANCE = PARK_Z" in built.text
-    # weld.lua reads Z_CLEARANCE only; these were its old, now-dead inputs.
+    # weld.lua reads Z_CLEARANCE and Z_RETRACT only; these were its old, now-dead inputs.
     assert "WELD_SAFE_Z" not in built.text
     assert "WELD_PART_Z" not in built.text
+
+
+def test_weldflex_lua_publishes_retract_z_as_weld_lua_lift_height():
+    """weld.lua lifts to Z_RETRACT after every stud and feeds there, so it must
+    be the run's Retract Z on the same Part Z base, not the Search Height."""
+    built = build_weldflex_lua(
+        [{"x": 10, "y": 20}], cycles=1, run_mode=LIVE,
+        part_z=63.5, safe_z=127, retract_z=76.2, search_z=50.8,
+    )
+    assert "LIFT_Z = PART_Z + RETRACT_Z" in built.text
+    assert "Z_RETRACT = LIFT_Z" in built.text
+    approach = _stud_approach(built)
+    assert approach["retract"] == pytest.approx(63.5 + 76.2)
+    assert approach["clearance"] == pytest.approx(63.5 + 50.8)
 
 
 def test_weldflex_lua_keeps_part_designer_x_y_order():
@@ -239,10 +253,11 @@ def test_a_run_never_moves_z_and_xy_together():
     """Owner, 2026-09-22: for safety a move is straight up, straight down, or
     level — never Z and X/Y at once. homewf is taught at Safe Z.
     Per stud: level to above it, straight down to the Search Height, weld.lua
-    searches from there and retracts back to it. The first stud of a cycle is
-    reached level at Safe Z out of home; later ones lift straight up to Retract Z
-    and travel level at that (owner, 2026-10-01: the climb to Safe Z between
-    every stud was wasted travel).
+    searches from there and lifts straight up to Retract Z. The first stud of a
+    cycle is reached level at Safe Z out of home; later ones travel level at
+    Retract Z from where weld.lua left the head (owner, 2026-10-01: the climb to
+    Safe Z between every stud was wasted travel; 2026-10-02: the lift moved into
+    weld.lua so the feed happens at Retract Z).
     """
     built = build_weldflex_lua(
         [{"x": 10, "y": 20}, {"x": 30, "y": 40}],
@@ -252,7 +267,6 @@ def test_a_run_never_moves_z_and_xy_together():
 
     assert _moves(code) == [
         ("homewf", None),                                    # start: home, at Safe Z
-        ("zerozero", ("lastWeldX", "lastWeldY", "LIFT_Z")),  # off the last stud: up
         ("zerozero", ("weldX", "weldY", "travelZ")),         # level to the next
         ("zerozero", ("weldX", "weldY", "PARK_Z")),          # down to Search Height
         ("zerozero", ("lastWeldX", "lastWeldY", "HIGH_Z")),  # end of cycle: up
@@ -261,17 +275,16 @@ def test_a_run_never_moves_z_and_xy_together():
     assert "HIGH_Z = PART_Z + SAFE_Z" in code
     assert "LIFT_Z = PART_Z + RETRACT_Z" in code
     assert "PARK_Z = PART_Z + SEARCH_Z" in code
-    # weld.lua parks, searches and retracts at the height the run descended to.
+    # weld.lua parks and searches at the height the run descended to, and
+    # lifts to the height the run then travels at.
     assert "Z_CLEARANCE = PARK_Z" in code
+    assert "Z_RETRACT = LIFT_Z" in code
 
-    # The level move runs at Safe Z out of home and at Retract Z after a stud:
-    # the lift off a stud, and the switch to Retract Z, only run once there is
-    # a previous stud to lift off.
+    # The level move runs at Safe Z out of home and at Retract Z after a stud,
+    # where weld.lua's retract left the head.
     stud_branch = code.index("if lastWeldX ~= nil and lastWeldY ~= nil then")
     assert code.index("local travelZ = HIGH_Z") < stud_branch
     assert stud_branch < code.index("travelZ = LIFT_Z", stud_branch)
-    lift = code.index("PointsOffsetEnable(0, lastWeldX, lastWeldY, LIFT_Z, 0, 0, 0)")
-    assert stud_branch < lift < code.index("PointsOffsetEnable(0, weldX, weldY, travelZ, 0, 0, 0)")
     assert code.index("lastWeldX = weldX") > code.index(
         "PointsOffsetEnable(0, weldX, weldY, PARK_Z, 0, 0, 0)"
     )
@@ -286,27 +299,25 @@ def _if_block(code, header):
     return [line.strip() for line in lines[start + 1:end] if line.strip()]
 
 
-def test_a_retract_z_at_the_search_height_skips_the_lift_and_the_descent():
-    """Retract Z equal to the Search Height means travel between studs at the
-    height weld.lua already retracted to. The lift and the descent would then
-    be zero-length moves, so the program skips them instead of running them."""
+def test_the_run_leaves_the_lift_off_a_stud_to_weld_lua():
+    """Until 2026-10-02 the run lifted from the Search Height to Retract Z after
+    weld.lua returned, so the feed inside weld.lua fired at the Search Height.
+    weld.lua now lifts to Retract Z itself, before the feed, and the run only
+    travels level from there. A Retract Z equal to the Search Height leaves
+    nothing to lower, so the descent is skipped rather than run as a
+    zero-length move."""
     code = strip_lua_comments(build_weldflex_lua(
         [{"x": 10, "y": 20}, {"x": 30, "y": 40}],
         cycles=1, run_mode=LIVE, safe_z=127.0, retract_z=25.4, search_z=25.4,
     ).text)
 
-    assert _if_block(code, "if LIFT_Z ~= PARK_Z then") == [
-        "PointsOffsetEnable(0, lastWeldX, lastWeldY, LIFT_Z, 0, 0, 0)",
-        "Lin(zerozero, speed, -1, 0, 0)",
-        "PointsOffsetDisable()",
-    ]
+    assert "LIFT_Z ~= PARK_Z" not in code
+    assert "PointsOffsetEnable(0, lastWeldX, lastWeldY, LIFT_Z" not in code
     assert _if_block(code, "if travelZ ~= PARK_Z then") == [
         "PointsOffsetEnable(0, weldX, weldY, PARK_Z, 0, 0, 0)",
         "Lin(zerozero, speed, -1, 0, 0)",
         "PointsOffsetDisable()",
     ]
-    # Both are the only copies of those moves.
-    assert code.count("PointsOffsetEnable(0, lastWeldX, lastWeldY, LIFT_Z") == 1
     assert code.count("PointsOffsetEnable(0, weldX, weldY, PARK_Z") == 1
 
 
@@ -331,7 +342,25 @@ def test_a_retract_z_below_the_search_height_is_refused(retract_z, search_z):
 
 def test_a_retract_z_at_or_above_the_search_height_is_accepted():
     check_travel_heights(25.4, 25.4)
-    check_travel_heights(200, 25.4)  # above Safe Z too: odd, but never toward the part
+    check_travel_heights(200, 25.4)  # no Safe Z given: only the Search Height bounds it
+
+
+@pytest.mark.parametrize("safe_z, retract_z", [(76.1, 76.2), (10, 25.4)])
+def test_a_safe_z_below_retract_z_is_refused(safe_z, retract_z):
+    """The end of a cycle lifts from Retract Z to Safe Z. Below it, that "lift"
+    would drive the head down toward the part before the level move home."""
+    with pytest.raises(ValueError, match="Safe Z"):
+        check_travel_heights(retract_z, 10.0, safe_z)
+    with pytest.raises(ValueError, match="Safe Z"):
+        build_weldflex_lua([{"x": 10, "y": 20}], cycles=1, run_mode=LIVE,
+                           safe_z=safe_z, retract_z=retract_z, search_z=10.0)
+
+
+def test_heights_in_order_with_equal_neighbours_are_accepted():
+    check_travel_heights(25.4, 25.4, 25.4)
+    check_travel_heights(76.2, 25.4, 127.0)
+    build_weldflex_lua([{"x": 10, "y": 20}], cycles=1, run_mode=LIVE,
+                       safe_z=76.2, retract_z=76.2, search_z=25.4)
 
 
 def test_weldflex_lua_never_offsets_homewf_by_the_safe_height():
@@ -361,9 +390,10 @@ def test_weldflex_lua_uses_global_point_offsets_without_inline_lin_offsets():
 
     assert built.text.count("Lin(homewf, speed, -1, 0, 0)") == 2
     # The level traverse rides DSC's travelSpeed (e12e699); the vertical moves
-    # (lift between studs, descent to Search Height, lift at cycle end) use plain speed.
+    # (descent to Search Height, lift at cycle end) use plain speed. The lift
+    # off each stud is weld.lua's, at its RETRACT_SPEED.
     assert built.text.count("Lin(zerozero, travelSpeed, -1, 0, 0)") == 1
-    assert built.text.count("Lin(zerozero, speed, -1, 0, 0)") == 3
+    assert built.text.count("Lin(zerozero, speed, -1, 0, 0)") == 2
     assert "Lin(zerozero, travelSpeed, -1, 0, 1)" not in built.text
 
 
@@ -961,13 +991,37 @@ def test_retract_lifts_straight_up_from_where_the_head_is():
     depart = code.split("local function departFromStud()", 1)[1].split("local function ", 1)[0]
     assert "now[1] - parkPose[1]" in depart and "now[2] - parkPose[2]" in depart
     assert "liftX = weldX + dx" in depart and "liftY = weldY + dy" in depart
-    assert "PointsOffsetEnable(0, liftX, liftY, Z_CLEARANCE, 0, 0, 0)" in depart
+    assert "PointsOffsetEnable(0, liftX, liftY, liftHeight(), 0, 0, 0)" in depart
     assert "Lin(zerozero, RETRACT_SPEED, -1, 0, 0)" in depart
     # Past the cap it falls back to the park pose, not to an unchecked reading.
     assert "<= LIFT_MAX_DRIFT_MM * LIFT_MAX_DRIFT_MM" in depart
 
     run = code.split("local function weldOneStud()", 1)[1]
     assert run.index("parkPose = readPose()") < run.index("waitForWeldReady()")
+
+
+def test_the_retract_lifts_to_the_retract_height_before_the_feed():
+    """Owner, 2026-10-02: the retract only went back up to the Search Height,
+    and the next stud fed there, just above the stud that was just welded.
+    The caller lifted to Retract Z only afterwards. The lift now targets the
+    caller's Z_RETRACT, never lower than the park height it searched from, and
+    the feed still comes after it."""
+    code = strip_lua_comments(WELD_PATH.read_text(encoding="utf-8"))
+
+    height = code.split("local function liftHeight()", 1)[1].split("local function ", 1)[0]
+    assert "if Z_RETRACT > Z_CLEARANCE then return Z_RETRACT end" in height
+    assert "return Z_CLEARANCE" in height
+    assert "math." not in height, "the controller's Lua library is not assumed"
+    assert code.index("local function liftHeight()") < code.index("local function departFromStud()")
+
+    depart = code.split("local function departFromStud()", 1)[1].split("local function ", 1)[0]
+    assert "Z_CLEARANCE" not in depart, "the lift must not return to the park height"
+
+    contract = code.split("local function requireContract()", 1)[1].split("local function ", 1)[0]
+    assert 'type(Z_RETRACT) ~= "number"' in contract
+
+    run = code.split("local function weldOneStud()", 1)[1]
+    assert run.index("retract()") < run.index("feedNextStud()")
 
 
 def test_the_lift_turns_the_ft_collision_guard_off_first():
@@ -1484,8 +1538,8 @@ def test_the_retract_is_a_straight_line():
         "local FAULT_BEACON_MS", 1
     )[0]
     assert "local liftX, liftY = weldX, weldY" in depart, \
-        "without a usable reading the lift must end at the pose the caller parked at"
-    assert "PointsOffsetEnable(0, liftX, liftY, Z_CLEARANCE, 0, 0, 0)" in depart
+        "without a usable reading the lift must end over the X/Y the caller parked at"
+    assert "PointsOffsetEnable(0, liftX, liftY, liftHeight(), 0, 0, 0)" in depart
     assert "Lin(zerozero, RETRACT_SPEED, -1, 0, 0)" in depart
     assert "PointsOffsetDisable()" in depart
     assert "PTP(" not in code and "MoveCart(" not in code, \
@@ -1692,8 +1746,10 @@ def _stud_approach(built):
         "point": move.group(1),
         "weld_xy": [resolve("weldX"), resolve("weldY")],
         "frame": [resolve("tool"), resolve("wobj")],
-        # The park height weld.lua is told, which its retract returns to.
+        # The park height weld.lua is told, which its search starts from.
         "clearance": resolve("Z_CLEARANCE"),
+        # The height weld.lua's retract lifts to, where the next stud feeds.
+        "retract": resolve("Z_RETRACT"),
     }
 
 
@@ -1736,6 +1792,16 @@ def test_a_single_shot_goes_where_a_part_stud_at_the_same_xy_goes(x, y):
     assert part["weld_xy"] == part["offset"][1:3]
     assert part["clearance"] == pytest.approx(part["offset"][3])
     assert shot["clearance"] == pytest.approx(shot["offset"][3])
+
+
+def test_a_single_shot_lifts_and_feeds_at_its_one_height():
+    """A shot has no Retract Z: it searches from its Safe Z, and weld.lua lifts
+    back to that same height and feeds there, as it did before Z_RETRACT."""
+    shot = _stud_approach(build_single_shot_lua(
+        10, 20, cycles=1, run_mode=LIVE, safe_z=50.0, part_z=2.0,
+    ))
+    assert shot["retract"] == pytest.approx(shot["clearance"])
+    assert shot["retract"] == pytest.approx(52.0)
 
 
 def test_a_back_right_part_parks_where_its_mirrored_bed_point_is():

@@ -762,7 +762,7 @@ def ui_recipes_save():
             retract_z = float(saved.get('retract_z', safe_z))
         if not saved.get('system'):
             try:
-                check_travel_heights(retract_z, search_z)
+                check_travel_heights(retract_z, search_z, safe_z)
             except ValueError as exc:
                 return render_template('partials/command_result.html', ok=False,
                                        title='Save Recipe', payload={'error': str(exc)})

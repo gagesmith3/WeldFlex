@@ -373,17 +373,29 @@ def parse_start_stud(value: int | str | None, stud_count: int) -> int:
     return max(1, start)
 
 
-def check_travel_heights(retract_z: float | int, search_z: float | int) -> None:
-    """Refuse a Retract Z below the Search Height.
+def check_travel_heights(
+    retract_z: float | int,
+    search_z: float | int,
+    safe_z: float | int | None = None,
+) -> None:
+    """Refuse heights out of the order Search Height <= Retract Z <= Safe Z.
 
-    Between studs the head lifts straight up from the Search Height to Retract Z
-    and travels level there. A Retract Z below it would drive the head down
-    toward the part before that level move instead of lifting it clear.
+    After each stud weld.lua lifts straight up from where it pressed to Retract
+    Z, feeds there and travels level there. A Retract Z below the Search Height
+    would put that travel below where each search starts, closer to the part
+    than the descent ever went. At the end of a cycle the head lifts from Retract Z to
+    Safe Z, so a Safe Z below Retract Z would drive it down toward the part
+    before the level move home. `safe_z` left out skips that second check.
     """
     if float(retract_z) < float(search_z):
         raise ValueError(
             f"Retract Z ({format_number(retract_z)} mm) is below the Search Height "
             f"({format_number(search_z)} mm); set it at or above the Search Height"
+        )
+    if safe_z is not None and float(safe_z) < float(retract_z):
+        raise ValueError(
+            f"Safe Z ({format_number(safe_z)} mm) is below Retract Z "
+            f"({format_number(retract_z)} mm); set it at or above Retract Z"
         )
 
 
@@ -475,10 +487,11 @@ def build_weldflex_lua(
     `run_mode` has no default on purpose: every caller states live or dry.
 
     The three heights all stack on `part_z`. `safe_z` is the plane the legs to
-    and from homewf travel at, `retract_z` the one the head lifts to and
-    travels at between studs, and `search_z` where each search starts.
-    Leaving `retract_z` out keeps the between-stud travel at Safe Z, as it was
-    before Retract Z existed. One below `search_z` is refused.
+    and from homewf travel at, `retract_z` the one weld.lua lifts to after each
+    stud (the next stud feeds there) and the head travels at between studs, and
+    `search_z` where each search starts. Leaving `retract_z` out keeps the
+    between-stud travel at Safe Z, as it was before Retract Z existed. Heights
+    out of the order search_z <= retract_z <= safe_z are refused.
 
     `search_speed_mms` and `press_speed_mms` are weld.lua's search and press
     speeds (weld_tuning.WeldTuning; left out, its defaults). Out of range is
@@ -514,7 +527,7 @@ def build_weldflex_lua(
     safe_z_val = 60.0 if safe_z is None else float(safe_z)
     retract_z_val = safe_z_val if retract_z is None else float(retract_z)
     search_z_val = 10.0 if search_z is None else float(search_z)
-    check_travel_heights(retract_z_val, search_z_val)
+    check_travel_heights(retract_z_val, search_z_val, safe_z_val)
     part_z_val = 0.0 if part_z is None else float(part_z)
     press_lbf_val = _parse_pressure(pressure_setting)
     ft_sensor_num_val = int(ft_sensor_num)

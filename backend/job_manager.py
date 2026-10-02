@@ -472,7 +472,7 @@ class JobManager:
                 corner_ref = read_corner_ref(origin_corner,
                                              lambda name: self._robot.teach_point_pose(name))
                 check_base_keepout(resolve_studs(studs, origin_corner, corner_ref))
-                check_travel_heights(safe_z if retract_z is None else retract_z, search_z)
+                check_travel_heights(safe_z if retract_z is None else retract_z, search_z, safe_z)
             start_stud = parse_start_stud(start_stud, len(studs))
         except ValueError as exc:
             raise JobError(str(exc)) from None

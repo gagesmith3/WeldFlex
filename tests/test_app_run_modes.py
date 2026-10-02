@@ -379,6 +379,20 @@ def test_recipe_save_refuses_a_retract_z_below_the_search_height(run_app):
     assert (saved["retract_z"], saved["search_z"]) == (60.0, 10.0)
 
 
+def test_recipe_save_refuses_a_safe_z_below_retract_z(run_app):
+    """The end of a cycle lifts from Retract Z to Safe Z, so Safe Z below it
+    would drive the head down toward the part on the way home."""
+    run_app.write([_recipe(safe_z=127.0, retract_z=60.0, search_z=10.0)])
+    response = run_app.client.post("/ui/recipes/save", data={
+        "recipe_id": "part-1", "recipe_name": "Bracket", "studs_text": "10,20",
+        "safe_z": "50", "retract_z": "60", "search_z": "10",
+    })
+    assert "below Retract Z" in response.get_data(as_text=True)
+    assert "X-Recipe-Id" not in response.headers
+    saved = run_app.read()[0]
+    assert (saved["safe_z"], saved["retract_z"]) == (127.0, 60.0)
+
+
 def test_recipe_save_reads_a_pre_retract_z_page_as_the_search_height(run_app):
     """A kiosk page loaded before the deploy still posts the Search Height as
     retract_z and no search_z. Saving it must not become the travel height."""
@@ -404,6 +418,14 @@ def test_job_manager_refuses_a_retract_z_below_the_search_height_at_load(run_app
     with pytest.raises(job_manager.JobError, match="Retract Z"):
         manager.load("part-1", "Bracket", [{"x": 300, "y": 300}], 1,
                      arm_mode="dry", safe_z=127.0, retract_z=20.0, search_z=25.4)
+
+
+def test_job_manager_refuses_a_safe_z_below_retract_z_at_load(run_app):
+    job_manager = importlib.import_module("job_manager")
+    manager = job_manager.JobManager.__new__(job_manager.JobManager)
+    with pytest.raises(job_manager.JobError, match="Safe Z"):
+        manager.load("part-1", "Bracket", [{"x": 300, "y": 300}], 1,
+                     arm_mode="dry", safe_z=50.0, retract_z=60.0, search_z=25.4)
 
 
 @pytest.fixture

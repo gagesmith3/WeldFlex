@@ -41,6 +41,7 @@
     "safeZ",
     "downZ",
     "Z_CLEARANCE",
+    "Z_RETRACT",
     "BOUNDARY_MS",
     "studs",
     "cycleCount",

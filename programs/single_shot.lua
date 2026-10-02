@@ -40,6 +40,8 @@ for cycleIndex = 1, cycleCount do --{{LOOP_START}}
     weldY = targetY
     WELD_RUN = 1
     Z_CLEARANCE = PART_Z + SAFE_Z
+    -- A shot has one height: it searches from it, lifts back to it and feeds there.
+    Z_RETRACT = Z_CLEARANCE
     WELD_PRESS_LBF = PRESS_LBF
     WELD_FT_SENSOR_NUM = FT_SENSOR_NUM
     WELD_SEARCH_SPEED_MMS = SEARCH_SPEED

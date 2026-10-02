@@ -57,9 +57,10 @@ for cycleIndex = 1, cycleCount do --{{LOOP_START}}
 
         -- All three heights are measured up from zerozero's Z in the wobj-2
         -- frame. HIGH_Z is Safe Z, the fixture-clearing plane the legs to and
-        -- from homewf travel at. LIFT_Z is Retract Z, the plane the head lifts
-        -- to and travels at between studs. PARK_Z is the Search Height, where
-        -- weld.lua's search starts and its retract returns.
+        -- from homewf travel at. LIFT_Z is Retract Z: weld.lua's retract lifts
+        -- there after every stud, the next stud feeds there, and the head
+        -- travels there between studs. PARK_Z is the Search Height, where
+        -- weld.lua's search starts.
         HIGH_Z = PART_Z + SAFE_Z
         LIFT_Z = PART_Z + RETRACT_Z
         PARK_Z = PART_Z + SEARCH_Z
@@ -69,6 +70,7 @@ for cycleIndex = 1, cycleCount do --{{LOOP_START}}
         weldY = stud.y
         WELD_RUN = 1
         Z_CLEARANCE = PARK_Z
+        Z_RETRACT = LIFT_Z
         WELD_PRESS_LBF = stud.pressLbf or PRESS_LBF
         WELD_FT_SENSOR_NUM = FT_SENSOR_NUM
         WELD_SEARCH_SPEED_MMS = SEARCH_SPEED
@@ -80,11 +82,10 @@ for cycleIndex = 1, cycleCount do --{{LOOP_START}}
         -- Z and XY never move together: every move below is straight up,
         -- straight down, or level. The first stud of a cycle is reached level
         -- at HIGH_Z out of homewf, which is taught there. Every later one
-        -- lifts straight up off the previous stud's search pose to LIFT_Z and
-        -- travels level at that, so the head no longer climbs all the way to
-        -- Safe Z between studs. A Retract Z equal to the Search Height leaves
-        -- nothing to lift or lower, so those legs are skipped rather than run
-        -- as zero-length moves; lua_builder refuses one below it.
+        -- starts where weld.lua's retract left the head, straight up off the
+        -- previous stud at LIFT_Z, and travels level at that, so the head no
+        -- longer climbs all the way to Safe Z between studs. lua_builder
+        -- refuses a Retract Z below the Search Height or above Safe Z.
         --
         -- flag=0: offset in the wobj-2 workpiece frame (FR Lua manual §3.2.12),
         -- not flag=1's tool frame — flag=1 rode the torch's current orientation
@@ -95,11 +96,6 @@ for cycleIndex = 1, cycleCount do --{{LOOP_START}}
             travelZ = LIFT_Z
             if stud.s2sSpeed ~= nil then
                 travelSpeed = stud.s2sSpeed
-            end
-            if LIFT_Z ~= PARK_Z then
-                PointsOffsetEnable(0, lastWeldX, lastWeldY, LIFT_Z, 0, 0, 0)
-                Lin(zerozero, speed, -1, 0, 0)
-                PointsOffsetDisable()
             end
         end
 
@@ -114,7 +110,7 @@ for cycleIndex = 1, cycleCount do --{{LOOP_START}}
         end
 
         -- Straight down to the Search Height. weld.lua searches down tool Z from
-        -- here and lifts straight back up to this height from wherever it pressed.
+        -- here, then lifts straight up to LIFT_Z from wherever it pressed.
         if travelZ ~= PARK_Z then
             PointsOffsetEnable(0, weldX, weldY, PARK_Z, 0, 0, 0)
             Lin(zerozero, speed, -1, 0, 0)
@@ -138,7 +134,7 @@ for cycleIndex = 1, cycleCount do --{{LOOP_START}}
     firstStud = 1
 
     -- Clear the part before the next cycle (and on a fault): lift straight up
-    -- off the last stud's search pose to the safe height, then traverse level
+    -- off the last stud from its retract height to the safe height, then traverse level
     -- into homewf, which is taught at that height. Runs every cycle,
     -- including the last.
     if USE_HOME_MOVE == 1 then

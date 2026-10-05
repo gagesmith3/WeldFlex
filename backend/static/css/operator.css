@@ -195,8 +195,8 @@ input, textarea, select, [contenteditable] {
   box-shadow: 0 6px 14px rgba(8, 36, 58, 0.2);
 }
 
-/* img/weldflex-logo.png is cut from weldflex-logo-source.jpg with the page white
-   around it made transparent; the white inside the logo's frame is kept. */
+/* img/weldflex-logo.png is weldflex-logo-source.png cropped to its artwork and
+   scaled to 160 px tall; both are transparent. Also used by .mgr-logo. */
 .app-logo {
   display: block;
   height: 46px;
@@ -3989,8 +3989,17 @@ pre {
 
 .mgr-topbar-left {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 10px;
+}
+
+.mgr-logo {
+  display: block;
+  height: 32px;
+  width: auto;
+  flex-shrink: 0;
+  user-select: none;
+  -webkit-user-drag: none;
 }
 
 .mgr-topbar-title {

@@ -14,7 +14,9 @@
         {{ icon_safe('menu', width=20, height=20) }}
       </button>
       <div class="mgr-topbar-left">
-        <span class="mgr-topbar-title">WeldFlex Manager</span>
+        <img class="mgr-logo" src="{{ url_for('static', filename='img/weldflex-logo.png') }}"
+             alt="WeldFlex" draggable="false">
+        <span class="mgr-topbar-title">Manager</span>
         <span class="mgr-topbar-version">BETA {{ git_sha }}</span>
       </div>
     </div>

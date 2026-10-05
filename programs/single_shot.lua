@@ -16,9 +16,12 @@ SAFE_Z = 10.0 --{{SAFE_Z}}
 PART_Z = 0.0 --{{PART_Z}}
 PRESS_LBF = 20.0 --{{PRESS_LBF}}
 FT_SENSOR_NUM = 1 --{{FT_SENSOR_NUM}}
--- weld.lua's search and press speeds in mm/s, from the Admin page's Weld Tuning.
+-- From the Admin page's Weld Tuning: weld.lua's search speed and press feed in
+-- mm/s, and FT_Control's press gain. A press feed of 0 is the "Force only" press:
+-- FT_Control alone moves the gun and FT_LinInsertion only ends the press on force.
 SEARCH_SPEED = 7.5 --{{SEARCH_SPEED}}
-PRESS_SPEED = 0.15 --{{PRESS_SPEED}}
+PRESS_SPEED = 0 --{{PRESS_SPEED}}
+PRESS_GAIN = 0.0001 --{{PRESS_GAIN}}
 STUD_TYPE = "M4" --{{STUD_TYPE}}
 SUBSTRATE = "Mild Steel" --{{SUBSTRATE}}
 BOUNDARY_MS = 1500 --{{BOUNDARY_MS}}
@@ -46,6 +49,7 @@ for cycleIndex = 1, cycleCount do --{{LOOP_START}}
     WELD_FT_SENSOR_NUM = FT_SENSOR_NUM
     WELD_SEARCH_SPEED_MMS = SEARCH_SPEED
     WELD_PRESS_SPEED_MMS = PRESS_SPEED
+    WELD_PRESS_GAIN = PRESS_GAIN
     WELD_STUD_TYPE = STUD_TYPE
     WELD_SUBSTRATE = SUBSTRATE
     WELD_FEED_PULSE_MS = FEED_PULSE_MS

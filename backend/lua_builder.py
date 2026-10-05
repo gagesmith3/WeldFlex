@@ -18,7 +18,7 @@ from typing import Sequence
 
 from base_keepout import check_studs as check_base_keepout
 from part_origin import DEFAULT_CORNER, CornerRef, resolve_studs
-from weld_tuning import WeldTuning
+from weld_tuning import WeldTuning, format_gain
 
 PROGRAM_NAME = "WeldFlex.lua"
 TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "programs" / PROGRAM_NAME
@@ -481,8 +481,7 @@ def build_weldflex_lua(
     stud_type: str | None = None,
     substrate: str | None = None,
     speed: float | int | None = None,
-    search_speed_mms: float | int | None = None,
-    press_speed_mms: float | int | None = None,
+    tuning: WeldTuning | None = None,
     dsc_enabled: bool = False,
     stud_reload_ms: int | float | None = None,
     origin_corner: str = DEFAULT_CORNER,
@@ -500,9 +499,11 @@ def build_weldflex_lua(
     between-stud travel at Safe Z, as it was before Retract Z existed. Heights
     out of the order search_z <= retract_z <= safe_z are refused.
 
-    `search_speed_mms` and `press_speed_mms` are weld.lua's search and press
-    speeds (weld_tuning.WeldTuning; left out, its defaults). Out of range is
-    refused rather than left for weld.lua to quietly replace.
+    `tuning` is the Admin page's Weld Tuning (left out, its defaults). The
+    program gets its search speed, its press gain, and as PRESS_SPEED the feed
+    FT_LinInsertion runs at, which is 0 in the default "force" press mode.
+    WeldTuning refuses anything out of range, so nothing reaches weld.lua for
+    it to quietly replace.
 
     `start_stud` resumes a part that faulted partway: the first cycle starts
     at that stud (counted from 1, in the part's own stud order) and every
@@ -540,7 +541,7 @@ def build_weldflex_lua(
     ft_sensor_num_val = int(ft_sensor_num)
     if not 1 <= ft_sensor_num_val <= 255:
         raise ValueError(f"ft_sensor_num must be in [1, 255], got {ft_sensor_num!r}")
-    tuning = WeldTuning.of(search_speed_mms, press_speed_mms)
+    tuning = tuning or WeldTuning()
     stud_type_val = stud_type or "M4"
     substrate_val = substrate or "Mild Steel"
     # Dry runs are for watching travel safely, not production cadence — default
@@ -560,6 +561,7 @@ def build_weldflex_lua(
     run_mode_seen = False
     search_speed_seen = False
     press_speed_seen = False
+    press_gain_seen = False
     start_stud_seen = False
 
     for line in template_lines:
@@ -598,8 +600,11 @@ def build_weldflex_lua(
             out.append(f"{indent}SEARCH_SPEED = {format_number(tuning.search_speed_mms)}")
             search_speed_seen = True
         elif "--{{PRESS_SPEED}}" in line:
-            out.append(f"{indent}PRESS_SPEED = {format_number(tuning.press_speed_mms)}")
+            out.append(f"{indent}PRESS_SPEED = {format_number(tuning.press_feed_mms)}")
             press_speed_seen = True
+        elif "--{{PRESS_GAIN}}" in line:
+            out.append(f"{indent}PRESS_GAIN = {format_gain(tuning.press_gain)}")
+            press_gain_seen = True
         elif "--{{STUD_TYPE}}" in line:
             out.append(f"{indent}STUD_TYPE = {format_lua_string(stud_type_val)}")
         elif "--{{SUBSTRATE}}" in line:
@@ -636,6 +641,7 @@ def build_weldflex_lua(
             ("--{{RUN_MODE}}", run_mode_seen),
             ("--{{SEARCH_SPEED}}", search_speed_seen),
             ("--{{PRESS_SPEED}}", press_speed_seen),
+            ("--{{PRESS_GAIN}}", press_gain_seen),
             ("--{{START_STUD}}", start_stud_seen),
         )
         if not value
@@ -680,8 +686,7 @@ def build_single_shot_lua(
     stud_type: str | None = None,
     substrate: str | None = None,
     speed: float | int | None = None,
-    search_speed_mms: float | int | None = None,
-    press_speed_mms: float | int | None = None,
+    tuning: WeldTuning | None = None,
 ) -> BuiltProgram:
     """Substitute programs/single_shot.lua's markers.
 
@@ -712,7 +717,7 @@ def build_single_shot_lua(
     ft_sensor_num_val = int(ft_sensor_num)
     if not 1 <= ft_sensor_num_val <= 255:
         raise ValueError(f"ft_sensor_num must be in [1, 255], got {ft_sensor_num!r}")
-    tuning = WeldTuning.of(search_speed_mms, press_speed_mms)
+    tuning = tuning or WeldTuning()
     stud_type_val = stud_type or "M4"
     substrate_val = substrate or "Mild Steel"
     speed_val = max(1, min(100, int(speed))) if speed is not None else (25 if run_mode.armed else 10)
@@ -727,6 +732,7 @@ def build_single_shot_lua(
     run_mode_seen = False
     search_speed_seen = False
     press_speed_seen = False
+    press_gain_seen = False
 
     for line in template_lines:
         indent = _indent_of(line)
@@ -759,8 +765,11 @@ def build_single_shot_lua(
             out.append(f"{indent}SEARCH_SPEED = {format_number(tuning.search_speed_mms)}")
             search_speed_seen = True
         elif "--{{PRESS_SPEED}}" in line:
-            out.append(f"{indent}PRESS_SPEED = {format_number(tuning.press_speed_mms)}")
+            out.append(f"{indent}PRESS_SPEED = {format_number(tuning.press_feed_mms)}")
             press_speed_seen = True
+        elif "--{{PRESS_GAIN}}" in line:
+            out.append(f"{indent}PRESS_GAIN = {format_gain(tuning.press_gain)}")
+            press_gain_seen = True
         elif "--{{STUD_TYPE}}" in line:
             out.append(f"{indent}STUD_TYPE = {format_lua_string(stud_type_val)}")
         elif "--{{SUBSTRATE}}" in line:
@@ -795,6 +804,7 @@ def build_single_shot_lua(
             ("--{{RUN_MODE}}", run_mode_seen),
             ("--{{SEARCH_SPEED}}", search_speed_seen),
             ("--{{PRESS_SPEED}}", press_speed_seen),
+            ("--{{PRESS_GAIN}}", press_gain_seen),
         )
         if not value
     ]

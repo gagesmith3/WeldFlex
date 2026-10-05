@@ -265,10 +265,12 @@ class JobSnapshot:
     cycles_target: int = 0
     cycles_done: int = 0
     pressure_setting: str | None = None
-    # weld.lua's search/press speeds this run was built with, in mm/s. Read
-    # from the Admin page's Weld Tuning when Run is pressed; None until then.
+    # weld.lua's search speed and press feed this run was built with, in mm/s,
+    # and FT_Control's press gain. Read from the Admin page's Weld Tuning when
+    # Run is pressed; None until then. A press feed of 0 is the "Force only" press.
     search_speed_mms: float | None = None
     press_speed_mms: float | None = None
+    press_gain: float | None = None
     started_at: str | None = None
     ended_at: str | None = None
     error: str | None = None
@@ -332,6 +334,7 @@ class _Session:
     speed: float | int | None = None
     search_speed_mms: float | None = None
     press_speed_mms: float | None = None
+    press_gain: float | None = None
     dsc_enabled: bool = False
     stud_reload_ms: int | None = None
     origin_corner: str = DEFAULT_CORNER
@@ -761,6 +764,7 @@ class JobManager:
             pressure_setting=sess.pressure_setting,
             search_speed_mms=sess.search_speed_mms,
             press_speed_mms=sess.press_speed_mms,
+            press_gain=sess.press_gain,
             started_at=sess.started_at,
             ended_at=sess.ended_at,
             error=sess.error,
@@ -785,7 +789,8 @@ class JobManager:
                 if sess is None or sess.run_id != run_id:
                     return
                 sess.search_speed_mms = tuning.search_speed_mms
-                sess.press_speed_mms = tuning.press_speed_mms
+                sess.press_speed_mms = tuning.press_feed_mms
+                sess.press_gain = tuning.press_gain
                 kind = sess.kind
                 studs = list(sess.studs)
                 cycles = sess.cycles_target
@@ -832,8 +837,7 @@ class JobManager:
                     stud_type=stud_type,
                     substrate=substrate,
                     speed=speed,
-                    search_speed_mms=tuning.search_speed_mms,
-                    press_speed_mms=tuning.press_speed_mms,
+                    tuning=tuning,
                 )
             else:
                 built = build_weldflex_lua(
@@ -850,8 +854,7 @@ class JobManager:
                     stud_type=stud_type,
                     substrate=substrate,
                     speed=speed,
-                    search_speed_mms=tuning.search_speed_mms,
-                    press_speed_mms=tuning.press_speed_mms,
+                    tuning=tuning,
                     dsc_enabled=dsc_enabled,
                     stud_reload_ms=stud_reload_ms,
                     origin_corner=origin_corner,
@@ -897,10 +900,10 @@ class JobManager:
                 sess.cycle_start_ts = time.time()
 
             log.info("job running run_id=%s program=%s cycles=%d loop_start=%d marker=%d "
-                     "gate=%d boundary_ms=%d search_mms=%g press_mms=%g",
+                     "gate=%d boundary_ms=%d search_mms=%g press_mms=%g press_gain=%g",
                      run_id, uploaded, cycles, built.loop_start_line,
                      built.cycle_marker_line, built.gate_line, built.boundary_ms,
-                     tuning.search_speed_mms, tuning.press_speed_mms)
+                     tuning.search_speed_mms, tuning.press_feed_mms, tuning.press_gain)
             self._event(run_id, "running", {
                 "program": uploaded,
                 "loop_start_line": built.loop_start_line,
@@ -908,7 +911,8 @@ class JobManager:
                 "gate_line": built.gate_line,
                 "boundary_ms": built.boundary_ms,
                 "search_speed_mms": tuning.search_speed_mms,
-                "press_speed_mms": tuning.press_speed_mms,
+                "press_speed_mms": tuning.press_feed_mms,
+                "press_gain": tuning.press_gain,
             })
             self._start_monitor(run_id)
         except Exception as exc:  # noqa: BLE001
@@ -1239,6 +1243,7 @@ class JobManager:
                 "pressure_setting": sess.pressure_setting,
                 "search_speed_mms": sess.search_speed_mms,
                 "press_speed_mms": sess.press_speed_mms,
+                "press_gain": sess.press_gain,
                 "stud_type": sess.stud_type,
                 "substrate": sess.substrate,
             }

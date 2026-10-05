@@ -552,21 +552,27 @@ def robot_web_page():
 
 @app.route("/ui/weld-tuning/save", methods=["POST"])
 def ui_weld_tuning_save():
-    """Save weld.lua's search/press speeds. They apply from the next Run, so a
-    job already running keeps the speeds it started with."""
+    """Save weld.lua's search/press settings. They apply from the next Run, so a
+    job already running keeps the settings it started with."""
     try:
         tuning = weld_tuning.WeldTuning(
             search_speed_mms=request.form.get("search_speed_mms", ""),
             press_speed_mms=request.form.get("press_speed_mms", ""),
+            press_mode=request.form.get("press_mode", ""),
+            press_gain=request.form.get("press_gain", ""),
         )
         weld_tuning.save(tuning)
     except (ValueError, OSError) as e:
         return render_template("partials/command_result.html", ok=False, title="Weld Tuning",
                                payload={"error": str(e)})
+    if tuning.press_mode == "feed":
+        press = f"feed press {tuning.press_speed_mms:g} mm/s"
+    else:
+        press = "force-only press"
     return render_template(
         "partials/command_result.html", ok=True, title="Weld Tuning",
-        payload={"summary": f"Search {tuning.search_speed_mms:g} mm/s, press "
-                            f"{tuning.press_speed_mms:g} mm/s from the next Run."},
+        payload={"summary": f"Search {tuning.search_speed_mms:g} mm/s, {press}, gain "
+                            f"{weld_tuning.format_gain(tuning.press_gain)} from the next Run."},
     )
 
 @app.route("/ui/settings/save", methods=["POST"])

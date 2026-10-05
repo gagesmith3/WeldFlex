@@ -20,7 +20,7 @@ from job_manager import (
     JobState,
 )
 from lua_builder import RunMode, build_weldflex_lua
-from weld_tuning import DEFAULT_PRESS_SPEED_MMS, DEFAULT_SEARCH_SPEED_MMS, WeldTuning
+from weld_tuning import DEFAULT_PRESS_GAIN, DEFAULT_SEARCH_SPEED_MMS, WeldTuning
 
 STATE_MAP = {-1: "offline", 0: "stopped", 1: "stopped", 2: "running", 3: "paused"}
 
@@ -451,15 +451,16 @@ def test_launch_uses_the_controller_assigned_force_sensor_number(tmp_path, monke
     ("single_shot", "build_single_shot_lua"),
 ])
 def test_the_weld_tuning_is_read_at_run_and_recorded(tmp_path, monkeypatch, kind, builder):
-    """The Admin page's speeds are read when Run is pressed, not at load, so a
-    combination saved between the two is the one that runs."""
+    """The Admin page's settings are read when Run is pressed, not at load, so a
+    combination saved between the two is the one that runs. The run records the
+    press feed weld.lua got, which in Feed mode is the saved press speed."""
     import job_manager as jm
 
     real_build = getattr(jm, builder)
     seen = []
 
     def spy(*args, **kwargs):
-        seen.append((kwargs["search_speed_mms"], kwargs["press_speed_mms"]))
+        seen.append(kwargs["tuning"])
         return real_build(*args, **kwargs)
 
     monkeypatch.setattr(jm, builder, spy)
@@ -468,23 +469,41 @@ def test_the_weld_tuning_is_read_at_run_and_recorded(tmp_path, monkeypatch, kind
     mgr = make_manager(tmp_path, FakeRobot(), weld_tuning=lambda: saved[0])
     snap = mgr.load("p1", "Bracket", [{"x": 1, "y": 2}], cycles=1, arm_mode="dry",
                     gate_mode="none", kind=kind)
-    assert (snap.search_speed_mms, snap.press_speed_mms) == (None, None)
-    saved[0] = WeldTuning(9.0, 0.3)
+    assert (snap.search_speed_mms, snap.press_speed_mms, snap.press_gain) == (None, None, None)
+    saved[0] = WeldTuning(9.0, 0.3, "feed", 0.0002)
     mgr.start()
     wait_state(mgr, JobState.RUNNING.value)
     snap = mgr.snapshot()
     mgr.stop()
 
-    assert seen == [(9.0, 0.3)]
-    assert (snap.search_speed_mms, snap.press_speed_mms) == (9.0, 0.3)
+    assert seen == [WeldTuning(9.0, 0.3, "feed", 0.0002)]
+    assert (snap.search_speed_mms, snap.press_speed_mms, snap.press_gain) == (9.0, 0.3, 0.0002)
     record = json.loads((tmp_path / "run_history.jsonl").read_text(encoding="utf-8"))
-    assert (record["search_speed_mms"], record["press_speed_mms"]) == (9.0, 0.3)
+    assert (record["search_speed_mms"], record["press_speed_mms"], record["press_gain"]) == (
+        9.0, 0.3, 0.0002)
     events = [
         json.loads(line)
         for line in (tmp_path / "run_events.jsonl").read_text(encoding="utf-8").splitlines()
     ]
     running = next(event for event in events if event["event"] == "running")
-    assert (running["detail"]["search_speed_mms"], running["detail"]["press_speed_mms"]) == (9.0, 0.3)
+    detail = running["detail"]
+    assert (detail["search_speed_mms"], detail["press_speed_mms"], detail["press_gain"]) == (
+        9.0, 0.3, 0.0002)
+    mgr.shutdown()
+
+
+def test_a_force_only_run_records_no_press_feed(tmp_path):
+    """The saved press speed is only for Feed mode, so a Force only run
+    records the 0 weld.lua actually got."""
+    mgr = make_manager(tmp_path, FakeRobot(), weld_tuning=lambda: WeldTuning(5.0, 0.15))
+    mgr.load("p1", "Bracket", [{"x": 1, "y": 2}], cycles=1, arm_mode="dry", gate_mode="none")
+    mgr.start()
+    wait_state(mgr, JobState.RUNNING.value)
+    snap = mgr.snapshot()
+    mgr.stop()
+    assert (snap.press_speed_mms, snap.press_gain) == (0.0, DEFAULT_PRESS_GAIN)
+    record = json.loads((tmp_path / "run_history.jsonl").read_text(encoding="utf-8"))
+    assert (record["press_speed_mms"], record["press_gain"]) == (0.0, DEFAULT_PRESS_GAIN)
     mgr.shutdown()
 
 
@@ -494,8 +513,8 @@ def test_without_a_weld_tuning_source_a_run_gets_the_defaults(tmp_path):
     mgr.start()
     wait_state(mgr, JobState.RUNNING.value)
     snap = mgr.snapshot()
-    assert (snap.search_speed_mms, snap.press_speed_mms) == (
-        DEFAULT_SEARCH_SPEED_MMS, DEFAULT_PRESS_SPEED_MMS)
+    assert (snap.search_speed_mms, snap.press_speed_mms, snap.press_gain) == (
+        DEFAULT_SEARCH_SPEED_MMS, WeldTuning().press_feed_mms, DEFAULT_PRESS_GAIN)
     mgr.shutdown()
 
 

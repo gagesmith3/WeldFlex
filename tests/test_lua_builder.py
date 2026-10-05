@@ -29,12 +29,15 @@ from lua_builder import (
 )
 from part_origin import CornerRef
 from weld_tuning import (
-    DEFAULT_PRESS_SPEED_MMS,
+    DEFAULT_PRESS_GAIN,
     DEFAULT_SEARCH_SPEED_MMS,
+    PRESS_GAIN_MAX,
+    PRESS_GAIN_MIN,
     PRESS_SPEED_MAX_MMS,
     PRESS_SPEED_MIN_MMS,
     SEARCH_SPEED_MAX_MMS,
     SEARCH_SPEED_MIN_MMS,
+    WeldTuning,
 )
 
 # Most tests here are about something other than the run mode; they build live.
@@ -879,15 +882,15 @@ def test_surface_search_uses_the_commissioned_gentle_speed():
     assert float(match.group(1)) == 7.5
 
 
-def test_force_press_uses_the_commissioned_slow_speed():
-    """A 10 mm/s search with the press at 1.0, then 0.5 mm/s, left the press stuck
-    short of force live on 2026-09-14. At 0.25 a 10 lbf press overshot to 14-15 lbf
-    once the gun bottomed out near 9 lbf (2026-09-28), so the press went to 0.10.
-    0.15 (with a 7.5 mm/s search) is a trial from 2026-10-02."""
+def test_force_press_falls_back_to_no_feed():
+    """FT_LinInsertion's feed works against FT_Control: a dry ladder on
+    2026-10-05 took ~8.5 / 10 / 14 s at 0.15 / 0.25 / 0.35 mm/s, and 0.5 stalls
+    short. With no feed the insertion only ends the press on force, and a
+    caller that publishes nothing gets that."""
     weld = WELD_PATH.read_text(encoding="utf-8")
     match = re.search(r"^local PRESS_SPEED_MMS\s*=\s*([\d.]+)", weld, re.M)
     assert match, "weld.lua no longer declares PRESS_SPEED_MMS"
-    assert float(match.group(1)) == 0.15
+    assert float(match.group(1)) == 0.0
 
 
 def test_weld_lua_falls_back_to_the_same_speeds_and_bounds_as_weld_tuning():
@@ -897,11 +900,14 @@ def test_weld_lua_falls_back_to_the_same_speeds_and_bounds_as_weld_tuning():
     weld = WELD_PATH.read_text(encoding="utf-8")
     for name, value in (
         ("SEARCH_SPEED_MMS", DEFAULT_SEARCH_SPEED_MMS),
-        ("PRESS_SPEED_MMS", DEFAULT_PRESS_SPEED_MMS),
+        ("PRESS_SPEED_MMS", WeldTuning().press_feed_mms),
         ("SEARCH_SPEED_MIN_MMS", SEARCH_SPEED_MIN_MMS),
         ("SEARCH_SPEED_MAX_MMS", SEARCH_SPEED_MAX_MMS),
         ("PRESS_SPEED_MIN_MMS", PRESS_SPEED_MIN_MMS),
         ("PRESS_SPEED_MAX_MMS", PRESS_SPEED_MAX_MMS),
+        ("FTC_GAIN_P", DEFAULT_PRESS_GAIN),
+        ("FTC_GAIN_MIN", PRESS_GAIN_MIN),
+        ("FTC_GAIN_MAX", PRESS_GAIN_MAX),
     ):
         match = re.search(rf"^local {name}\s*=\s*([\d.]+)", weld, re.M)
         assert match, f"weld.lua no longer declares {name}"
@@ -911,10 +917,10 @@ def test_weld_lua_falls_back_to_the_same_speeds_and_bounds_as_weld_tuning():
 @pytest.mark.parametrize("published,local,lo,hi,call_site", [
     ("WELD_SEARCH_SPEED_MMS", "SEARCH_SPEED_MMS", "SEARCH_SPEED_MIN_MMS",
      "SEARCH_SPEED_MAX_MMS", "SEARCH_SPEED_MMS, FIND_ACC, SEARCH_MAX_MM"),
-    ("WELD_PRESS_SPEED_MMS", "PRESS_SPEED_MMS", "PRESS_SPEED_MIN_MMS",
-     "PRESS_SPEED_MAX_MMS", "PRESS_SPEED_MMS, 0.0, PRESS_MAX_MM"),
-], ids=["search", "press"])
-def test_weld_lua_takes_a_published_speed_only_within_its_bounds(published, local, lo, hi, call_site):
+    ("WELD_PRESS_GAIN", "FTC_GAIN_P", "FTC_GAIN_MIN",
+     "FTC_GAIN_MAX", "local function ftControlPress(flag)"),
+], ids=["search", "gain"])
+def test_weld_lua_takes_a_published_setting_only_within_its_bounds(published, local, lo, hi, call_site):
     weld = WELD_PATH.read_text(encoding="utf-8")
     guard = (f'if type({published}) == "number"\n'
              f"   and {published} >= {lo}\n"
@@ -935,41 +941,59 @@ _TUNED_BUILDS = pytest.mark.parametrize(
 )
 
 
+def test_weld_lua_takes_a_published_press_feed_of_zero_or_within_its_bounds():
+    """0 is the Force only press, so it is let through even though it is below
+    the Feed mode's floor."""
+    weld = WELD_PATH.read_text(encoding="utf-8")
+    guard = ('if type(WELD_PRESS_SPEED_MMS) == "number"\n'
+             "   and (WELD_PRESS_SPEED_MMS == 0\n"
+             "        or (WELD_PRESS_SPEED_MMS >= PRESS_SPEED_MIN_MMS\n"
+             "            and WELD_PRESS_SPEED_MMS <= PRESS_SPEED_MAX_MMS)) then\n"
+             "    PRESS_SPEED_MMS = WELD_PRESS_SPEED_MMS\n"
+             "end")
+    assert guard in weld
+    assert weld.index(guard) < weld.index("PRESS_SPEED_MMS, 0.0, PRESS_MAX_MM")
+
+
+def test_force_control_is_given_the_tuned_gain():
+    weld = WELD_PATH.read_text(encoding="utf-8")
+    control = re.search(r"local function ftControlPress\(flag\)(.*?)\nend", weld, re.S)
+    assert control, "weld.lua no longer defines the FT_Control helper"
+    assert "FTC_GAIN_P, 0.0, 0.0, 0.0, 0.0, 0.0," in control.group(1)
+
+
 @_TUNED_BUILDS
-def test_the_weld_tuning_speeds_are_published_to_weld_lua(build):
-    built = build(search_speed_mms=9, press_speed_mms=0.3)
+def test_the_weld_tuning_is_published_to_weld_lua(build):
+    built = build(tuning=WeldTuning(9, 0.3, "feed", 0.0002))
     lines = _lines(built)
     assert "SEARCH_SPEED = 9" in lines
     assert "PRESS_SPEED = 0.3" in lines
+    assert "PRESS_GAIN = 0.0002" in lines
     dofile = next(i for i, line in enumerate(lines, 1)
                   if "NewDofile(" in line and not line.strip().startswith("--"))
-    for row in ("WELD_SEARCH_SPEED_MMS = SEARCH_SPEED", "WELD_PRESS_SPEED_MMS = PRESS_SPEED"):
+    for row in ("WELD_SEARCH_SPEED_MMS = SEARCH_SPEED", "WELD_PRESS_SPEED_MMS = PRESS_SPEED",
+                "WELD_PRESS_GAIN = PRESS_GAIN"):
         at = next(i for i, line in enumerate(lines, 1) if line.strip() == row)
         assert built.loop_start_line < at < dofile, row
 
 
 @_TUNED_BUILDS
-def test_left_out_the_weld_tuning_speeds_are_the_defaults(build):
-    lines = _lines(build())
-    assert f"SEARCH_SPEED = {format_number(DEFAULT_SEARCH_SPEED_MMS)}" in lines
-    assert f"PRESS_SPEED = {format_number(DEFAULT_PRESS_SPEED_MMS)}" in lines
+def test_a_force_only_press_publishes_no_feed(build):
+    """The saved press speed is only for Feed mode; Force only sends 0."""
+    lines = _lines(build(tuning=WeldTuning(9, 0.3, "force", 0.0002)))
+    assert "PRESS_SPEED = 0" in lines
+    assert "PRESS_GAIN = 0.0002" in lines
 
 
 @_TUNED_BUILDS
-@pytest.mark.parametrize("speeds,error", [
-    ({"search_speed_mms": 10.5}, "Search speed"),
-    ({"search_speed_mms": 0.4}, "Search speed"),
-    ({"press_speed_mms": 1.01}, "Press speed"),
-    ({"press_speed_mms": 0}, "Press speed"),
-])
-def test_the_builders_refuse_a_speed_out_of_bounds(build, speeds, error):
-    """Refused here, with a message, rather than uploaded for weld.lua to
-    quietly swap for its fallback."""
-    with pytest.raises(ValueError, match=error):
-        build(**speeds)
+def test_left_out_the_weld_tuning_is_the_defaults(build):
+    lines = _lines(build())
+    assert f"SEARCH_SPEED = {format_number(DEFAULT_SEARCH_SPEED_MMS)}" in lines
+    assert "PRESS_SPEED = 0" in lines
+    assert "PRESS_GAIN = 0.0001" in lines
 
 
-@pytest.mark.parametrize("marker", ["--{{SEARCH_SPEED}}", "--{{PRESS_SPEED}}"])
+@pytest.mark.parametrize("marker", ["--{{SEARCH_SPEED}}", "--{{PRESS_SPEED}}", "--{{PRESS_GAIN}}"])
 @pytest.mark.parametrize(
     "template,build",
     [
@@ -981,7 +1005,7 @@ def test_the_builders_refuse_a_speed_out_of_bounds(build, speeds, error):
     ids=["weldflex", "single_shot"],
 )
 def test_dropping_a_weld_tuning_marker_fails_loudly(tmp_path, template, build, marker):
-    """Without it the Admin page's speed would never reach weld.lua."""
+    """Without it the Admin page's setting would never reach weld.lua."""
     stripped = [line for line in template.read_text(encoding="utf-8").splitlines()
                 if marker not in line]
     bad = tmp_path / template.name

@@ -70,7 +70,21 @@ if type(WELD_FT_SENSOR_NUM) == "number"
    and WELD_FT_SENSOR_NUM <= 255 then
     FTC_SENSOR_NUM = WELD_FT_SENSOR_NUM
 end
+-- FT_Control's proportional gain: how fast it moves for a given force error, so
+-- with no press feed (PRESS_SPEED_MMS = 0) it is what sets how fast the press
+-- closes. 0.005 until 2026-09-04, dropped with no reason recorded; FAIRINO
+-- suggests about 0.001. The Admin page's Weld Tuning publishes WELD_PRESS_GAIN.
+-- Too much gain overshoots or oscillates, and the gun bottoms out near 9 lbf
+-- (see PRESS_SPEED_MMS), so raise it in small steps on dry shots.
+-- backend/weld_tuning.py holds the same numbers.
 local FTC_GAIN_P = 0.0001
+local FTC_GAIN_MIN = 0.00005
+local FTC_GAIN_MAX = 0.001
+if type(WELD_PRESS_GAIN) == "number"
+   and WELD_PRESS_GAIN >= FTC_GAIN_MIN
+   and WELD_PRESS_GAIN <= FTC_GAIN_MAX then
+    FTC_GAIN_P = WELD_PRESS_GAIN
+end
 
 local READY_TIMEOUT_MS   = 5000
 local READY_SAMPLE_MS    = 100
@@ -81,31 +95,43 @@ local FIND_DIR  = 2     -- 1 = positive, 2 = negative (flipped with TCP Z, 2026-
 local FIND_AXIS = 3     -- 3 = Z axis
 local FIND_ACC  = 0.0
 
+-- Only matters when the press feed isn't 0 (see PRESS_SPEED_MMS), and with it
+-- the feed works against FT_Control (2026-10-05). Whether this or the
+-- encoding is wrong is unproven: the Lua and SDK manuals give 0/1, the 8080
+-- protocol manual 1 = positive / 2 = negative.
 local PRESS_DIR = 0     -- 0 = negative (FT_LinInsertion encoding; flipped with TCP Z, 2026-09-01)
 
--- The commissioned search speed, restored 2026-09-14. Raising the speeds that day
--- (search at 10 mm/s with the press at 1.0, then 0.5) left the press stuck well
--- short of force both times. Both stop on force, but the press ends on its first
--- reading past threshold, and arriving faster stopped it short. Shorten a shot
--- some other way: a lower park height (a run's Search Height) shortens the search.
+-- The search speed. Search 10 mm/s on 2026-09-14 ran with presses that stalled,
+-- but the press feed was the cause (below), not the search. A lower park height
+-- (a run's Search Height) also shortens the search.
 --
--- The press dropped from 0.25 to 0.10 mm/s on 2026-09-28. At 0.25 a 10 lbf press
--- read ~9 lbf on the Force page and then jumped straight to 14-15: something in
--- the gun bottoms out near 9 lbf, after which force climbs almost vertically and
--- the stop lands several lbf late. Overshoot there scales with arrival speed. The
--- cost is time on the soft spring travel before that point.
+-- The press feed is FT_LinInsertion's own speed, on top of FT_Control. It was
+-- meant to help FT_Control close on the target. A dry Single Shot ladder on
+-- 2026-10-05 showed it works against it: 0.15 / 0.25 / 0.35 mm/s took about
+-- 8.5 / 10 / 14 s, and the force hunted up and down more as the speed rose.
+-- Faster feeds never finish: 0.5 stalled short on 2026-10-02 until the gun was
+-- pushed, as 1.0 and 0.5 did on 2026-09-14. Those stalls were put down to
+-- arriving too fast at the time, and the press was slowed to 0.25, 0.10 and
+-- then 0.15 for it; they were this fight.
 --
--- 2026-10-02 trial: search 5.0 -> 7.5 and press 0.10 -> 0.15, both still under
--- the 09-14 speeds that stuck short. If the press stops short or overshoots past
--- the knee again, go back to 5.0/0.10.
+-- So the feed is 0 by default (Weld Tuning's "Force only" press): the insertion
+-- moves nothing, it only ends the press on force, and FT_Control alone moves the
+-- gun at FTC_GAIN_P. FAIRINO's own insertion example (readthedocs 2.1.12.27)
+-- does the same. Weld Tuning's "Feed" mode still publishes a speed here, which
+-- is the press as it was before 2026-10-05.
+--
+-- Also seen 2026-09-28 at 0.25: a 10 lbf press read ~9 lbf on the Force page and
+-- then jumped straight to 14-15. Something in the gun bottoms out near 9 lbf,
+-- after which force climbs almost vertically for little travel.
 --
 -- Since 2026-10-02 these two are only the fallback. While in beta the Admin
 -- page's Weld Tuning panel sets both for every run, and the caller publishes them
 -- as WELD_SEARCH_SPEED_MMS and WELD_PRESS_SPEED_MMS. A value that is missing or
--- outside the bounds below is ignored. Each ceiling is the fastest that speed has
--- run on hardware. backend/weld_tuning.py holds the same numbers.
+-- outside the bounds below is ignored; a press feed of exactly 0 is allowed.
+-- Each ceiling is the fastest that speed has run on hardware.
+-- backend/weld_tuning.py holds the same numbers.
 local SEARCH_SPEED_MMS = 7.5
-local PRESS_SPEED_MMS  = 0.15
+local PRESS_SPEED_MMS  = 0.0
 local SEARCH_SPEED_MIN_MMS = 0.5
 local SEARCH_SPEED_MAX_MMS = 10.0
 local PRESS_SPEED_MIN_MMS  = 0.05
@@ -116,8 +142,9 @@ if type(WELD_SEARCH_SPEED_MMS) == "number"
     SEARCH_SPEED_MMS = WELD_SEARCH_SPEED_MMS
 end
 if type(WELD_PRESS_SPEED_MMS) == "number"
-   and WELD_PRESS_SPEED_MMS >= PRESS_SPEED_MIN_MMS
-   and WELD_PRESS_SPEED_MMS <= PRESS_SPEED_MAX_MMS then
+   and (WELD_PRESS_SPEED_MMS == 0
+        or (WELD_PRESS_SPEED_MMS >= PRESS_SPEED_MIN_MMS
+            and WELD_PRESS_SPEED_MMS <= PRESS_SPEED_MAX_MMS)) then
     PRESS_SPEED_MMS = WELD_PRESS_SPEED_MMS
 end
 
@@ -614,6 +641,8 @@ local function pressToForce()
     print(string.format("[WELD] Press target %.1f lbf (%.1f N); collision guard %s.",
         PRESS_TARGET_LBF, PRESS_TARGET_N,
         pressNeedsGuard and "raised" or "not needed at this force"))
+    print(string.format("[WELD] Press feed %.3f mm/s (0 = FT_Control alone), gain %.6f.",
+        PRESS_SPEED_MMS, FTC_GAIN_P))
 
     ftGuardPress(1)
 
@@ -624,6 +653,8 @@ local function pressToForce()
     end
 
     -- The only insertion in a press; see PRESS_HOLD_MS for why it is not re-run.
+    -- With PRESS_SPEED_MMS at 0 it moves nothing itself: FT_Control closes on
+    -- the target, and this returns once force reaches the threshold.
     pub(SV_PHASE, PH_PRESS_INSERT)
     ret = ftCall(FT_LinInsertion, FIND_RCS, PRESS_INSERT_THRESHOLD_N,
                  PRESS_SPEED_MMS, 0.0, PRESS_MAX_MM, PRESS_DIR)

@@ -12,8 +12,10 @@
       </section>
     {% endcall %}
     {% call panel_shell('Weld Tuning (Beta)',
-                        'For every run and Single Shot, from the next Run. Force only: FT_Control alone '
-                        ~ 'presses, at Press Gain. Feed: the old press, which also feeds at Press Speed.',
+                        'For every run and Single Shot, from the next Run. Press Gain sets how fast '
+                        ~ 'the press closes on force. Defaults '
+                        ~ '%g'|format(tuning_limits.DEFAULT_SEARCH_SPEED_MMS) ~ ' / '
+                        ~ tuning_limits.format_gain(tuning_limits.DEFAULT_PRESS_GAIN) ~ '.',
                         class_name='settings-shell') %}
       <form class="settings-grid" hx-post="/ui/weld-tuning/save" hx-target="#toast-rack" hx-swap="innerHTML">
         <div>
@@ -22,20 +24,7 @@
                  value="{{ '%g'|format(tuning.search_speed_mms) }}" required>
         </div>
         <div>
-          <label for="press_mode">Press Mode</label>
-          <select id="press_mode" name="press_mode">
-            {% for mode, label in tuning_limits.PRESS_MODES.items() %}
-            <option value="{{ mode }}" {% if tuning.press_mode == mode %}selected{% endif %}>{{ label }}</option>
-            {% endfor %}
-          </select>
-        </div>
-        <div>
-          <label for="press_speed_mms">Press Speed, Feed only (mm/s, {{ '%g'|format(tuning_limits.PRESS_SPEED_MIN_MMS) }}–{{ '%g'|format(tuning_limits.PRESS_SPEED_MAX_MMS) }})</label>
-          <input id="press_speed_mms" name="press_speed_mms" type="text" inputmode="none" data-kbd="num"
-                 value="{{ '%g'|format(tuning.press_speed_mms) }}" required>
-        </div>
-        <div>
-          <label for="press_gain">Press Gain ({{ tuning_limits.format_gain(tuning_limits.PRESS_GAIN_MIN) }}–{{ tuning_limits.format_gain(tuning_limits.PRESS_GAIN_MAX) }}, default {{ tuning_limits.format_gain(tuning_limits.DEFAULT_PRESS_GAIN) }})</label>
+          <label for="press_gain">Press Gain ({{ tuning_limits.format_gain(tuning_limits.PRESS_GAIN_MIN) }}–{{ tuning_limits.format_gain(tuning_limits.PRESS_GAIN_MAX) }})</label>
           <input id="press_gain" name="press_gain" type="text" inputmode="none" data-kbd="num"
                  value="{{ tuning_limits.format_gain(tuning.press_gain) }}" required>
         </div>

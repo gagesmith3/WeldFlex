@@ -33,8 +33,6 @@ from weld_tuning import (
     DEFAULT_SEARCH_SPEED_MMS,
     PRESS_GAIN_MAX,
     PRESS_GAIN_MIN,
-    PRESS_SPEED_MAX_MMS,
-    PRESS_SPEED_MIN_MMS,
     SEARCH_SPEED_MAX_MMS,
     SEARCH_SPEED_MIN_MMS,
     WeldTuning,
@@ -871,7 +869,7 @@ def test_force_control_uses_negative_fz_for_compression():
 
 def test_force_control_uses_the_conservative_proportional_gain():
     weld = WELD_PATH.read_text(encoding="utf-8")
-    assert "local FTC_GAIN_P = 0.0001" in weld
+    assert "local FTC_GAIN_P = 0.0003" in weld
     assert "FTC_GAIN_P = 0.0005" not in weld
 
 
@@ -882,15 +880,17 @@ def test_surface_search_uses_the_commissioned_gentle_speed():
     assert float(match.group(1)) == 7.5
 
 
-def test_force_press_falls_back_to_no_feed():
+def test_the_press_has_no_feed():
     """FT_LinInsertion's feed works against FT_Control: a dry ladder on
     2026-10-05 took ~8.5 / 10 / 14 s at 0.15 / 0.25 / 0.35 mm/s, and 0.5 stalls
-    short. With no feed the insertion only ends the press on force, and a
-    caller that publishes nothing gets that."""
+    short. With no feed the insertion only ends the press on force, and no
+    caller can publish one back in."""
     weld = WELD_PATH.read_text(encoding="utf-8")
-    match = re.search(r"^local PRESS_SPEED_MMS\s*=\s*([\d.]+)", weld, re.M)
-    assert match, "weld.lua no longer declares PRESS_SPEED_MMS"
+    match = re.search(r"^local PRESS_FEED_MMS\s*=\s*([\d.]+)", weld, re.M)
+    assert match, "weld.lua no longer declares PRESS_FEED_MMS"
     assert float(match.group(1)) == 0.0
+    assert not re.search(r"^\s*PRESS_FEED_MMS\s*=", weld, re.M)
+    assert "WELD_PRESS_SPEED_MMS" not in weld
 
 
 def test_weld_lua_falls_back_to_the_same_speeds_and_bounds_as_weld_tuning():
@@ -900,11 +900,8 @@ def test_weld_lua_falls_back_to_the_same_speeds_and_bounds_as_weld_tuning():
     weld = WELD_PATH.read_text(encoding="utf-8")
     for name, value in (
         ("SEARCH_SPEED_MMS", DEFAULT_SEARCH_SPEED_MMS),
-        ("PRESS_SPEED_MMS", WeldTuning().press_feed_mms),
         ("SEARCH_SPEED_MIN_MMS", SEARCH_SPEED_MIN_MMS),
         ("SEARCH_SPEED_MAX_MMS", SEARCH_SPEED_MAX_MMS),
-        ("PRESS_SPEED_MIN_MMS", PRESS_SPEED_MIN_MMS),
-        ("PRESS_SPEED_MAX_MMS", PRESS_SPEED_MAX_MMS),
         ("FTC_GAIN_P", DEFAULT_PRESS_GAIN),
         ("FTC_GAIN_MIN", PRESS_GAIN_MIN),
         ("FTC_GAIN_MAX", PRESS_GAIN_MAX),
@@ -941,20 +938,6 @@ _TUNED_BUILDS = pytest.mark.parametrize(
 )
 
 
-def test_weld_lua_takes_a_published_press_feed_of_zero_or_within_its_bounds():
-    """0 is the Force only press, so it is let through even though it is below
-    the Feed mode's floor."""
-    weld = WELD_PATH.read_text(encoding="utf-8")
-    guard = ('if type(WELD_PRESS_SPEED_MMS) == "number"\n'
-             "   and (WELD_PRESS_SPEED_MMS == 0\n"
-             "        or (WELD_PRESS_SPEED_MMS >= PRESS_SPEED_MIN_MMS\n"
-             "            and WELD_PRESS_SPEED_MMS <= PRESS_SPEED_MAX_MMS)) then\n"
-             "    PRESS_SPEED_MMS = WELD_PRESS_SPEED_MMS\n"
-             "end")
-    assert guard in weld
-    assert weld.index(guard) < weld.index("PRESS_SPEED_MMS, 0.0, PRESS_MAX_MM")
-
-
 def test_force_control_is_given_the_tuned_gain():
     weld = WELD_PATH.read_text(encoding="utf-8")
     control = re.search(r"local function ftControlPress\(flag\)(.*?)\nend", weld, re.S)
@@ -964,36 +947,26 @@ def test_force_control_is_given_the_tuned_gain():
 
 @_TUNED_BUILDS
 def test_the_weld_tuning_is_published_to_weld_lua(build):
-    built = build(tuning=WeldTuning(9, 0.3, "feed", 0.0002))
+    built = build(tuning=WeldTuning(9, 0.0002))
     lines = _lines(built)
     assert "SEARCH_SPEED = 9" in lines
-    assert "PRESS_SPEED = 0.3" in lines
     assert "PRESS_GAIN = 0.0002" in lines
+    assert not any("PRESS_SPEED" in line for line in lines)
     dofile = next(i for i, line in enumerate(lines, 1)
                   if "NewDofile(" in line and not line.strip().startswith("--"))
-    for row in ("WELD_SEARCH_SPEED_MMS = SEARCH_SPEED", "WELD_PRESS_SPEED_MMS = PRESS_SPEED",
-                "WELD_PRESS_GAIN = PRESS_GAIN"):
+    for row in ("WELD_SEARCH_SPEED_MMS = SEARCH_SPEED", "WELD_PRESS_GAIN = PRESS_GAIN"):
         at = next(i for i, line in enumerate(lines, 1) if line.strip() == row)
         assert built.loop_start_line < at < dofile, row
-
-
-@_TUNED_BUILDS
-def test_a_force_only_press_publishes_no_feed(build):
-    """The saved press speed is only for Feed mode; Force only sends 0."""
-    lines = _lines(build(tuning=WeldTuning(9, 0.3, "force", 0.0002)))
-    assert "PRESS_SPEED = 0" in lines
-    assert "PRESS_GAIN = 0.0002" in lines
 
 
 @_TUNED_BUILDS
 def test_left_out_the_weld_tuning_is_the_defaults(build):
     lines = _lines(build())
     assert f"SEARCH_SPEED = {format_number(DEFAULT_SEARCH_SPEED_MMS)}" in lines
-    assert "PRESS_SPEED = 0" in lines
-    assert "PRESS_GAIN = 0.0001" in lines
+    assert "PRESS_GAIN = 0.0003" in lines
 
 
-@pytest.mark.parametrize("marker", ["--{{SEARCH_SPEED}}", "--{{PRESS_SPEED}}", "--{{PRESS_GAIN}}"])
+@pytest.mark.parametrize("marker", ["--{{SEARCH_SPEED}}", "--{{PRESS_GAIN}}"])
 @pytest.mark.parametrize(
     "template,build",
     [
@@ -1451,7 +1424,7 @@ def test_the_press_travel_budgets_are_separate_constants():
         "FT_Control's max_dis no longer has its own constant"
     assert "PRESS_ADJUST_MM, 0.0,                      -- max_dis (mm), max_ang" in weld, \
         "FT_Control is no longer given PRESS_ADJUST_MM"
-    assert "PRESS_SPEED_MMS, 0.0, PRESS_MAX_MM, PRESS_DIR" in weld, \
+    assert "PRESS_FEED_MMS, 0.0, PRESS_MAX_MM, PRESS_DIR" in weld, \
         "FT_LinInsertion is no longer given PRESS_MAX_MM"
 
 

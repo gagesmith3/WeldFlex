@@ -499,11 +499,9 @@ def build_weldflex_lua(
     between-stud travel at Safe Z, as it was before Retract Z existed. Heights
     out of the order search_z <= retract_z <= safe_z are refused.
 
-    `tuning` is the Admin page's Weld Tuning (left out, its defaults). The
-    program gets its search speed, its press gain, and as PRESS_SPEED the feed
-    FT_LinInsertion runs at, which is 0 in the default "force" press mode.
-    WeldTuning refuses anything out of range, so nothing reaches weld.lua for
-    it to quietly replace.
+    `tuning` is the Admin page's Weld Tuning (left out, its defaults): weld.lua's
+    search speed and press gain. WeldTuning refuses anything out of range, so
+    nothing reaches weld.lua for it to quietly replace.
 
     `start_stud` resumes a part that faulted partway: the first cycle starts
     at that stud (counted from 1, in the part's own stud order) and every
@@ -560,7 +558,6 @@ def build_weldflex_lua(
     feed_pulse_seen = False
     run_mode_seen = False
     search_speed_seen = False
-    press_speed_seen = False
     press_gain_seen = False
     start_stud_seen = False
 
@@ -599,9 +596,6 @@ def build_weldflex_lua(
         elif "--{{SEARCH_SPEED}}" in line:
             out.append(f"{indent}SEARCH_SPEED = {format_number(tuning.search_speed_mms)}")
             search_speed_seen = True
-        elif "--{{PRESS_SPEED}}" in line:
-            out.append(f"{indent}PRESS_SPEED = {format_number(tuning.press_feed_mms)}")
-            press_speed_seen = True
         elif "--{{PRESS_GAIN}}" in line:
             out.append(f"{indent}PRESS_GAIN = {format_gain(tuning.press_gain)}")
             press_gain_seen = True
@@ -640,7 +634,6 @@ def build_weldflex_lua(
             ("--{{FEED_PULSE_MS}}", feed_pulse_seen),
             ("--{{RUN_MODE}}", run_mode_seen),
             ("--{{SEARCH_SPEED}}", search_speed_seen),
-            ("--{{PRESS_SPEED}}", press_speed_seen),
             ("--{{PRESS_GAIN}}", press_gain_seen),
             ("--{{START_STUD}}", start_stud_seen),
         )
@@ -731,7 +724,6 @@ def build_single_shot_lua(
     feed_pulse_seen = False
     run_mode_seen = False
     search_speed_seen = False
-    press_speed_seen = False
     press_gain_seen = False
 
     for line in template_lines:
@@ -764,9 +756,6 @@ def build_single_shot_lua(
         elif "--{{SEARCH_SPEED}}" in line:
             out.append(f"{indent}SEARCH_SPEED = {format_number(tuning.search_speed_mms)}")
             search_speed_seen = True
-        elif "--{{PRESS_SPEED}}" in line:
-            out.append(f"{indent}PRESS_SPEED = {format_number(tuning.press_feed_mms)}")
-            press_speed_seen = True
         elif "--{{PRESS_GAIN}}" in line:
             out.append(f"{indent}PRESS_GAIN = {format_gain(tuning.press_gain)}")
             press_gain_seen = True
@@ -803,7 +792,6 @@ def build_single_shot_lua(
             ("--{{FEED_PULSE_MS}}", feed_pulse_seen),
             ("--{{RUN_MODE}}", run_mode_seen),
             ("--{{SEARCH_SPEED}}", search_speed_seen),
-            ("--{{PRESS_SPEED}}", press_speed_seen),
             ("--{{PRESS_GAIN}}", press_gain_seen),
         )
         if not value

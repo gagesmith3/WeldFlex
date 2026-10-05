@@ -1,19 +1,17 @@
-"""weld.lua's search and press settings, set from the Admin page while in beta.
+"""weld.lua's search speed and press gain, set from the Admin page while in beta.
 
-Both speeds were hard-coded in weld.lua until 2026-10-02. Finding a working
-combination meant an edit, a commit and a deploy per try, so the Admin page's
-Weld Tuning panel now sets them for every run and Single Shot. The job manager
-reads them when Run is pressed and records them with the run.
+Both were hard-coded in weld.lua until 2026-10-02. Finding a working value
+meant an edit, a commit and a deploy per try, so the Admin page's Weld Tuning
+panel now sets them for every run and Single Shot. The job manager reads them
+when Run is pressed and records them with the run.
 
-The press has two modes since 2026-10-05. A dry Single Shot ladder that day
-showed FT_LinInsertion's own feed working against FT_Control: 0.15 / 0.25 /
-0.35 mm/s took about 8.5 / 10 / 14 s, with the force hunting up and down as
-the speed rose, and faster feeds stall short of force. "force" (the default)
-gives the insertion no feed at all, so it only ends the press on force while
-FT_Control alone moves the gun, as in FAIRINO's own insertion example. "feed"
-is the press as it was before, at the saved press speed, kept as a fallback.
-In both, the press gain is FT_Control's proportional gain, which sets how fast
-the regulator closes on the target.
+The press gain is FT_Control's proportional gain, and it alone sets how fast
+the press closes. Until 2026-10-05 FT_LinInsertion also fed the gun at a press
+speed set here, but a dry ladder that day showed that feed working against
+FT_Control (0.15 / 0.25 / 0.35 mm/s took about 8.5 / 10 / 14 s, and faster
+feeds stall short). weld.lua now gives the insertion no feed, as in FAIRINO's
+own insertion example. The press speed and the "Feed" press mode that kept the
+old press are archived at the archive/press-feed-mode tag.
 
 weld.lua keeps its own copies of the defaults and bounds below, and falls back to
 its defaults if a caller publishes nothing usable. Nothing enforces the two
@@ -33,34 +31,27 @@ log = logging.getLogger(__name__)
 
 SETTINGS_PATH = Path(__file__).resolve().parent / "weld_tuning.json"
 
-# The 2026-10-02 trial values. Before that: search 5.0 with press 0.25, then 0.10.
-# The press speed only reaches weld.lua in "feed" mode.
+# The 2026-10-02 trial value. Before that: 5.0.
 DEFAULT_SEARCH_SPEED_MMS = 7.5
-DEFAULT_PRESS_SPEED_MMS = 0.15
 
-# Each ceiling is the fastest that speed has run on hardware (2026-09-14, when
-# search 10 with press 1.0, then 0.5, left the press stuck short both times).
+# The ceiling is the fastest the search has run on hardware (2026-09-14).
 # Anything faster is untried, not known to be safe.
 SEARCH_SPEED_MIN_MMS = 0.5
 SEARCH_SPEED_MAX_MMS = 10.0
-PRESS_SPEED_MIN_MMS = 0.05
-PRESS_SPEED_MAX_MMS = 1.0
 
-# Label for each press mode, in the order the Admin page lists them.
-PRESS_MODES = {"force": "Force only", "feed": "Feed (old press)"}
-DEFAULT_PRESS_MODE = "force"
-
-# FT_Control's proportional gain. 0.0001 since 2026-09-04 (0.005 before, dropped
-# with no reason recorded). The ceiling is FAIRINO's suggested value; the floor
-# is the gain in FAIRINO's own insertion example. Too much gain overshoots or
+# FT_Control's proportional gain. 0.0003 was commissioned on 2026-10-05: a
+# smooth climb to 16 lbf, live and dry, where 0.0001 (the gain since
+# 2026-09-04) took ~6.5 s touch to lift. 0.005 before 2026-09-04, dropped with
+# no reason recorded. The ceiling is FAIRINO's suggested value; the floor is
+# the gain in FAIRINO's own insertion example. Too much gain overshoots or
 # oscillates, so raise it in small steps on dry shots.
-DEFAULT_PRESS_GAIN = 0.0001
+DEFAULT_PRESS_GAIN = 0.0003
 PRESS_GAIN_MIN = 0.00005
 PRESS_GAIN_MAX = 0.001
 
 
 def format_gain(value: float) -> str:
-    """0.0001, not %g's 1e-04: for the Admin page and the generated Lua alike."""
+    """0.0003, not %g's 3e-04: for the Admin page and the generated Lua alike."""
     return f"{float(value):.6f}".rstrip("0").rstrip(".")
 
 
@@ -72,12 +63,13 @@ def _number(label: str, value: float | int | str, places: int) -> float:
     return round(number, places) if math.isfinite(number) else number
 
 
-def _check(label: str, value: float | int | str, lo: float, hi: float) -> float:
+def _check_search(value: float | int | str) -> float:
     # Three places is all lua_builder.format_number writes, so a run records
     # the speed it actually sent.
-    number = _number(label, value, 3)
-    if not math.isfinite(number) or not lo <= number <= hi:
-        raise ValueError(f"{label} must be {lo:g} to {hi:g} mm/s, got {number:g}")
+    number = _number("Search speed", value, 3)
+    if not math.isfinite(number) or not SEARCH_SPEED_MIN_MMS <= number <= SEARCH_SPEED_MAX_MMS:
+        raise ValueError(f"Search speed must be {SEARCH_SPEED_MIN_MMS:g} to "
+                         f"{SEARCH_SPEED_MAX_MMS:g} mm/s, got {number:g}")
     return number
 
 
@@ -90,49 +82,26 @@ def _check_gain(value: float | int | str) -> float:
     return number
 
 
-def _check_mode(value: str) -> str:
-    mode = str(value).strip()
-    if mode not in PRESS_MODES:
-        raise ValueError(f"Press mode must be one of {', '.join(PRESS_MODES)}, got {value!r}")
-    return mode
-
-
 @dataclass(frozen=True)
 class WeldTuning:
-    """One set of weld.lua search/press settings. Out-of-range values are refused."""
+    """One weld.lua search speed (mm/s) and press gain. Out-of-range values are refused."""
 
     search_speed_mms: float = DEFAULT_SEARCH_SPEED_MMS
-    press_speed_mms: float = DEFAULT_PRESS_SPEED_MMS
-    press_mode: str = DEFAULT_PRESS_MODE
     press_gain: float = DEFAULT_PRESS_GAIN
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "search_speed_mms", _check(
-            "Search speed", self.search_speed_mms, SEARCH_SPEED_MIN_MMS, SEARCH_SPEED_MAX_MMS))
-        object.__setattr__(self, "press_speed_mms", _check(
-            "Press speed", self.press_speed_mms, PRESS_SPEED_MIN_MMS, PRESS_SPEED_MAX_MMS))
-        object.__setattr__(self, "press_mode", _check_mode(self.press_mode))
+        object.__setattr__(self, "search_speed_mms", _check_search(self.search_speed_mms))
         object.__setattr__(self, "press_gain", _check_gain(self.press_gain))
 
-    @property
-    def press_feed_mms(self) -> float:
-        """The FT_LinInsertion speed weld.lua gets: 0 in "force" mode."""
-        return self.press_speed_mms if self.press_mode == "feed" else 0.0
-
-    def to_dict(self) -> dict[str, float | str]:
-        return {
-            "search_speed_mms": self.search_speed_mms,
-            "press_speed_mms": self.press_speed_mms,
-            "press_mode": self.press_mode,
-            "press_gain": self.press_gain,
-        }
+    def to_dict(self) -> dict[str, float]:
+        return {"search_speed_mms": self.search_speed_mms, "press_gain": self.press_gain}
 
 
 def load(path: str | os.PathLike | None = None) -> WeldTuning:
     """The saved settings, or the defaults for any that are missing or unusable.
 
-    A file saved before the press modes existed has no press_mode, so it loads
-    as "force", the default."""
+    Keys this version no longer uses (press_speed_mms, press_mode) are ignored,
+    and dropped the next time the panel saves."""
     path = Path(path or SETTINGS_PATH)
     try:
         saved = json.loads(path.read_text(encoding="utf-8"))
@@ -145,7 +114,7 @@ def load(path: str | os.PathLike | None = None) -> WeldTuning:
         log.warning("weld tuning is not an object, using defaults: %r", saved)
         return WeldTuning()
     values = {}
-    for name in ("search_speed_mms", "press_speed_mms", "press_mode", "press_gain"):
+    for name in ("search_speed_mms", "press_gain"):
         if name not in saved:
             continue
         try:

@@ -33,12 +33,14 @@
         <td>{{ run.get('part_name') or '—' }}</td>
         <td>{{ run.get('cycles_done', 0) }} / {{ run.get('cycles_target', 0) }}</td>
         <td>{{ '%.1fs'|format(times | sum / times | length) if times else '—' }}</td>
-        {# Weld Tuning speeds, mm/s. Runs from before 2026-10-02 don't record them.
-           A press feed of 0 is the Force only press (2026-10-05). #}
+        {# Weld Tuning: search mm/s, then the press gain. Runs from before 2026-10-05
+           recorded a press speed (mm/s) instead, and before 2026-10-02 neither. #}
         <td>
-          {%- if run.get('search_speed_mms') is not none and run.get('press_speed_mms') is not none -%}
-            {{ '%g'|format(run.search_speed_mms) }} /
-            {{ 'force' if run.press_speed_mms == 0 else '%g'|format(run.press_speed_mms) }}
+          {%- if run.get('search_speed_mms') is none -%}—
+          {%- elif run.get('press_gain') is not none -%}
+            {{ '%g'|format(run.search_speed_mms) }} / gain {{ format_gain(run.press_gain) }}
+          {%- elif run.get('press_speed_mms') is not none -%}
+            {{ '%g'|format(run.search_speed_mms) }} / {{ '%g'|format(run.press_speed_mms) }} mm/s
           {%- else -%}—{%- endif -%}
         </td>
         <td>

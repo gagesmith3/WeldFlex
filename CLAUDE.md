@@ -32,6 +32,9 @@ Layers, strictly one-way:
   ready; they were implemented backwards until 2026-07-28 precisely because no
   such map existed.
 - `.claude/skills/deployment-targets/` — Windows dev box vs. Raspberry Pi kiosk.
+- `.claude/skills/hmi-ssh/` — getting onto the production HMI over SSH and
+  deploying to it. Run its `scripts/hmi_preflight.sh` before every deploy; the
+  HMI's `backend/recipes.json` is its live part library and is tracked in git.
 - `.claude/skills/doc-sync/` — `/doc-sync` audits every doc listed above against
   the code and corrects the claims that went stale. Run it after landing
   anything that changes what one of them asserts.

@@ -131,7 +131,9 @@ current `weld.lua` on any sync that touched `programs/`.
 
 **Own:** how to *write code* in this repo — `weldflex-app` for Flask/HTMX
 conventions, `fairino-sdk` for vendor call gotchas, `deployment-targets` for the
-two-target split.
+two-target split, `hmi-ssh` for reaching and deploying to the production HMI.
+`hmi-ssh` asserts live-machine facts (address, `.env` values, which files are
+dirty there); re-check those over SSH, read-only, rather than against the repo.
 
 **Voice:** gotcha tables, numbered, each row ending in a "where" pointer.
 

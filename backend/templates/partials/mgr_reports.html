@@ -47,6 +47,13 @@
       <span class="mgr-stat-label">Avg Cycle Time</span>
       <strong class="mgr-stat-value" id="mgr-stat-avg-cycle">—</strong>
     </div>
+    {# Only with one part picked: where its next live run picks up, the same
+       number the Load modal opens on. #}
+    <div class="mgr-stat-card" id="mgr-stat-next-stud-card" hidden>
+      <span class="mgr-stat-label">Next Stud</span>
+      <strong class="mgr-stat-value" id="mgr-stat-next-stud">—</strong>
+      <span class="mgr-stat-note" id="mgr-stat-next-stud-note"></span>
+    </div>
   </div>
 
   <!-- Run Log History Table -->
@@ -63,6 +70,7 @@
             <th>Part Name</th>
             <th>Status</th>
             <th>Cycles (Done / Target)</th>
+            <th>Last Stud</th>
             <th>Avg Cycle Time</th>
             <th>Total Time</th>
             <th>Details</th>
@@ -70,7 +78,7 @@
         </thead>
         <tbody id="mgr-reports-tbody">
           <tr>
-            <td colspan="7" class="mgr-table-empty">Loading production run logs...</td>
+            <td colspan="8" class="mgr-table-empty">Loading production run logs...</td>
           </tr>
         </tbody>
       </table>
@@ -103,7 +111,16 @@
           <span class="mgr-report-label">Ended At</span>
           <strong id="mgr-modal-ended">—</strong>
         </div>
+        <div class="mgr-modal-summary-item">
+          <span class="mgr-report-label">Last Stud</span>
+          <strong id="mgr-modal-last-stud">—</strong>
+        </div>
+        <div class="mgr-modal-summary-item">
+          <span class="mgr-report-label">Next Start</span>
+          <strong id="mgr-modal-next-stud">—</strong>
+        </div>
       </div>
+      <p id="mgr-modal-stud-note" class="mgr-stat-note" hidden></p>
 
       <!-- Part Configuration Snapshot -->
       <div class="mgr-modal-section">
@@ -162,6 +179,7 @@
 <script>
 (function() {
   let _allRuns = [];
+  let _recipes = [];
   let _activePartFilter = 'all';
   let _activeKindFilter = 'part';
 
@@ -204,6 +222,32 @@
     return tags.join(' ');
   }
 
+  // Runs recorded before stud progress existed, single shots, and part runs
+  // that never launched carry no next_stud.
+  function hasStudProgress(r) { return r.next_stud !== undefined && r.next_stud !== null; }
+
+  function lastStudText(r) {
+    if (!hasStudProgress(r)) return '—';
+    if (r.last_stud === null || r.last_stud === undefined) return 'none';
+    const cycle = (r.cycles_target || 1) > 1 ? ` (cycle ${r.last_stud_cycle})` : '';
+    return `${r.last_stud} / ${r.stud_count}${cycle}`;
+  }
+
+  // Why a run's stud number needs a second look, or '' when it doesn't.
+  function studNote(r) {
+    if (!hasStudProgress(r)) return '';
+    const notes = [];
+    if (r.last_stud_partial) {
+      notes.push(`Stud ${r.last_stud}'s arc fired, then the run stopped before it finished, ` +
+                 'so it is counted as welded.');
+    }
+    if (r.stud_progress_exact === false) {
+      notes.push('The controller could not be read when the run ended; this is from the ' +
+                 'last reading taken during the run and may be a stud behind. Check the plate.');
+    }
+    return notes.join(' ');
+  }
+
   function avg(list) {
     return list.length ? list.reduce((a, b) => a + b, 0) / list.length : null;
   }
@@ -221,12 +265,13 @@
       .then(data => {
         if (!data || !data.runs) return;
         _allRuns = data.runs;
+        _recipes = data.recipes || [];
         mgrRenderReports();
       })
       .catch(err => {
         console.error('Failed to fetch reports summary:', err);
         const tbody = document.getElementById('mgr-reports-tbody');
-        if (tbody) tbody.innerHTML = `<tr><td colspan="7" class="mgr-table-empty error">Failed to load reports history.</td></tr>`;
+        if (tbody) tbody.innerHTML = `<tr><td colspan="8" class="mgr-table-empty error">Failed to load reports history.</td></tr>`;
       });
   };
 
@@ -270,12 +315,13 @@
       `${counts.completed} of ${decided} completed` + (excluded.length ? ` · ${excluded.join(', ')} not counted` : '');
     document.getElementById('mgr-stat-avg-cycle').textContent = avgCycle === null ? '—' : avgCycle.toFixed(1) + 's';
     document.getElementById('mgr-history-count-badge').textContent = `${filtered.length} run${filtered.length !== 1 ? 's' : ''}`;
+    renderNextStud();
 
     const tbody = document.getElementById('mgr-reports-tbody');
     if (!tbody) return;
 
     if (filtered.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="7" class="mgr-table-empty">No production runs recorded for this filter.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="8" class="mgr-table-empty">No production runs recorded for this filter.</td></tr>`;
       return;
     }
 
@@ -289,6 +335,7 @@
           <td><strong>${esc(r.part_name || 'Untitled Part')}</strong>${tags ? `<div class="mgr-run-tags">${tags}</div>` : ''}</td>
           <td><span class="job-status-badge ${st.cls}">${esc(st.label)}</span></td>
           <td>${esc(r.cycles_done || 0)} / ${esc(r.cycles_target || 1)}</td>
+          <td>${esc(lastStudText(r))}${r.last_stud_partial || r.stud_progress_exact === false ? ' *' : ''}</td>
           <td>${runAvg === null ? '—' : runAvg.toFixed(1) + 's'}</td>
           <td>${durationOf(r)}</td>
           <td>
@@ -299,6 +346,28 @@
         </tr>
       `;
     }).join('');
+  }
+
+  // The picked part's stud_progress (app._stud_progress_from): written by its
+  // last live run, and what the Load modal will open on.
+  function renderNextStud() {
+    const card = document.getElementById('mgr-stat-next-stud-card');
+    const part = _activePartFilter === 'all' ? null : _recipes.find(r => r.id === _activePartFilter);
+    if (!part) { card.setAttribute('hidden', ''); return; }
+    card.removeAttribute('hidden');
+    const p = part.stud_progress;
+    const value = document.getElementById('mgr-stat-next-stud');
+    const note = document.getElementById('mgr-stat-next-stud-note');
+    if (!p) {
+      value.textContent = '1';
+      note.textContent = 'No live run recorded where it stopped';
+      return;
+    }
+    value.textContent = `${p.exact ? '' : '~'}${p.next_stud}`;
+    const after = p.last_stud === null || p.last_stud === undefined
+      ? 'no stud welded' : `after stud ${p.last_stud} of ${p.stud_count}`;
+    const when = p.ended_at ? ` · ${String(p.ended_at).replace('T', ' ')}` : '';
+    note.textContent = `Last live run: ${after}${when}`;
   }
 
   // Delegated so a run_id never has to be spliced into an inline handler.
@@ -385,6 +454,13 @@
     if (run.gate_mode) mode.push(`gate: ${run.gate_mode}`);
     if (run.start_stud > 1) mode.push(`from stud ${run.start_stud}`);
     set('mgr-modal-mode', mode.length ? mode.join(' · ') : '—');
+
+    set('mgr-modal-last-stud', lastStudText(run));
+    set('mgr-modal-next-stud', hasStudProgress(run) ? String(run.next_stud) : '—');
+    const studNoteEl = document.getElementById('mgr-modal-stud-note');
+    const noteText = studNote(run);
+    studNoteEl.textContent = noteText;
+    studNoteEl.hidden = !noteText;
 
     const errBox = document.getElementById('mgr-modal-error-box');
     if (run.error) {

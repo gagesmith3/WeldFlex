@@ -62,8 +62,14 @@ A fault cancels the program, and a run cannot be picked back up. To finish the
 part on the bed, run it again and set **Starting stud** in the **Load** modal to the
 next stud after the last one welded. Studs are counted from 1 in the order the
 part lists them. The first cycle starts there; any further cycles weld every
-stud. Left at 1, the default, a run welds the whole part. The job panel shows
+stud. Left at 1, a run welds the whole part. The job panel shows
 **FROM STUD N** for a resumed run.
+
+The app records where every part run stopped. The job panel shows **STUD N/M**
+while it runs and **NEXT N** once it ends, Reports has a **Last Stud** column
+and, with one part picked, a **Next Stud** card. After a **live** run the
+**Load** modal opens with Starting stud already set to the next stud, so a part
+stopped early picks up where it left off. Type 1 for a fresh plate.
 
 ## Install RPI Kiosk
 

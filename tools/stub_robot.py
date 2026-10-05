@@ -26,6 +26,12 @@ Each GetCurrentLine consumes one step; the last value repeats once the script is
 exhausted, the way a stopped program holds its final line. The line numbers to
 use are logged by the manager at launch ("loop_start=.. marker=..").
 
+System variables are held in memory, so the job manager's stud progress (slots
+11 and 12, cycle * 1000 + stud) can be played by hand:
+
+    python tools/stub_robot.py --sysvar 11=1023   # stud 23 of cycle 1 done
+    python tools/stub_robot.py --sysvar 12=1024   # arc fired on stud 24
+
 Only the methods the app actually calls over XML-RPC are implemented. Anything else
 returns [0] so an unexpected call fails loudly in the app rather than here.
 
@@ -92,6 +98,8 @@ class StubController:
         self.calls = 0
         self.line_script: list[int] = []
         self.line_step = 0
+        # System variables 1-20, as SetSysVarValue/GetSysVarValue see them.
+        self.sysvars: dict[int, float] = {}
 
         # --- port-8083 status feed state ---
         self.feed_on = True
@@ -126,6 +134,11 @@ class StubController:
         with self._lock:
             self.program_state = int(state)
         return f"program_state={state}"
+
+    def _ctl_sysvar(self, slot: int, value: float) -> str:
+        with self._lock:
+            self.sysvars[int(slot)] = float(value)
+        return f"sysvar {int(slot)} = {float(value):g}"
 
     def _ctl_lines(self, lines: list) -> str:
         with self._lock:
@@ -282,6 +295,17 @@ class StubController:
                 self.current_line += 1
             return [0, self.current_line]
 
+    def GetSysVarValue(self, slot):
+        self._maybe_hang("GetSysVarValue")
+        with self._lock:
+            return [0, self.sysvars.get(int(slot), 0.0)]
+
+    def SetSysVarValue(self, slot, value):
+        self._maybe_hang("SetSysVarValue")
+        with self._lock:
+            self.sysvars[int(slot)] = float(value)
+        return 0
+
     def GetRobotErrorCode(self):
         self._maybe_hang("GetRobotErrorCode")
         return [0, [0, 0]]
@@ -372,6 +396,7 @@ def serve() -> None:
     server.register_function(stub._ctl_state, "_ctl_state")
     server.register_function(stub._ctl_stats, "_ctl_stats")
     server.register_function(stub._ctl_lines, "_ctl_lines")
+    server.register_function(stub._ctl_sysvar, "_ctl_sysvar")
     server.register_function(stub._ctl_cycle, "_ctl_cycle")
     server.register_function(stub._ctl_feed, "_ctl_feed")
 
@@ -403,6 +428,9 @@ def control(args: argparse.Namespace, feed_setting: tuple[str, str] | None = Non
             print(proxy._ctl_cycle(loop_start, marker, cycles))
         elif args.lines is not None:
             print(proxy._ctl_lines([int(v) for v in args.lines.split(",") if v.strip()]))
+        elif args.sysvar is not None:
+            slot, value = args.sysvar.split("=", 1)
+            print(proxy._ctl_sysvar(int(slot), float(value)))
         elif feed_setting is not None:
             print(proxy._ctl_feed(*feed_setting))
         else:
@@ -435,6 +463,7 @@ def main() -> int:
     p.add_argument("--stats", action="store_true", help="print call stats")
     p.add_argument("--cycle", help="script a loop feed: LOOP_START:MARKER:CYCLES")
     p.add_argument("--lines", help="script an explicit line sequence, comma separated")
+    p.add_argument("--sysvar", help="set a system variable: SLOT=VALUE")
 
     feed = p.add_argument_group("port-8083 status feed")
     feed.add_argument("--feed-on", action="store_true", help="resume the stream")
@@ -453,7 +482,7 @@ def main() -> int:
 
     if any([args.hang, args.hang_forever, args.normal, args.stats,
             args.state is not None, args.cycle is not None, args.lines is not None,
-            feed_setting is not None]):
+            args.sysvar is not None, feed_setting is not None]):
         return control(args, feed_setting)
     serve()
     return 0

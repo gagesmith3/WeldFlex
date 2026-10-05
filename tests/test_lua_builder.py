@@ -14,13 +14,18 @@ from lua_builder import (
     PRESS_LBF_MAX,
     SINGLE_SHOT_TEMPLATE_PATH,
     TEMPLATE_PATH,
+    MAX_TAGGED_CYCLES,
+    MAX_TAGGED_STUDS,
+    STUD_TAG_CYCLE,
     WELD_PATH,
     WELD_PROGRAM_NAME,
     RunMode,
     build_io_monitor_lua,
     build_single_shot_lua,
     build_weldflex_lua,
+    check_stud_tag_limits,
     check_travel_heights,
+    decode_stud_tag,
     default_dsc_calibration,
     dynamic_stud_legs,
     format_lua_string,
@@ -684,18 +689,23 @@ def test_marker_line_really_is_the_boundary_dwell():
     assert built.loop_start_line < built.cycle_marker_line < built.gate_line
 
 
-def test_program_line_count_matches_the_built_text_and_stays_under_weld_lua():
-    """job_manager's CycleTracker uses program_line_count as a ceiling so a
+def _uploaded_weld_lua_lines():
+    return len(strip_lua_comments(WELD_PATH.read_text(encoding="utf-8")).splitlines())
 
-    NewDofile-aliased sample from inside weld.lua (which reports its own line
-    numbers, ~500 of them) can never be mistaken for a caller-file line. That
-    only works as long as weld.lua stays longer than any caller program — pin
-    both halves of the invariant here.
-    """
-    built = build_weldflex_lua([{"x": 1, "y": 2}] * 5, cycles=3, run_mode=LIVE)
+
+@pytest.mark.parametrize("n_studs", [0, 1, 41, 56, 300])
+def test_the_cycle_marker_is_numbered_past_every_weld_lua_line(n_studs):
+    """While weld.lua runs under NewDofile, GetCurrentLine reports weld.lua's
+    own line numbers. A marker inside that range read a weld.lua line as the
+    boundary dwell: on 2026-09-30 a 41-stud run (marker 180) was marked
+    completed 8 s in while the robot kept welding. The builder pads the marker
+    past weld.lua's last line, whatever the stud count."""
+    built = build_weldflex_lua([{"x": i, "y": i} for i in range(n_studs)], cycles=3,
+                               run_mode=LIVE)
     assert built.program_line_count == len(_lines(built))
-    weld_lua_lines = len(WELD_PATH.read_text(encoding="utf-8").splitlines())
-    assert built.program_line_count < weld_lua_lines
+    assert built.cycle_marker_line > _uploaded_weld_lua_lines()
+    assert built.loop_start_line < built.cycle_marker_line < built.gate_line
+    assert built.gate_line <= built.program_line_count
 
 
 @pytest.mark.parametrize("n_studs,cycles", [(0, 1), (1, 1), (5, 20), (40, 999)])
@@ -1896,15 +1906,106 @@ def test_single_shot_marker_line_really_is_the_boundary_dwell():
     assert built.loop_start_line < built.cycle_marker_line < built.gate_line
 
 
-def test_single_shot_program_line_count_stays_under_weld_lua():
-    """Same invariant as WeldFlex.lua's — see
-    test_program_line_count_matches_the_built_text_and_stays_under_weld_lua.
-    single_shot.lua has no inner stud loop, so it is even shorter, and the
-    margin against weld.lua's ~600 lines is even wider."""
+def test_single_shot_cycle_marker_is_numbered_past_every_weld_lua_line():
+    """Same rule as WeldFlex.lua's — see
+    test_the_cycle_marker_is_numbered_past_every_weld_lua_line."""
     built = build_single_shot_lua(1, 2, cycles=3, run_mode=LIVE)
     assert built.program_line_count == len(built.text.splitlines())
-    weld_lua_lines = len(WELD_PATH.read_text(encoding="utf-8").splitlines())
-    assert built.program_line_count < weld_lua_lines
+    assert built.cycle_marker_line > _uploaded_weld_lua_lines()
+    assert built.loop_start_line < built.cycle_marker_line < built.gate_line
+
+
+def test_the_padding_is_blank_and_sits_just_before_the_marker():
+    """Padding that executed anything would change the program; blank lines
+    don't. The loop body above it is untouched."""
+    built = build_weldflex_lua([{"x": 1, "y": 2}] * 3, cycles=2, run_mode=LIVE)
+    lines = _lines(built)
+    pad = lines[: built.cycle_marker_line - 1]
+    # Walk back from the marker over the blank run to the one comment heading it.
+    i = len(pad) - 1
+    while pad[i] == "":
+        i -= 1
+    assert pad[i].strip().startswith("--")
+    assert "weld.lua" in pad[i]
+    assert built.cycle_marker_line - 1 - i > 1
+
+
+# ---------------------------------------------------------------------------
+# Stud progress: system variables 11 (done) and 12 (fired)
+# ---------------------------------------------------------------------------
+
+def test_stud_tags_decode_to_cycle_and_stud():
+    assert decode_stud_tag(0) is None
+    assert decode_stud_tag(None) is None
+    assert decode_stud_tag(-1) is None
+    assert decode_stud_tag(1023) == (1, 23)
+    assert decode_stud_tag(1023.0) == (1, 23)
+    assert decode_stud_tag(12041) == (12, 41)
+    assert STUD_TAG_CYCLE == 1000
+
+
+def test_the_largest_tag_stays_exact_as_float32():
+    """The controller may keep system variables as float32: 24 bits of integer."""
+    biggest = MAX_TAGGED_CYCLES * STUD_TAG_CYCLE + MAX_TAGGED_STUDS
+    assert biggest < 2 ** 24
+
+
+def test_a_part_or_run_too_big_to_tag_is_refused():
+    check_stud_tag_limits(MAX_TAGGED_STUDS, MAX_TAGGED_CYCLES)
+    with pytest.raises(ValueError, match="at most 999 studs"):
+        check_stud_tag_limits(MAX_TAGGED_STUDS + 1, 1)
+    with pytest.raises(ValueError, match="at most 9999 cycles"):
+        check_stud_tag_limits(1, MAX_TAGGED_CYCLES + 1)
+    with pytest.raises(ValueError, match="at most 999 studs"):
+        build_weldflex_lua([{"x": 1, "y": 1}] * (MAX_TAGGED_STUDS + 1), cycles=1, run_mode=LIVE)
+
+
+def test_weldflex_lua_tags_each_stud_and_publishes_done_after_a_clean_weld():
+    """Slot 11 is written only after weld.lua returns without a fault, with the
+    tag weld.lua was handed; both slots are zeroed before anything moves."""
+    built = build_weldflex_lua([{"x": 1, "y": 2}] * 3, cycles=2, run_mode=LIVE)
+    text = built.text
+    assert "SV_STUD_DONE = 11" in text
+    assert "SV_STUD_FIRED = 12" in text
+    zero_done = text.index("setSysVar(SV_STUD_DONE, 0)")
+    zero_fired = text.index("setSysVar(SV_STUD_FIRED, 0)")
+    assert max(zero_done, zero_fired) < text.index("Lin(homewf")
+    tag = text.index("WELD_STUD_TAG = cycleIndex * 1000 + studIndex")
+    dofile = text.index('NewDofile("/fruser/weld.lua"')
+    fault_check = text.index("if WELD_FAULT == 1 then", dofile)
+    done = text.index("setSysVar(SV_STUD_DONE, WELD_STUD_TAG)")
+    assert tag < dofile < fault_check < done
+    # The fault branch breaks out before the done write.
+    assert "break" in text[fault_check:done]
+
+
+def test_weld_lua_publishes_fired_just_before_the_arc_and_only_with_a_tag():
+    text = WELD_PATH.read_text(encoding="utf-8")
+    assert "local SV_STUD_FIRED        = 12" in text
+    fire = text.index("local function fireWeld()")
+    dry_return = text.index("WELD_ARMED ~= 1", fire)
+    publish = text.index("pub(SV_STUD_FIRED, WELD_STUD_TAG)", fire)
+    trigger = text.index("writeDO(DO_WELD, 1)", fire)
+    # Live only (after the dry-run return), and before the trigger goes high.
+    assert dry_return < publish < trigger
+    guard = text.rindex('type(WELD_STUD_TAG) == "number"', fire, publish)
+    assert guard > dry_return
+
+
+def test_the_progress_slots_agree_with_robot_service():
+    import robot_service
+
+    assert robot_service.SV_STUD_DONE == 11
+    assert robot_service.SV_STUD_FIRED == 12
+    assert {11, 12} <= set(robot_service.JOB_TELEMETRY_SLOTS)
+    template = TEMPLATE_PATH.read_text(encoding="utf-8")
+    assert f"SV_STUD_DONE = {robot_service.SV_STUD_DONE}" in template
+    assert f"SV_STUD_FIRED = {robot_service.SV_STUD_FIRED}" in template
+    # Slot 11 is the caller's alone: weld.lua writing it would fake a done stud.
+    weld = WELD_PATH.read_text(encoding="utf-8")
+    slots = [int(n) for n in re.findall(r"local SV_\w+\s*=\s*(\d+)", weld)]
+    assert robot_service.SV_STUD_FIRED in slots
+    assert robot_service.SV_STUD_DONE not in slots
 
 
 @pytest.mark.parametrize("cycles", [1, 5, 999])

@@ -83,7 +83,15 @@ FORCE_FRESH_S = 0.5
 WELD_TELEMETRY_CALL_TIMEOUT_S = 3.0
 JOB_TELEMETRY_STUD_DI = 1
 JOB_TELEMETRY_READY_DI = 0
-JOB_TELEMETRY_SLOTS = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+# Stud progress, written by WeldFlex.lua (done) and weld.lua (fired): see
+# lua_builder.STUD_TAG_CYCLE. Read live for the job panel, and once more when a
+# job ends, since system variables outlive the program.
+SV_STUD_DONE = 11
+SV_STUD_FIRED = 12
+JOB_TELEMETRY_SLOTS = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, SV_STUD_DONE, SV_STUD_FIRED)
+# The end-of-job read of the two progress slots. Short: _finish retries from its
+# own thread when XML-RPC is still down after a stop mid force operation.
+STUD_PROGRESS_RPC_TIMEOUT_S = 1.0
 JOB_TELEMETRY_INTERVAL_S = 0.25
 
 _WELD_PHASES = {
@@ -118,6 +126,16 @@ _WELD_GUARD_CODES = {
     9: "not applied",
 }
 _WELD_GUARD_APPLIED_CODES = frozenset({1, 2, 3})
+
+
+def _tag(value: float | None) -> int | None:
+    """A stud-progress system variable as an int tag, None when unread."""
+    if value is None:
+        return None
+    try:
+        return max(0, int(round(float(value))))
+    except (TypeError, ValueError):
+        return None
 
 
 @dataclass(frozen=True)
@@ -183,6 +201,10 @@ class UniversalRobotState:
     collision_guard_label: str | None = None
     collision_guard_applied: bool = False
     target_press_lbf: float | None = None
+
+    # Stud progress tags (s_var_11/12), raw: cycle * 1000 + stud, 0 = none yet.
+    stud_done_tag: int | None = None
+    stud_fired_tag: int | None = None
 
     sampled_ts: float = 0.0
     generation: int | None = None
@@ -474,6 +496,8 @@ class WeldFlexRobotService:
         sv_press_lbf = telemetry.sysvar(8) if telemetry_current else None
         sv_hold_travel = telemetry.sysvar(9) if telemetry_current else None
         sv_jolt_travel = telemetry.sysvar(10) if telemetry_current else None
+        sv_stud_done = telemetry.sysvar(SV_STUD_DONE) if telemetry_current else None
+        sv_stud_fired = telemetry.sysvar(SV_STUD_FIRED) if telemetry_current else None
 
         phase_code = None
         packed_di1 = None
@@ -562,6 +586,8 @@ class WeldFlexRobotService:
             collision_guard_label=guard_label,
             collision_guard_applied=guard_applied,
             target_press_lbf=sv_press_lbf if (sv_press_lbf is not None and sv_press_lbf > 0) else None,
+            stud_done_tag=_tag(sv_stud_done),
+            stud_fired_tag=_tag(sv_stud_fired),
             sampled_ts=sampled_ts,
             generation=snap.generation,
         )
@@ -587,6 +613,38 @@ class WeldFlexRobotService:
     def stop_job_telemetry(self) -> None:
         """Stop the JobManager telemetry sampler while retaining its last sample."""
         self.stop_weld_telemetry()
+
+    def reset_stud_progress(self) -> None:
+        """Zero the stud-progress slots before a run, so nothing the last run
+        left there can be read as this one's. WeldFlex.lua zeroes them again at
+        its first line. Raw proxy calls, as in weld_probe: the SDK wrappers
+        retry a socket error forever."""
+        for slot in (SV_STUD_DONE, SV_STUD_FIRED):
+            resp = self._call(
+                lambda robot, slot=slot: robot.robot.SetSysVarValue(int(slot), 0.0),
+                retries=1,
+            )
+            err_code, _ = self._unpack(resp)
+            if err_code != 0:
+                raise RuntimeError(f"SetSysVarValue({slot}) failed (code {err_code})")
+
+    def read_stud_progress(self) -> tuple[int, int]:
+        """(done_tag, fired_tag) straight from the controller. Raises on any
+        failure, including XML-RPC still being down after a force operation."""
+        tags = []
+        for slot in (SV_STUD_DONE, SV_STUD_FIRED):
+            resp = self._call(
+                lambda robot, slot=slot: robot.robot.GetSysVarValue(int(slot)),
+                retries=1,
+                timeout=STUD_PROGRESS_RPC_TIMEOUT_S + 0.25,
+                rpc_timeout=STUD_PROGRESS_RPC_TIMEOUT_S,
+            )
+            err_code, value = self._unpack(resp)
+            tag = _tag(value) if err_code == 0 else None
+            if tag is None:
+                raise RuntimeError(f"GetSysVarValue({slot}) failed (code {err_code})")
+            tags.append(tag)
+        return tags[0], tags[1]
 
     def start_weld_telemetry(
         self,

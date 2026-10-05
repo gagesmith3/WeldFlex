@@ -211,6 +211,10 @@ local SV_WELD_READY   = 7
 local SV_PRESS_LBF    = 8
 local SV_PRESS_HOLD_TRAVEL = 9
 local SV_WELD_JOLT_TRAVEL  = 10
+-- The caller's WELD_STUD_TAG (cycle * 1000 + stud), written just before the arc
+-- so a run stopped after it knows that stud is on the plate. WeldFlex.lua owns
+-- slot 11, the last stud whose whole sequence finished.
+local SV_STUD_FIRED        = 12
 
 local GUARD_RELEASED   = 0
 local GUARD_CUSTOM     = 1
@@ -720,6 +724,13 @@ local function fireWeld()
         end
     else
         print("[WELD] DI check off: firing without the DI0/DI1 pre-fire check.")
+    end
+
+    -- Before the pulse, not after: a stop in between then counts a stud that
+    -- didn't weld (one stud skipped on the resume) rather than missing one that
+    -- did (a new stud pressed onto it). Single Shot sets no tag.
+    if type(WELD_STUD_TAG) == "number" then
+        pub(SV_STUD_FIRED, WELD_STUD_TAG)
     end
 
     print(string.format("[WELD] FIRING ARC: DO%d output set HIGH for %d ms", DO_WELD, WELD_PULSE_MS))

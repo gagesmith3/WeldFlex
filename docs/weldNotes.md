@@ -78,6 +78,23 @@ Written via `pub(slot, value)` using `SetSysVarvalue` / `SetSysVarValue`:
   tool actually moved while the arc fired. A dry run never fires the arc, so
   its number is the sensor's own noise floor for comparison against a live
   shot. Diagnostic only.
+- **`s_var_11` (stud done, written by `WeldFlex.lua`)**: the last stud whose
+  whole `weld.lua` sequence finished, as `cycle * 1000 + stud`. The caller
+  writes it after `NewDofile` returns with `WELD_FAULT ~= 1`. `weld.lua` never
+  touches it.
+- **`s_var_12` (`SV_STUD_FIRED`)**: the caller's `WELD_STUD_TAG`, same
+  encoding, written **just before** the weld trigger goes high (live runs
+  only; a dry run returns before it, and Single Shot sets no tag). Before the
+  pulse on purpose: a stop between the two counts a stud that didn't weld,
+  which skips one stud on the resume, rather than missing one that did, which
+  presses a new stud onto it. It also covers a fault after the arc, such as a
+  retract trip, when `s_var_11` never gets written.
+
+`WeldFlex.lua` zeroes both at its first line, and the job manager zeroes them
+before `ProgramRun`. System variables outlive the program, so when a part run
+ends the host reads the two slots once more and records where the run got to
+(`last_stud`, `next_stud` in `run_history.jsonl`). See
+`job_manager.stud_progress()`.
 
 ### Beacon Lines (Fallback)
 After a fault, the program parks ~3s on a unique `WaitMs` line site (`1`, `4`, `5`, `9`, `10`, `11`) accessible via RPC `GetCurrentLine()`.

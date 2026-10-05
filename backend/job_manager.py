@@ -44,7 +44,9 @@ from lua_builder import (
     RunMode,
     build_single_shot_lua,
     build_weldflex_lua,
+    check_stud_tag_limits,
     check_travel_heights,
+    decode_stud_tag,
     parse_start_stud,
     strip_lua_comments,
 )
@@ -96,6 +98,13 @@ COMMAND_SETTLE_S = 2.0
 # a stale "paused" is exactly what banked phantom cycles before.
 EXTERNAL_ADOPT_S = 1.0
 
+# When a part run ends, the last stud it reached is read from the controller
+# (system variables outlive the program). A stop in the middle of a force
+# operation leaves XML-RPC down for a while after, so the read is retried from a
+# thread for up to this long before the run is recorded from the last sample.
+FINAL_PROGRESS_READ_S = 15.0
+FINAL_PROGRESS_RETRY_S = 0.5
+
 EVENTS_MAX_BYTES = 512 * 1024
 HISTORY_TAIL_LINES = 500
 
@@ -131,6 +140,32 @@ def _now_iso() -> str:
     # Local time on purpose: the operator reads these on the shop floor, and the
     # today-stats rollup matches on a local YYYY-MM-DD prefix.
     return datetime.now().isoformat(timespec="seconds")
+
+
+def stud_progress(done_tag: Any, fired_tag: Any, *, start_stud: int, stud_count: int) -> dict:
+    """Where a part run got to, from its two stud-progress tags.
+
+    `done_tag` is the last stud whose whole weld.lua sequence finished,
+    `fired_tag` the last stud weld.lua fired the arc on (live runs only). The
+    later of the two is the last stud: a stud whose arc fired is on the plate
+    even if the run stopped before its retract and feed. `last_stud_partial`
+    says that is what happened. `next_stud` is where the next run picks up:
+    the stud after, 1 once the last stud of the part is done, and this run's
+    own start when it got no stud that far.
+    """
+    done = decode_stud_tag(done_tag)
+    fired = decode_stud_tag(fired_tag)
+    reached = [tag for tag in (done, fired) if tag is not None]
+    if not reached:
+        return {"last_stud": None, "last_stud_cycle": None,
+                "last_stud_partial": False, "next_stud": int(start_stud)}
+    cycle, stud = max(reached)
+    return {
+        "last_stud": stud,
+        "last_stud_cycle": cycle,
+        "last_stud_partial": fired is not None and (done is None or fired > done),
+        "next_stud": 1 if stud >= stud_count else stud + 1,
+    }
 
 
 class CycleTracker:
@@ -176,6 +211,12 @@ class CycleTracker:
     documented-but-unfixed blocker (see `.claude/skills/weldflex-app/references/
     state-and-session.md`) that shipped anyway with the weld.lua hookup
     (2026-08-03) and surfaced live on `weld_faceplate.lua` (2026-08-06).
+
+    The ceiling alone left a gap: a weld.lua line between the marker and the
+    caller's length still read as the boundary dwell. A 41-stud program put
+    its marker at 180, inside weld.lua, and on 2026-09-30 a polygon run was
+    marked completed 8 s in while the robot kept welding. `lua_builder` now
+    pads the marker past weld.lua's last line, so that range is empty.
     """
 
     def __init__(
@@ -276,6 +317,15 @@ class JobSnapshot:
     cycle_times: tuple[float, ...] = ()
     current_cycle_s: float | None = None
     elapsed_s: float | None = None
+    # Part runs only (see stud_progress()). Live from the telemetry sample
+    # while the job runs; from the controller itself once it has ended.
+    # `stud_progress_exact` is None while running, then whether the end-of-job
+    # read reached the controller or the last sample had to stand in.
+    last_stud: int | None = None
+    last_stud_cycle: int | None = None
+    last_stud_partial: bool = False
+    next_stud: int | None = None
+    stud_progress_exact: bool | None = None
 
     @property
     def active(self) -> bool:
@@ -366,6 +416,14 @@ class _Session:
     # How long the controller has reported its current program state.
     observed_program: str | None = None
     observed_since: float | None = None
+    # The stud-progress tags as sampled, kept as a running max. Samples are
+    # only taken once `progress_armed`: straight away when the host zeroed the
+    # slots before the run, else once the program's own zeroing is seen.
+    stud_done_tag: int = 0
+    stud_fired_tag: int = 0
+    progress_armed: bool = False
+    # Set once, when the job has ended and the progress is final.
+    progress: dict | None = None
 
     @property
     def cycles_done(self) -> int:
@@ -404,6 +462,10 @@ class JobManager:
         self._monitor: threading.Thread | None = None
         self._stop = threading.Event()
         self._file_lock = threading.Lock()
+        # A finished run still waiting on its end-of-job stud read (_finish).
+        # The next launch waits for it, since it zeroes the same slots.
+        self._finalizer: threading.Thread | None = None
+        self._finalize_now = threading.Event()
 
     # ---------------- commands ----------------
 
@@ -474,6 +536,7 @@ class JobManager:
                                              lambda name: self._robot.teach_point_pose(name))
                 check_base_keepout(resolve_studs(studs, origin_corner, corner_ref))
                 check_travel_heights(safe_z if retract_z is None else retract_z, search_z, safe_z)
+                check_stud_tag_limits(len(studs), max(1, int(cycles)))
             start_stud = parse_start_stud(start_stud, len(studs))
         except ValueError as exc:
             raise JobError(str(exc)) from None
@@ -536,6 +599,9 @@ class JobManager:
             sess.error = None
             sess.ended_at = None
             sess.ended_ts = None
+            sess.stud_done_tag = sess.stud_fired_tag = 0
+            sess.progress_armed = False
+            sess.progress = None
             sess.started_at = _now_iso()
             sess.started_ts = time.time()
             run_id = sess.run_id
@@ -724,7 +790,14 @@ class JobManager:
         self._stop.set()
         if run_id:
             log.warning("shutting down with run_id=%s still active", run_id)
-            self._finish(run_id, JobState.INTERRUPTED.value, error="Application shut down")
+            # No end-of-job read on the way out: the last sample stands in.
+            self._finish(run_id, JobState.INTERRUPTED.value, error="Application shut down",
+                         read_progress=False)
+        # A run still waiting on its stud read is written from its last sample.
+        self._finalize_now.set()
+        finalizer = self._finalizer
+        if finalizer is not None and finalizer.is_alive():
+            finalizer.join(timeout=2.0)
         monitor = self._monitor
         if monitor is not None and monitor.is_alive():
             monitor.join(timeout=2.0)
@@ -768,7 +841,20 @@ class JobManager:
             cycle_times=tuple(sess.cycle_times),
             current_cycle_s=current_cycle_s,
             elapsed_s=elapsed_s,
+            **self._progress_locked(sess),
         )
+
+    @staticmethod
+    def _progress_locked(sess: _Session) -> dict:
+        """The snapshot's stud-progress fields: none until a part run launches,
+        then live from the samples, then final once the job has ended."""
+        if sess.kind != "part" or sess.launched_ts is None:
+            return {}
+        if sess.progress is not None:
+            return dict(sess.progress)
+        return {**stud_progress(sess.stud_done_tag, sess.stud_fired_tag,
+                                start_stud=sess.start_stud, stud_count=len(sess.studs)),
+                "stud_progress_exact": None}
 
     def _program_state(self, snap: Any) -> str:
         if self._state_map is None:
@@ -779,6 +865,11 @@ class JobManager:
 
     def _launch(self, run_id: str) -> None:
         """Build → upload → run, on our own thread. Any failure ends the job."""
+        # The last run may still be reading where it stopped; this one is about
+        # to zero those same slots. Bounded by that read's own deadline.
+        finalizer = self._finalizer
+        if finalizer is not None and finalizer.is_alive():
+            finalizer.join(FINAL_PROGRESS_READ_S + 2.0)
         try:
             tuning = self._weld_tuning()
             with self._lock:
@@ -875,6 +966,19 @@ class JobManager:
                 except OSError:
                     pass
 
+            # Zero the stud-progress slots before the sampler starts, so the
+            # last run's numbers are never read as this one's. Not fatal: the
+            # program zeroes them at its first line, and until a zero is seen
+            # the samples are ignored.
+            progress_armed = True
+            if kind == "part":
+                try:
+                    self._robot.reset_stud_progress()
+                except Exception as exc:  # noqa: BLE001 - recorded, not fatal
+                    progress_armed = False
+                    log.warning("stud progress reset failed run_id=%s: %s", run_id, exc)
+                    self._event(run_id, "progress_reset_failed", {"error": str(exc)})
+
             self._robot.start_job_telemetry()
             self._robot.run_program(uploaded)
 
@@ -894,6 +998,7 @@ class JobManager:
                 sess.state = JobState.RUNNING.value
                 sess.launched_ts = time.time()
                 sess.cycle_start_ts = time.time()
+                sess.progress_armed = progress_armed
 
             log.info("job running run_id=%s program=%s cycles=%d loop_start=%d marker=%d "
                      "gate=%d boundary_ms=%d search_mms=%g press_gain=%g",
@@ -965,6 +1070,8 @@ class JobManager:
         self, sess: _Session, snap: Any, program_state: str, events: list
     ) -> tuple | None:
         """One monitor tick. Returns a deferred action for the caller to run unlocked."""
+        self._sample_progress_locked(sess, snap)
+
         # The session times the outage itself: UniversalRobotState carries no
         # `since_ts`, and reading one off it made every single faulted tick an
         # instant interrupt (live on the Pi, 2026-09-23, 1.8 s into a run).
@@ -1072,6 +1179,24 @@ class JobManager:
             return ("finish", JobState.ERROR.value, "Program never reported running")
 
         return None
+
+    @staticmethod
+    def _sample_progress_locked(sess: _Session, snap: Any) -> None:
+        """Fold one telemetry sample's stud-progress tags into the session."""
+        if sess.kind != "part" or sess.launched_ts is None:
+            return
+        done = getattr(snap, "stud_done_tag", None)
+        fired = getattr(snap, "stud_fired_tag", None)
+        if not isinstance(done, int) or not isinstance(fired, int):
+            return
+        if not sess.progress_armed:
+            # The host's zeroing failed: whatever the last run left is still
+            # there until the program's first line clears it.
+            if done or fired:
+                return
+            sess.progress_armed = True
+        sess.stud_done_tag = max(sess.stud_done_tag, done)
+        sess.stud_fired_tag = max(sess.stud_fired_tag, fired)
 
     def _adopt_external_locked(
         self, sess: _Session, program_state: str, now: float, events: list
@@ -1199,8 +1324,18 @@ class JobManager:
                 sess.expect_until = time.time() + COMMAND_SETTLE_S
         self._event(run_id, "gated", {"error": None, "held_by": held_by})
 
-    def _finish(self, run_id: str, status: str, error: str | None = None) -> JobSnapshot:
-        """Move to a terminal state exactly once, and write the history record."""
+    def _finish(
+        self, run_id: str, status: str, error: str | None = None, *, read_progress: bool = True
+    ) -> JobSnapshot:
+        """Move to a terminal state exactly once, and write the history record.
+
+        A part run's record also says the last stud it reached, read from the
+        controller once the program has ended (system variables outlive it).
+        After a stop mid force operation XML-RPC can stay down for seconds, so
+        when the first read fails a `job-finalize` thread keeps trying for
+        FINAL_PROGRESS_READ_S and writes the record then, falling back to the
+        last sample. The job is terminal either way; only the record waits.
+        """
         self._stop.set()
         with self._lock:
             sess = self._session
@@ -1241,19 +1376,83 @@ class JobManager:
                 "stud_type": sess.stud_type,
                 "substrate": sess.substrate,
             }
+            tracked = sess.kind == "part" and sess.launched_ts is not None
+            sampled = (sess.stud_done_tag, sess.stud_fired_tag)
+            where = (sess.start_stud, len(sess.studs))
             snap = self._snapshot_locked()
 
         self._robot.stop_job_telemetry()
         log.info("job %s run_id=%s cycles=%d/%d error=%s",
                  status, run_id, record["cycles_done"], record["cycles_target"], error)
         self._event(run_id, status, {"error": error, "cycles_done": record["cycles_done"]})
+        if not tracked:
+            self._write_record(record)
+            return snap
+
+        tags = self._read_progress(run_id) if read_progress else None
+        if tags is None and read_progress:
+            self._finalize_now.clear()
+            self._finalizer = threading.Thread(
+                target=self._finalize_later, args=(run_id, record, sampled, where),
+                daemon=True, name="job-finalize",
+            )
+            self._finalizer.start()
+            return snap
+        self._complete_record(run_id, record, tags, sampled, where)
+        return self.snapshot()
+
+    def _read_progress(self, run_id: str) -> tuple[int, int] | None:
+        try:
+            return self._robot.read_stud_progress()
+        except Exception as exc:  # noqa: BLE001 - retried, then the sample stands in
+            log.info("stud progress read failed run_id=%s: %s", run_id, exc)
+            return None
+
+    def _finalize_later(self, run_id: str, record: dict, sampled: tuple[int, int],
+                        where: tuple[int, int]) -> None:
+        """Keep trying the end-of-job stud read, then write the record."""
+        tags = None
+        try:
+            deadline = time.monotonic() + FINAL_PROGRESS_READ_S
+            while tags is None and time.monotonic() < deadline:
+                if self._finalize_now.wait(FINAL_PROGRESS_RETRY_S):
+                    break  # shutting down
+                tags = self._read_progress(run_id)
+        finally:
+            self._complete_record(run_id, record, tags, sampled, where)
+
+    def _complete_record(self, run_id: str, record: dict, tags: tuple[int, int] | None,
+                         sampled: tuple[int, int], where: tuple[int, int]) -> None:
+        """Add the stud progress to a finished part run's record and write it.
+
+        `tags` is the controller's own reading, None when it couldn't be read.
+        The samples only ever add to it: they can't be ahead of a real read.
+        """
+        exact = tags is not None
+        done, fired = sampled
+        if exact:
+            done, fired = max(done, tags[0]), max(fired, tags[1])
+        start_stud, stud_count = where
+        progress = {**stud_progress(done, fired, start_stud=start_stud, stud_count=stud_count),
+                    "stud_progress_exact": exact}
+        record.update(progress)
+        with self._lock:
+            sess = self._session
+            if sess is not None and sess.run_id == run_id:
+                sess.progress = progress
+        log.info("stud progress run_id=%s last=%s cycle=%s partial=%s next=%s exact=%s",
+                 run_id, progress["last_stud"], progress["last_stud_cycle"],
+                 progress["last_stud_partial"], progress["next_stud"], exact)
+        self._event(run_id, "stud_progress", progress)
+        self._write_record(record)
+
+    def _write_record(self, record: dict) -> None:
         self._append_line(self._history_path, record)
         if self._on_finish is not None:
             try:
                 self._on_finish(record)
             except Exception:  # noqa: BLE001
-                log.exception("on_finish callback failed run_id=%s", run_id)
-        return snap
+                log.exception("on_finish callback failed run_id=%s", record.get("run_id"))
 
     # ---------------- persistence ----------------
 

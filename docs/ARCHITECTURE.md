@@ -42,8 +42,9 @@ directly, and no run state lives in `app.py`.
 2. **Prompted for cycle count, starting stud and Live or Dry** — the
    `#run-modal` block in [`parts.html`](../backend/templates/parts.html).
    Neither mode is preselected; Run stays disabled until one is tapped.
-   Starting stud defaults to 1 and is only changed to resume a part that
-   faulted partway (see below).
+   Starting stud opens on the stud after the one the part's last live run
+   stopped on (the recipe's `stud_progress`), else 1; it is changed to resume
+   a part partway (see below).
 3. **Job is loaded into the Job Manager** — `POST /ui/job/load` in
    [`app.py`](../backend/app.py) calls `JobManager.load()`, which queues the
    part and redirects the browser to `/operator`.
@@ -54,7 +55,9 @@ directly, and no run state lives in `app.py`.
    snapshot every 250 ms and banks a cycle when `GetCurrentLine` crosses the
    generated program's loop/marker lines.
 6. **Job completes** — a terminal state is recorded once, and the run is appended
-   to `run_history.jsonl`.
+   to `run_history.jsonl`. A part run's record also says the last stud it
+   reached and where the next run picks up, read from the controller after the
+   program ends (see "A run records the last stud it reached" below).
 
 Because progress is driven by the manager's own thread rather than browser
 polling, **a job keeps advancing with the kiosk tab closed** — that is the
@@ -128,9 +131,23 @@ Consequences worth knowing:
   `--{{START_STUD}}` publishes it and `WeldFlex.lua` starts **the first cycle
   only** there; every later cycle welds the whole list, since those are new
   parts. The job panel and the run history carry a "from stud N" tag. It is a
-  per-run value like the cycle count, never saved on the recipe, and the
-  operator supplies the number: the app still does not record which stud a run
-  stopped on. Single Shot does not take one.
+  per-run value like the cycle count; what the recipe keeps is only where its
+  last live run stopped (next bullet), which the modal offers as the default.
+  Single Shot does not take one.
+- **A run records the last stud it reached** (2026-10-05). `WeldFlex.lua`
+  writes system variable 11 after each stud's `weld.lua` sequence finishes,
+  and `weld.lua` writes 12 just before the arc, both as `cycle * 1000 + stud`.
+  The job manager zeroes them before the run, samples them while it runs (the
+  job panel's "stud N/M") and reads them again once it ends, since system
+  variables outlive the program. A stud whose arc fired counts as welded even
+  if the run stopped before its retract. Each part run's history record gets
+  `last_stud`, `last_stud_cycle`, `last_stud_partial`, `next_stud` and
+  `stud_progress_exact` (false when the controller couldn't be read at the end
+  and the last sample stood in). A **live** run also writes the recipe's
+  `stud_progress`, which the Load modal opens on and Reports shows as "Next
+  stud"; a dry run never moves it, and saving the part with different studs
+  drops it. This is what the trade-show flow uses: stop a part early to save
+  plate, and the next Load picks up after the last stud.
 - **Single Shot uses the same machinery.** `JobManager.load(kind="single_shot")`
   builds `programs/single_shot.lua` with `build_single_shot_lua`: one cycle,
   one target from the `"system": "single_shot"` record in `recipes.json`, no

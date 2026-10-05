@@ -869,3 +869,76 @@ def test_upload_program_succeeds_through_both_steps(monkeypatch, tmp_path):
     service = _upload_service(monkeypatch, rpc, lambda r, host, path: FileTransferResult("ok"))
     assert service.upload_program(str(_lua(tmp_path)), replace=True) == "goto.lua"
     assert rpc.calls == [("LuaUpLoadUpdate", "goto.lua")]
+
+
+# --- stud progress (system variables 11 and 12) ---------------------------
+
+
+def test_the_stud_progress_slots_reach_the_universal_state(monkeypatch):
+    service = WeldFlexRobotService("127.0.0.1")
+    monkeypatch.setattr(service, "snapshot", lambda: _connected_snapshot(12))
+    monkeypatch.setattr(service, "_weld_telemetry", WeldTelemetrySnapshot(
+        sampled_ts=time.time(),
+        generation=12,
+        sysvars=((1, 60.0), (11, 1023.0), (12, 1024.0)),
+    ))
+    state = service.get_universal_state()
+    assert (state.stud_done_tag, state.stud_fired_tag) == (1023, 1024)
+
+
+def test_stale_stud_progress_is_no_reading(monkeypatch):
+    service = WeldFlexRobotService("127.0.0.1")
+    monkeypatch.setattr(service, "snapshot", lambda: _connected_snapshot(12))
+    monkeypatch.setattr(service, "_weld_telemetry", WeldTelemetrySnapshot(
+        sampled_ts=time.time() - 5.0,
+        generation=12,
+        sysvars=((11, 1023.0), (12, 1024.0)),
+    ))
+    state = service.get_universal_state()
+    assert (state.stud_done_tag, state.stud_fired_tag) == (None, None)
+
+
+def test_the_job_sampler_reads_the_stud_progress_slots():
+    from robot_service import JOB_TELEMETRY_SLOTS, SV_STUD_DONE, SV_STUD_FIRED
+
+    assert JOB_TELEMETRY_SLOTS[-2:] == (SV_STUD_DONE, SV_STUD_FIRED) == (11, 12)
+
+
+def test_stud_progress_is_zeroed_and_read_on_the_raw_proxy(monkeypatch):
+    """Raw proxy calls, as in weld_probe: the SDK wrappers retry forever."""
+    service = WeldFlexRobotService("127.0.0.1")
+    held = {11: 1023.0, 12: 1024.0}
+    calls = []
+
+    class RawRobot:
+        def SetSysVarValue(self, slot, value):
+            calls.append(("set", slot, value))
+            held[slot] = value
+            return 0
+
+        def GetSysVarValue(self, slot):
+            calls.append(("get", slot))
+            return [0, held[slot]]
+
+    monkeypatch.setattr(service, "_call", lambda fn, **kw: fn(SimpleNamespace(robot=RawRobot())))
+
+    assert service.read_stud_progress() == (1023, 1024)
+    service.reset_stud_progress()
+    assert held == {11: 0.0, 12: 0.0}
+    assert service.read_stud_progress() == (0, 0)
+    assert ("set", 11, 0.0) in calls and ("set", 12, 0.0) in calls
+
+
+@pytest.mark.parametrize("response", [[-4, 0], (14,), None])
+def test_a_failed_stud_progress_read_raises(monkeypatch, response):
+    service = WeldFlexRobotService("127.0.0.1")
+    monkeypatch.setattr(service, "_call", lambda fn, **kw: response)
+    with pytest.raises(RuntimeError, match="GetSysVarValue"):
+        service.read_stud_progress()
+
+
+def test_a_refused_stud_progress_reset_raises(monkeypatch):
+    service = WeldFlexRobotService("127.0.0.1")
+    monkeypatch.setattr(service, "_call", lambda fn, **kw: -1)
+    with pytest.raises(RuntimeError, match="SetSysVarValue"):
+        service.reset_stud_progress()

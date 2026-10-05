@@ -150,8 +150,9 @@ def test_the_run_modal_asks_for_a_starting_stud_that_defaults_to_the_first(run_a
     assert field, "the run modal has no Starting Stud field"
     for attribute in ('type="text"', 'name="start_stud"', 'value="1"', 'data-kbd="num"'):
         assert attribute in field.group(0)
-    # Reopening the modal puts it back to 1, whatever the last run used.
-    assert "getElementById('run-modal-start-stud').value = '1'" in html
+    # Reopening the modal puts it back to 1 unless the part's last live run
+    # recorded where to pick up (tests/test_app_stud_progress.py).
+    assert "getElementById('run-modal-start-stud').value = String(_runResume ? _runResume.next_stud : 1)" in html
     assert re.search(r'<button[^>]*\bjs-table-run\b[^>]*\bdata-stud-count="3"', html)
     assert "fd.append('start_stud', startStud)" in html
 

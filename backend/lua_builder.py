@@ -109,6 +109,20 @@ PAUSE_GATE_CODE = 0
 GATE_LOOP_VAR = "cycleIndex"
 GATE_COUNT_VAR = "cycleCount"
 
+# Stud progress, published as system variables 11 and 12 (weld.lua's own
+# telemetry has 1-10): WeldFlex.lua writes the last stud whose whole weld.lua
+# sequence finished, and weld.lua the last stud it fired the arc on. Both hold a
+# stud tag, cycle * STUD_TAG_CYCLE + stud, and 0 until a stud gets that far in
+# the run. A tag stays an exact integer even if the controller keeps system
+# variables as float32 (2^24), which is what the two limits below guarantee.
+STUD_TAG_CYCLE = 1000
+MAX_TAGGED_STUDS = STUD_TAG_CYCLE - 1
+MAX_TAGGED_CYCLES = 9999
+
+# How far past weld.lua's last line the caller's cycle boundary is pushed. See
+# _pad_past_sub_file().
+SUB_FILE_LINE_MARGIN = 10
+
 
 def _env_int(name: str, default: int) -> int:
     try:
@@ -286,10 +300,11 @@ class BuiltProgram:
     boundary_ms: int
     program_name: str = PROGRAM_NAME
     # Total line count of this program's own text. `GetCurrentLine` reports
-    # weld.lua's *own* line numbers while it runs under NewDofile (weld.lua is
-    # ~500 lines; this program is ~100), so CycleTracker uses this as a ceiling
-    # to tell a real caller-file sample from an aliased sub-file one. See
-    # CycleTracker's docstring.
+    # weld.lua's *own* line numbers while it runs under NewDofile, so
+    # CycleTracker uses this as a ceiling to tell a real caller-file sample from
+    # an aliased sub-file one. The builder also pads the cycle marker past
+    # weld.lua's last line (_pad_past_sub_file), which closes the range between
+    # marker and ceiling. See CycleTracker's docstring.
     program_line_count: int = 0
     # The stud the first cycle starts at, counted from 1 (parse_start_stud).
     start_stud: int = 1
@@ -354,6 +369,51 @@ def _gate_rows(gate_mode: str, indent: str, gate_di: int, gate_timeout_ms: int) 
             f"{indent}end",
         ]
     return [f"{indent}-- Inter-cycle gate: none (gate_mode=none)."]
+
+
+def check_stud_tag_limits(stud_count: int, cycles: int) -> None:
+    """Refuse a part or cycle count too big for a stud tag (STUD_TAG_CYCLE)."""
+    if stud_count > MAX_TAGGED_STUDS:
+        raise ValueError(f"A part can have at most {MAX_TAGGED_STUDS} studs; this one has {stud_count}")
+    if cycles > MAX_TAGGED_CYCLES:
+        raise ValueError(f"A run can be at most {MAX_TAGGED_CYCLES} cycles, got {cycles}")
+
+
+def decode_stud_tag(value: float | int | None) -> tuple[int, int] | None:
+    """(cycle, stud) from a stud-progress system variable, or None for 0/unset."""
+    if value is None:
+        return None
+    try:
+        tag = int(round(float(value)))
+    except (TypeError, ValueError):
+        return None
+    if tag <= 0:
+        return None
+    return divmod(tag, STUD_TAG_CYCLE)
+
+
+def weld_line_count() -> int:
+    """weld.lua's line count as uploaded. strip_lua_comments keeps the count."""
+    return len(strip_lua_comments(WELD_PATH.read_text(encoding="utf-8")).splitlines())
+
+
+def _pad_past_sub_file(out: list[str], indent: str) -> None:
+    """Pad `out` so the next line appended is numbered past every weld.lua line.
+
+    While weld.lua runs under NewDofile, GetCurrentLine reports weld.lua's own
+    line numbers. CycleTracker ignores a sample past the caller's length, but a
+    weld.lua line between the cycle marker and that length read as the boundary
+    dwell. A 41-stud program's marker sat at 180, inside weld.lua, and on
+    2026-09-30 a polygon run was marked completed 8 s in while the robot kept
+    welding. With the marker past weld.lua's last line, no weld.lua line can
+    reach it. Blank lines never execute.
+    """
+    target = weld_line_count() + SUB_FILE_LINE_MARGIN
+    if len(out) + 1 > target:
+        return
+    out.append(f"{indent}-- Blank lines: the cycle boundary must be numbered past weld.lua's last line.")
+    while len(out) + 1 <= target:
+        out.append("")
 
 
 def parse_start_stud(value: int | str | None, stud_count: int) -> int:
@@ -520,6 +580,7 @@ def build_weldflex_lua(
     cycles = int(cycles)
     if cycles < 1:
         raise ValueError(f"cycles must be >= 1, got {cycles}")
+    check_stud_tag_limits(len(studs), cycles)
     studs = resolve_studs(studs, origin_corner, corner_ref)
     check_base_keepout(studs)
     start_stud_val = parse_start_stud(start_stud, len(studs))
@@ -619,6 +680,7 @@ def build_weldflex_lua(
             out.append(line.replace("--{{LOOP_START}}", "-- cycle loop"))
             loop_start_line = len(out)
         elif "--{{CYCLE_MARKER}}" in line:
+            _pad_past_sub_file(out, indent)
             out.append(line.replace("--{{CYCLE_MARKER}}", "-- cycle boundary"))
             cycle_marker_line = len(out)
         else:
@@ -777,6 +839,7 @@ def build_single_shot_lua(
             out.append(line.replace("--{{LOOP_START}}", "-- cycle loop"))
             loop_start_line = len(out)
         elif "--{{CYCLE_MARKER}}" in line:
+            _pad_past_sub_file(out, indent)
             out.append(line.replace("--{{CYCLE_MARKER}}", "-- cycle boundary"))
             cycle_marker_line = len(out)
         else:

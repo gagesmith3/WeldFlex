@@ -394,11 +394,34 @@ def _preview_data(studs, origin_corner=part_origin.DEFAULT_CORNER):
                      for t in ticks],
     }
 
+def _stud_progress_from(record: dict) -> dict | None:
+    """Where the next run of this part picks up, from a finished run's record.
+
+    Only a live part run moves it: a dry run puts nothing on the plate. None
+    when the run says nothing about studs (a single shot, a part run that
+    never launched, or a record from before stud progress existed).
+    """
+    if record.get("kind", "part") != "part" or record.get("arm_mode") != "live":
+        return None
+    if record.get("next_stud") is None:
+        return None
+    return {
+        "next_stud": int(record["next_stud"]),
+        "last_stud": record.get("last_stud"),
+        "stud_count": record.get("stud_count"),
+        "exact": bool(record.get("stud_progress_exact")),
+        "ended_at": record.get("ended_at"),
+        "run_id": record.get("run_id"),
+    }
+
+
 def _on_job_finish(record: dict) -> None:
     """Fold a finished run into the part's lifetime stats.
 
     `times_ran` / `avg_cycle_time` / `last_run` have existed in recipes.json since
     parts were introduced but were written once at creation and never updated.
+    `stud_progress` is where the next live run picks up (_stud_progress_from);
+    the Load modal prefills its Starting stud from it.
     """
     part_id = record.get("part_id")
     if not part_id:
@@ -421,6 +444,9 @@ def _on_job_finish(record: dict) -> None:
             count = prior_n + len(cycle_times)
             recipe["avg_cycle_time"] = round((prior_total + sum(cycle_times)) / count, 2)
         recipe["last_run"] = record.get("ended_at")
+        progress = _stud_progress_from(record)
+        if progress is not None:
+            recipe["stud_progress"] = progress
         _recipes_save(recipes)
 
 
@@ -517,7 +543,11 @@ def manager_settings_page():
 
 @app.route("/manager/reports")
 def manager_reports_page():
-    return render_template("manager.html", page_title="Reports", active_tab="reports")
+    # The page includes the reports partial itself, so it needs the same part
+    # list /ui/manager/reports gives it, or the Part filter offers no parts.
+    recipes = _recipes_enrich(_recipes_load())
+    return render_template("manager.html", page_title="Reports", active_tab="reports",
+                           recipes=recipes)
 
 @app.route("/operator/admin")
 def admin():
@@ -623,7 +653,7 @@ def ui_settings_save():
 _PART_DETAIL_KEYS = (
     'id', 'name', 'studs_count', 'safe_z', 'retract_z', 'search_z', 'part_z',
     'units', 'stud_type', 'substrate', 'pressure_setting', 'voltage', 'speed',
-    'dsc_enabled', 'stud_reload_ms', 'origin_corner',
+    'dsc_enabled', 'stud_reload_ms', 'origin_corner', 'stud_progress',
 )
 
 def _part_details(recipes):
@@ -770,6 +800,10 @@ def ui_recipes_save():
                                        title='Save Recipe', payload={'error': str(exc)})
         now = datetime.now(timezone.utc).isoformat()
         if existing:
+            if existing.get('studs') != studs:
+                # Stud numbers no longer mean the same studs, so where the last
+                # live run stopped says nothing about this part any more.
+                existing.pop('stud_progress', None)
             existing['name']             = name
             existing['studs']            = studs
             existing['safe_z']           = safe_z

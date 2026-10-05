@@ -32,9 +32,10 @@
                value="1" min="1" max="999" autocomplete="off">
       </div>
       <div>
-        {# Resumes a part that faulted partway: the next stud after the last one
-           welded. Studs count from 1, so 1 (the default) is the whole part.
-           Text, not number: the kiosk's pad writes .value directly. #}
+        {# Resumes a part partway: the next stud after the last one welded.
+           Opens on where the part's last live run stopped (stud_progress), else
+           1, the whole part. Text, not number: the kiosk's pad writes .value
+           directly. #}
         <label class="run-modal-label" for="run-modal-start-stud">Starting stud</label>
         <input type="text" id="run-modal-start-stud" name="start_stud"
                class="pd-create-input run-modal-cycles-input"
@@ -104,13 +105,27 @@ function syncPartsEditorUrl() {
 let _runRecipeId = null;
 let _runArmMode = null;
 let _runStudCount = 0;
-// From a row's Load button, or the part details' Load.
+let _runResume = null;
+// Where this part's last live run stopped (app._stud_progress_from), or null.
+// Dropped when the part's stud count has changed since, since its numbers no
+// longer mean the same studs.
+function partResume(id, studCount) {
+  const part = _parts.find(function(p) { return p.id === id; });
+  const progress = part && part.stud_progress;
+  if (!progress || progress.stud_count !== studCount) return null;
+  if (!(progress.next_stud >= 1 && progress.next_stud <= studCount)) return null;
+  return progress;
+}
+// From a row's Load button, or the part details' Load. Starting stud opens on
+// the stud after the last live run's, so a part stopped early to save plate
+// picks up where it left off; typing 1 starts a fresh one.
 function openLoadModal(id, name, studCount) {
   _runRecipeId = id;
   _runStudCount = studCount || 0;
+  _runResume = partResume(id, _runStudCount);
   document.getElementById('run-modal-part-name').textContent = name;
   document.getElementById('run-modal-cycles').value = '1';
-  document.getElementById('run-modal-start-stud').value = '1';
+  document.getElementById('run-modal-start-stud').value = String(_runResume ? _runResume.next_stud : 1);
   runModalPickArm(null);
   document.getElementById('run-modal').removeAttribute('hidden');
   document.getElementById('run-modal-cycles').focus();
@@ -227,19 +242,31 @@ function runModalStartStud() {
   const start = parseInt(raw, 10);
   return start <= Math.max(1, _runStudCount) ? start : null;
 }
+// What the prefilled starting stud came from, while the field still holds it.
+function runModalResumeNote(start) {
+  const r = _runResume;
+  if (!r || start !== r.next_stud) return null;
+  if (r.next_stud === 1) return r.last_stud === _runStudCount ? 'Last live run finished the part.' : null;
+  if (r.last_stud == null) return 'Last live run stopped before stud ' + r.next_stud + '.';
+  return r.exact ? 'Last live run: after stud ' + r.last_stud + '.'
+                 : 'Last live run: after stud ~' + r.last_stud + '. Check the plate.';
+}
 // Run needs a weld mode and a starting stud that exists; a resume says what it
-// will skip before it is loaded. The note is kept to one line, so the modal
-// stays inside the kiosk's 500 px.
+// will skip, or where the prefill came from, before it is loaded. The note is
+// kept short, so the modal stays inside the kiosk's 500 px.
 function runModalSync() {
   const start = runModalStartStud();
   const note = document.getElementById('run-modal-start-note');
+  const resume = start === null ? null : runModalResumeNote(start);
   if (start === null) {
     note.textContent = 'This part has ' + _runStudCount + ' studs.';
+  } else if (resume) {
+    note.textContent = resume;
   } else if (start > 1) {
     note.textContent = 'Cycle 1 skips ' +
       (start === 2 ? 'stud 1.' : 'studs 1 to ' + (start - 1) + '.');
   }
-  note.hidden = start !== null && start <= 1;
+  note.hidden = start !== null && start <= 1 && !resume;
   document.getElementById('run-modal-confirm').disabled = !_runArmMode || start === null;
 }
 function runModalCancel() {

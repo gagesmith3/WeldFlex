@@ -259,6 +259,18 @@ essentially never lands there. See `CycleTracker`'s docstring
 (`backend/job_manager.py`) and `tests/test_cycle_tracker.py`'s "NewDofile line
 aliasing" section.
 
+**The ceiling left a gap, closed 2026-10-05.** A weld.lua line *between* the
+marker and the caller's length still read as the boundary dwell. Long parts
+put the marker there: a 41-stud program's marker sat at line 180, and on
+2026-09-30 a live fabtech polygon run was marked completed 8 s in while the
+robot kept welding, so the fault that followed never reached the run log. Both
+builders now call `lua_builder._pad_past_sub_file()` before the marker line,
+which inserts blank lines until the marker is numbered past weld.lua's uploaded
+line count plus a margin. Every weld.lua line is now below the marker and can
+only re-arm the tracker. `tests/test_lua_builder.py` pins the marker past
+weld.lua for 0-300 studs, and `tests/test_job_manager.py` feeds every weld.lua
+line to a 41-stud tracker.
+
 ## The inter-cycle gate (`gate_mode="pause"`)
 
 **The program holds itself. The host does not stop it.** `lua_builder._gate_rows`

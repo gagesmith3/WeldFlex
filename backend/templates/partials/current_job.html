@@ -105,9 +105,25 @@
       <strong class="metric-value">
         {{ (job.cycles_done ~ ' / ' ~ job.cycles_target) if job.cycles_target else '— / —' }}
       </strong>
-      {% if job.run_id and job.start_stud > 1 %}
-      {# A resumed run: its first cycle skips the studs before this one. Here and
+      {% if job.run_id and job.next_stud is not none %}
+      {# Where a part run has got to: from the telemetry sample while it runs,
+         from the controller once it has ended. "next" is where this part's
+         next live run picks up; "…" while the end-of-run read is still
+         trying, "~" when it gave up and the last sample stands in. Here and
          not with the run-mode tags, where a third tag is clipped to "…". #}
+      <span class="metric-label">
+        <span class="run-mode-tag is-neutral">
+          {%- if job.last_stud is not none %}stud {{ job.last_stud }}/{{ job.stud_count }}
+          {%- else %}from stud {{ job.start_stud }}{% endif -%}
+        </span>
+        {%- if job.terminal %} <span class="run-mode-tag is-warn">next
+          {%- if job.stud_progress_exact is none %} …
+          {%- elif job.stud_progress_exact %} {{ job.next_stud }}
+          {%- else %} ~{{ job.next_stud }}{% endif -%}
+        </span>{% endif %}
+      </span>
+      {% elif job.run_id and job.start_stud > 1 %}
+      {# A resumed run: its first cycle skips the studs before this one. #}
       <span class="metric-label">
         <span class="run-mode-tag is-warn">from stud {{ job.start_stud }}</span>
       </span>

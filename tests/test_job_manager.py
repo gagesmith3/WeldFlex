@@ -42,6 +42,8 @@ class FakeSnap:
     line_edge_seq: int = 0
     fault_main: int | None = None
     fault_sub: int | None = None
+    stud_done_tag: int | None = None
+    stud_fired_tag: int | None = None
 
 
 class FakeRobot:
@@ -93,6 +95,20 @@ class FakeRobot:
 
     def stop_job_telemetry(self):
         self._maybe_fail("stop_job_telemetry")
+
+    # The two stud-progress system variables as the controller holds them:
+    # (done, fired), each cycle * 1000 + stud.
+    stud_tags = (0, 0)
+
+    def reset_stud_progress(self):
+        self._maybe_fail("reset_stud_progress")
+        with self._lock:
+            self.stud_tags = (0, 0)
+
+    def read_stud_progress(self):
+        self._maybe_fail("read_stud_progress")
+        with self._lock:
+            return self.stud_tags
 
     def run_program(self, name):
         self._maybe_fail("run_program")
@@ -1189,3 +1205,301 @@ def test_events_for_run_reads_the_rotated_file_too(tmp_path):
     assert [e["event"] for e in mgr.events_for_run("old")] == ["load"]
     assert [e["ts"] for e in mgr.events_for_run("span")] == ["t2", "t3"]
     assert mgr.events_for_run("missing") == []
+
+
+# ---------------- stud progress ----------------
+
+
+def test_stud_progress_from_the_two_tags():
+    from job_manager import stud_progress
+
+    # Nothing got that far this run: the next run starts where this one did.
+    assert stud_progress(0, 0, start_stud=14, stud_count=41) == {
+        "last_stud": None, "last_stud_cycle": None, "last_stud_partial": False, "next_stud": 14}
+    # A clean stud: done and fired agree.
+    assert stud_progress(1023, 1023, start_stud=1, stud_count=41) == {
+        "last_stud": 23, "last_stud_cycle": 1, "last_stud_partial": False, "next_stud": 24}
+    # Dry: only done moves.
+    assert stud_progress(1023, 0, start_stud=1, stud_count=41)["last_stud"] == 23
+    # The arc fired on 24 but the run stopped before its retract finished:
+    # 24 is on the plate, so the next run starts at 25.
+    got = stud_progress(1023, 1024, start_stud=1, stud_count=41)
+    assert (got["last_stud"], got["last_stud_partial"], got["next_stud"]) == (24, True, 25)
+    # Fired before anything finished.
+    got = stud_progress(0, 1014, start_stud=14, stud_count=41)
+    assert (got["last_stud"], got["last_stud_partial"], got["next_stud"]) == (14, True, 15)
+    # The part's last stud: the next run is a fresh part.
+    assert stud_progress(1041, 1041, start_stud=1, stud_count=41)["next_stud"] == 1
+    # Cycles order before studs: cycle 2's first stud is later than cycle 1's last.
+    got = stud_progress(2001, 1041, start_stud=1, stud_count=41)
+    assert (got["last_stud_cycle"], got["last_stud"], got["last_stud_partial"]) == (2, 1, False)
+
+
+def _set_tags(robot, done, fired):
+    """What the telemetry sample reads (snap) and what the controller holds."""
+    with robot._lock:
+        robot.snap.stud_done_tag = done
+        robot.snap.stud_fired_tag = fired
+        robot.stud_tags = (done, fired)
+
+
+def _history(tmp_path):
+    path = tmp_path / "run_history.jsonl"
+    if not path.exists():
+        return []
+    return [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines() if l.strip()]
+
+
+def _events(tmp_path):
+    return [json.loads(l) for l in
+            (tmp_path / "run_events.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
+
+
+FIVE = [{"x": i, "y": i} for i in range(1, 6)]
+
+
+def test_a_part_run_zeroes_the_progress_slots_before_it_runs(tmp_path):
+    robot = FakeRobot()
+    robot.stud_tags = (3005, 3005)  # what the last run left
+    mgr = make_manager(tmp_path, robot)
+    mgr.load("p1", "Polygon", FIVE, cycles=1, arm_mode="live", gate_mode="none")
+    mgr.start()
+    wait_state(mgr, JobState.RUNNING.value)
+    calls = robot.calls
+    assert calls.index("upload_program") < calls.index("reset_stud_progress")
+    assert calls.index("reset_stud_progress") < calls.index("start_job_telemetry")
+    assert calls.index("start_job_telemetry") < calls.index("run_program")
+    assert robot.stud_tags == (0, 0)
+    mgr.shutdown()
+
+
+def test_the_snapshot_follows_the_sampled_progress_while_running(tmp_path):
+    robot = FakeRobot()
+    mgr = make_manager(tmp_path, robot)
+    mgr.load("p1", "Polygon", FIVE, cycles=1, arm_mode="live", gate_mode="none")
+    mgr.start()
+    wait_state(mgr, JobState.RUNNING.value)
+    snap = mgr.snapshot()
+    assert (snap.last_stud, snap.next_stud, snap.stud_progress_exact) == (None, 1, None)
+
+    _set_tags(robot, 1002, 1002)
+    assert wait_for(lambda: mgr.snapshot().last_stud == 2)
+    snap = mgr.snapshot()
+    assert (snap.next_stud, snap.last_stud_partial, snap.stud_progress_exact) == (3, False, None)
+    assert snap.to_dict()["last_stud"] == 2
+    mgr.shutdown()
+
+
+def test_a_stopped_run_records_the_last_stud_read_from_the_controller(tmp_path):
+    finished = []
+    robot = FakeRobot()
+    mgr = make_manager(tmp_path, robot, on_finish=finished.append)
+    mgr.load("p1", "Polygon", FIVE, cycles=1, arm_mode="live", gate_mode="none")
+    mgr.start()
+    wait_state(mgr, JobState.RUNNING.value)
+    _set_tags(robot, 1002, 1002)
+    assert wait_for(lambda: mgr.snapshot().last_stud == 2)
+    # Stopped while stud 4 was in its hold: the sample never saw it (XML-RPC
+    # is down through a force operation), the controller has it.
+    with robot._lock:
+        robot.stud_tags = (1003, 1004)
+
+    snap = mgr.stop()
+
+    assert snap.state == JobState.STOPPED.value
+    assert (snap.last_stud, snap.last_stud_partial, snap.next_stud) == (4, True, 5)
+    assert snap.stud_progress_exact is True
+    [record] = _history(tmp_path)
+    assert record["last_stud"] == 4
+    assert record["last_stud_cycle"] == 1
+    assert record["last_stud_partial"] is True
+    assert record["next_stud"] == 5
+    assert record["stud_progress_exact"] is True
+    assert finished == [record]
+    progress = [e for e in _events(tmp_path) if e["event"] == "stud_progress"]
+    assert progress and progress[0]["detail"]["next_stud"] == 5
+
+
+def test_a_run_through_the_last_stud_points_the_next_one_at_stud_1(tmp_path):
+    robot = FakeRobot()
+    mgr = make_manager(tmp_path, robot)
+    mgr.load("p1", "Polygon", FIVE, cycles=1, arm_mode="live", gate_mode="none")
+    mgr.start()
+    wait_state(mgr, JobState.RUNNING.value)
+    _set_tags(robot, 1005, 1005)
+    run_one_cycle(robot, mgr, expect=1)
+    robot.feed(PAST_MARKER, program_state=0)
+    wait_state(mgr, JobState.COMPLETED.value)
+    # The monitor thread writes the record just after the state turns.
+    assert wait_for(lambda: _history(tmp_path))
+    [record] = _history(tmp_path)
+    assert (record["last_stud"], record["next_stud"]) == (5, 1)
+
+
+def test_a_resumed_run_that_welds_nothing_keeps_its_start(tmp_path):
+    robot = FakeRobot()
+    mgr = make_manager(tmp_path, robot)
+    mgr.load("p1", "Polygon", FIVE, cycles=1, arm_mode="live", gate_mode="none", start_stud=4)
+    mgr.start()
+    wait_state(mgr, JobState.RUNNING.value)
+    mgr.stop()
+    [record] = _history(tmp_path)
+    assert (record["last_stud"], record["next_stud"], record["start_stud"]) == (None, 4, 4)
+
+
+def test_an_unreadable_controller_delays_the_record_then_uses_the_sample(tmp_path, monkeypatch):
+    import job_manager as jm
+
+    monkeypatch.setattr(jm, "FINAL_PROGRESS_READ_S", 0.6)
+    monkeypatch.setattr(jm, "FINAL_PROGRESS_RETRY_S", 0.05)
+    finished = []
+    robot = FakeRobot(fail={"read_stud_progress"})
+    mgr = make_manager(tmp_path, robot, on_finish=finished.append)
+    mgr.load("p1", "Polygon", FIVE, cycles=1, arm_mode="live", gate_mode="none")
+    mgr.start()
+    wait_state(mgr, JobState.RUNNING.value)
+    _set_tags(robot, 1002, 1003)
+    assert wait_for(lambda: mgr.snapshot().last_stud == 3)
+
+    snap = mgr.stop()
+    # The job is over at once; only the record waits for the retries.
+    assert snap.state == JobState.STOPPED.value
+    assert _history(tmp_path) == []
+
+    assert wait_for(lambda: _history(tmp_path), 3.0)
+    [record] = _history(tmp_path)
+    assert (record["last_stud"], record["last_stud_partial"], record["next_stud"]) == (3, True, 4)
+    assert record["stud_progress_exact"] is False
+    assert robot.calls.count("read_stud_progress") > 2
+    assert finished == [record]
+    assert mgr.snapshot().stud_progress_exact is False
+
+
+def test_a_read_that_recovers_after_the_stop_is_exact(tmp_path, monkeypatch):
+    import job_manager as jm
+
+    monkeypatch.setattr(jm, "FINAL_PROGRESS_RETRY_S", 0.05)
+    robot = FakeRobot()
+    attempts = []
+
+    def read():
+        attempts.append(1)
+        if len(attempts) < 3:
+            raise RuntimeError("GetSysVarValue(11) failed (code -4)")
+        return (1003, 1004)
+
+    robot.read_stud_progress = read
+    mgr = make_manager(tmp_path, robot)
+    mgr.load("p1", "Polygon", FIVE, cycles=1, arm_mode="live", gate_mode="none")
+    mgr.start()
+    wait_state(mgr, JobState.RUNNING.value)
+    mgr.stop()
+    assert wait_for(lambda: _history(tmp_path), 3.0)
+    [record] = _history(tmp_path)
+    assert (record["last_stud"], record["stud_progress_exact"]) == (4, True)
+
+
+def test_the_next_launch_waits_for_a_pending_read(tmp_path, monkeypatch):
+    """The next run zeroes the slots the last run is still trying to read."""
+    import job_manager as jm
+
+    monkeypatch.setattr(jm, "FINAL_PROGRESS_READ_S", 0.5)
+    monkeypatch.setattr(jm, "FINAL_PROGRESS_RETRY_S", 0.05)
+    robot = FakeRobot(fail={"read_stud_progress"})
+    mgr = make_manager(tmp_path, robot, on_finish=lambda record: robot.calls.append("recorded"))
+    mgr.load("p1", "Polygon", FIVE, cycles=1, arm_mode="live", gate_mode="none")
+    mgr.start()
+    wait_state(mgr, JobState.RUNNING.value)
+    mgr.stop()
+
+    mgr.load("p2", "Dummy", FIVE, cycles=1, arm_mode="dry", gate_mode="none")
+    mgr.start()
+    wait_state(mgr, JobState.RUNNING.value)
+    second_reset = len(robot.calls) - 1 - robot.calls[::-1].index("reset_stud_progress")
+    assert robot.calls.index("recorded") < second_reset
+    mgr.shutdown()
+
+
+def test_with_the_reset_failed_samples_wait_for_the_programs_own_zero(tmp_path):
+    robot = FakeRobot(fail={"reset_stud_progress"})
+    mgr = make_manager(tmp_path, robot)
+    mgr.load("p1", "Polygon", FIVE, cycles=1, arm_mode="live", gate_mode="none")
+    _set_tags(robot, 5005, 5005)  # the last run's, never zeroed by the host
+    mgr.start()
+    wait_state(mgr, JobState.RUNNING.value)
+    time.sleep(MONITOR_INTERVAL_S * 3)
+    assert mgr.snapshot().last_stud is None
+
+    _set_tags(robot, 0, 0)  # WeldFlex.lua's first line
+    time.sleep(MONITOR_INTERVAL_S * 3)
+    _set_tags(robot, 1001, 1001)
+    assert wait_for(lambda: mgr.snapshot().last_stud == 1)
+    assert any(e["event"] == "progress_reset_failed" for e in _events(tmp_path))
+    mgr.shutdown()
+
+
+def test_shutdown_records_the_last_sample_without_reading(tmp_path):
+    robot = FakeRobot()
+    mgr = make_manager(tmp_path, robot)
+    mgr.load("p1", "Polygon", FIVE, cycles=1, arm_mode="live", gate_mode="none")
+    mgr.start()
+    wait_state(mgr, JobState.RUNNING.value)
+    _set_tags(robot, 1002, 1002)
+    assert wait_for(lambda: mgr.snapshot().last_stud == 2)
+    mgr.shutdown()
+    [record] = _history(tmp_path)
+    assert (record["status"], record["last_stud"], record["stud_progress_exact"]) == (
+        "interrupted", 2, False)
+    assert "read_stud_progress" not in robot.calls
+
+
+def test_runs_with_no_stud_progress_record_none(tmp_path):
+    """A single shot has no stud list, and a part that never launched welded nothing."""
+    robot = FakeRobot()
+    mgr = make_manager(tmp_path, robot)
+    mgr.load("__single_shot__", "Single Shot", [{"x": 1, "y": 2}], cycles=1,
+             arm_mode="dry", gate_mode="none", kind="single_shot")
+    mgr.start()
+    wait_state(mgr, JobState.RUNNING.value)
+    mgr.stop()
+
+    unlaunched = tmp_path / "unlaunched"
+    unlaunched.mkdir()
+    failing = FakeRobot(fail={"upload_program"})
+    mgr2 = make_manager(unlaunched, failing)
+    mgr2.load("p1", "Polygon", FIVE, cycles=1, arm_mode="live", gate_mode="none")
+    mgr2.start()
+    wait_state(mgr2, JobState.ERROR.value)
+
+    for path in (tmp_path, unlaunched):
+        [record] = _history(path)
+        assert "last_stud" not in record and "next_stud" not in record
+    assert "read_stud_progress" not in robot.calls + failing.calls
+    assert "reset_stud_progress" not in robot.calls
+    assert mgr.snapshot().last_stud is None
+
+
+def test_a_41_stud_program_never_banks_a_cycle_on_a_weld_lua_line():
+    """2026-09-30: a live 41-stud polygon run (marker 180) was marked completed
+    8 s in while the robot kept welding. Every line weld.lua can report must
+    now fall below the marker, so none of them banks."""
+    from job_manager import CycleTracker
+    from lua_builder import weld_line_count
+
+    built = build_weldflex_lua([{"x": i, "y": i} for i in range(41)], cycles=1,
+                               run_mode=RunMode("live"), gate_mode="pause")
+    tracker = CycleTracker(built.loop_start_line, built.cycle_marker_line, 1,
+                           program_max_line=built.program_line_count)
+    for line in range(1, weld_line_count() + 1):
+        assert tracker.observe(line) is False, line
+        assert not tracker.at_or_past_marker(line)
+    assert tracker.cycles_done == 0
+    assert tracker.observe(built.cycle_marker_line) is True
+
+
+def test_load_refuses_a_part_too_big_to_tag(tmp_path):
+    mgr = make_manager(tmp_path)
+    with pytest.raises(JobError, match="at most 999 studs"):
+        mgr.load("p1", "Huge", [{"x": 1, "y": 1}] * 1000, cycles=1, arm_mode="dry")
+    with pytest.raises(JobError, match="at most 9999 cycles"):
+        mgr.load("p1", "Polygon", FIVE, cycles=10000, arm_mode="dry")

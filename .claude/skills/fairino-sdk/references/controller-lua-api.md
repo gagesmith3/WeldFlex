@@ -78,6 +78,11 @@ only. Nothing in the Lua API returns force or torque. Consequences:
 
 The documented press-to-force composite is `FT_Control` + `FT_LinInsertion`
 (manual Code 3-53 lines 17-20), which is what `programs/weld.lua` now uses.
+Since `7b60f12` it runs the insertion with `lin_v = 0`, as FAIRINO's C++ insertion
+example does: `FT_Control` alone moves the gun and the insertion only ends the
+press on force. With a feed of its own the insertion worked *against*
+`FT_Control` on this machine — a faster feed made the press slower, and from
+0.5 mm/s it stalled short of force (dry ladder, 2026-10-05).
 
 Issue the insertion **once** per press. Re-running `FT_LinInsertion` through the
 hold to win back force that sagged after the threshold spike (four re-runs,
@@ -92,7 +97,7 @@ force error.
 | Instruction | Param | Encoding |
 |---|---|---|
 | `FT_FindSurface(rcs, dir, axis, lin_v, lin_a, dismax, ft)` | `dir` | **1 = positive, 2 = negative** |
-| `FT_LinInsertion(rcs, ft, lin_v, lin_a, dismax, linorn)` | `linorn` | **0 = negative, 1 = positive** |
+| `FT_LinInsertion(rcs, ft, lin_v, lin_a, dismax, linorn)` | `linorn` | **0 = negative, 1 = positive** (Lua/SDK manuals; the 8080 protocol manual, cmd 626, says 1 = positive, 2 = negative — unsettled) |
 
 Never alias these to one shared constant. `weld.lua` keeps `FIND_DIR` and
 `PRESS_DIR` separate for exactly this reason. Both are `1` for a positive tool-Z

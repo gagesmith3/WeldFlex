@@ -19,7 +19,9 @@ Job Manager → hit Run → it runs the requested cycles → it completes.
 > **Pendant preflight:** Set the FAIRINO pendant's **Auto Speed** to **100%**
 > before running a part. It globally limits the program's requested speed,
 > including Dynamic Speed Compensation (DSC); a lower pendant setting prevents
-> a generated 100% stud-to-stud move from reaching its intended speed.
+> a generated 100% stud-to-stud move from reaching its intended speed. DSC also
+> needs `WELDFLEX_DSC_CALIBRATED=1` in `.env`; without it, a part with DSC on
+> fails with an error when Run is pressed.
 
 Full picture — the four layers, how a part becomes a program,
  job states, and the

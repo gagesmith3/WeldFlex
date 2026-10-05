@@ -2,7 +2,7 @@
 
 ## Route inventory
 
-Page routes (`app.py`) — verified against the code at `173f068`:
+Page routes (`app.py`) — verified against the code at `9706635`:
 ```
 /                                   landing.html
 /operator                           operator.html
@@ -60,7 +60,7 @@ rather than a standalone runner.
 Multi-word features are hyphenated (`tcp-calibrate`, `studs-preview`), never
 nested further (never `/ui/tcp/calibrate`). Live features: `connection`,
 `diagnostics`, `fault`, `ft`, `job`, `jog`, `manager`, `parts`, `points`,
-`recipes`, `settings`, `single-shot`, `tcp-calibrate`, `wifi`.
+`recipes`, `settings`, `single-shot`, `tcp-calibrate`, `weld-tuning`, `wifi`.
 
 `wifi` is `/ui/wifi/{card,connect,forget,radio-on}` for the Wi-Fi page and
 `/ui/wifi/hotspot/{card,start,stop}` for the Hotspot page (`radio-on?card=hotspot`

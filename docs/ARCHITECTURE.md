@@ -94,6 +94,14 @@ Consequences worth knowing:
   The pendant's Auto Speed is a global multiplier/cap over those percentages;
   set it to 100% before calibrating or running DSC, or even a generated 100%
   leg will be limited below its intended speed.
+- **The search speed and press gain are machine settings, not recipe values**
+  (`9b7d357`; the press gain replaced a press speed in `7b60f12`/`40f0401`).
+  Admin's Weld Tuning panel saves them to `backend/weld_tuning.json`
+  (gitignored) through `/ui/weld-tuning/save`. `JobManager._launch` reads them
+  when Run is pressed, so a change made after a job is loaded still applies.
+  `--{{SEARCH_SPEED}}` and `--{{PRESS_GAIN}}` publish them in both templates,
+  and each run's history records them. Out of range is refused at save, and
+  the builders only take a validated `WeldTuning`.
 - **The run mode is emitted the same way, through one marker.** A run's mode is
   two switches, resolved once by `lua_builder.RunMode`: `arm_mode` (Live or
   Dry, chosen for every run, with no default at any layer) and `di_check`
@@ -184,7 +192,7 @@ is adopted once the controller reports it steadily, rather than ignored.
 |---|---|---|
 | `none` | Runs straight through | Works |
 | `pause` | The **program pauses itself** — `lua_builder._gate_rows` emits a `Pause(PAUSE_GATE_CODE)` at the gate line, skipped after the last cycle. The host only watches for the paused state and offers Continue | **Default.** A host-issued `ProgramPause` is now only the backstop `job_manager._gate` sends if the program has not held by the end of the dwell — gating *by* `ProgramPause` did not reliably stop the robot on hardware |
-| `di` | Lua blocks on `WaitDI` for a part-ready input | Built, **not commissioned** — the DI number is unknown and Python cannot read the gate back |
+| `di` | Lua blocks on `WaitDI` for a part-ready input | Built, **not commissioned** — the DI number is unknown, and the job manager has no `di` handling: the job reads `running` while the program waits on the input. The DI level itself is readable now, from the port-8083 feed |
 
 ## Not yet implemented
 

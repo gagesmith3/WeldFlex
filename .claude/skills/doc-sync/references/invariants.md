@@ -130,8 +130,9 @@ the test is whether `lua_builder` emits them.
 
 **Claim:** `none` works, `pause` is the default and holds *in the program* (a
 `Pause()` the builder emits, skipped on the last cycle), `di` is built but not
-commissioned because `WELDFLEX_GATE_DI` is unknown and Python cannot read the
-gate back.
+commissioned because `WELDFLEX_GATE_DI` is unknown and the job manager has no
+`di` handling. Stale if a doc says Python *cannot* read the DI: the 8083 feed
+carries it (`robot_feed.di`); nothing reads it for the gate.
 
 ```bash
 grep -n 'gate_mode\|GATE\b\|WELDFLEX_GATE_DI' backend/lua_builder.py backend/job_manager.py | head -20

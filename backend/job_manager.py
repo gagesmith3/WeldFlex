@@ -416,12 +416,13 @@ class _Session:
     # How long the controller has reported its current program state.
     observed_program: str | None = None
     observed_since: float | None = None
-    # The stud-progress tags as sampled, kept as a running max. Samples are
-    # only taken once `progress_armed`: straight away when the host zeroed the
-    # slots before the run, else once the program's own zeroing is seen.
+    # Whether this run tracks studs: the host zeroed and read back system
+    # variables 11 and 12 before the build, so the program writes them
+    # (_check_stud_progress). Off, the run goes ahead with no stud progress.
+    progress_tracking: bool = False
+    # The stud-progress tags as sampled, kept as a running max.
     stud_done_tag: int = 0
     stud_fired_tag: int = 0
-    progress_armed: bool = False
     # Set once, when the job has ended and the progress is final.
     progress: dict | None = None
 
@@ -600,7 +601,7 @@ class JobManager:
             sess.ended_at = None
             sess.ended_ts = None
             sess.stud_done_tag = sess.stud_fired_tag = 0
-            sess.progress_armed = False
+            sess.progress_tracking = False
             sess.progress = None
             sess.started_at = _now_iso()
             sess.started_ts = time.time()
@@ -846,9 +847,10 @@ class JobManager:
 
     @staticmethod
     def _progress_locked(sess: _Session) -> dict:
-        """The snapshot's stud-progress fields: none until a part run launches,
-        then live from the samples, then final once the job has ended."""
-        if sess.kind != "part" or sess.launched_ts is None:
+        """The snapshot's stud-progress fields: none until a part run launches
+        with tracking on, then live from the samples, then final once the job
+        has ended."""
+        if sess.kind != "part" or sess.launched_ts is None or not sess.progress_tracking:
             return {}
         if sess.progress is not None:
             return dict(sess.progress)
@@ -908,6 +910,9 @@ class JobManager:
                     f"Force sensor reported an invalid controller number: {ft_sensor_num!r}"
                 )
 
+            # Before the build: whether the program may write the progress slots.
+            progress_tracking = kind == "part" and self._check_stud_progress(run_id)
+
             if kind == "single_shot":
                 if not studs:
                     raise JobError("Single shot has no target point set")
@@ -947,6 +952,7 @@ class JobManager:
                     origin_corner=origin_corner,
                     corner_ref=corner_ref,
                     start_stud=start_stud,
+                    stud_progress=progress_tracking,
                 )
 
             tmp_dir = tempfile.mkdtemp()
@@ -965,19 +971,6 @@ class JobManager:
                     shutil.rmtree(tmp_dir, ignore_errors=True)
                 except OSError:
                     pass
-
-            # Zero the stud-progress slots before the sampler starts, so the
-            # last run's numbers are never read as this one's. Not fatal: the
-            # program zeroes them at its first line, and until a zero is seen
-            # the samples are ignored.
-            progress_armed = True
-            if kind == "part":
-                try:
-                    self._robot.reset_stud_progress()
-                except Exception as exc:  # noqa: BLE001 - recorded, not fatal
-                    progress_armed = False
-                    log.warning("stud progress reset failed run_id=%s: %s", run_id, exc)
-                    self._event(run_id, "progress_reset_failed", {"error": str(exc)})
 
             self._robot.start_job_telemetry()
             self._robot.run_program(uploaded)
@@ -998,7 +991,7 @@ class JobManager:
                 sess.state = JobState.RUNNING.value
                 sess.launched_ts = time.time()
                 sess.cycle_start_ts = time.time()
-                sess.progress_armed = progress_armed
+                sess.progress_tracking = progress_tracking
 
             log.info("job running run_id=%s program=%s cycles=%d loop_start=%d marker=%d "
                      "gate=%d boundary_ms=%d search_mms=%g press_gain=%g",
@@ -1183,18 +1176,12 @@ class JobManager:
     @staticmethod
     def _sample_progress_locked(sess: _Session, snap: Any) -> None:
         """Fold one telemetry sample's stud-progress tags into the session."""
-        if sess.kind != "part" or sess.launched_ts is None:
+        if sess.kind != "part" or sess.launched_ts is None or not sess.progress_tracking:
             return
         done = getattr(snap, "stud_done_tag", None)
         fired = getattr(snap, "stud_fired_tag", None)
         if not isinstance(done, int) or not isinstance(fired, int):
             return
-        if not sess.progress_armed:
-            # The host's zeroing failed: whatever the last run left is still
-            # there until the program's first line clears it.
-            if done or fired:
-                return
-            sess.progress_armed = True
         sess.stud_done_tag = max(sess.stud_done_tag, done)
         sess.stud_fired_tag = max(sess.stud_fired_tag, fired)
 
@@ -1376,7 +1363,12 @@ class JobManager:
                 "stud_type": sess.stud_type,
                 "substrate": sess.substrate,
             }
-            tracked = sess.kind == "part" and sess.launched_ts is not None
+            launched_part = sess.kind == "part" and sess.launched_ts is not None
+            tracked = launched_part and sess.progress_tracking
+            if launched_part and not sess.progress_tracking:
+                # Where this run stopped is unknown, so whatever the part's
+                # last tracked run said is out of date (app._on_job_finish).
+                record["stud_progress_unavailable"] = True
             sampled = (sess.stud_done_tag, sess.stud_fired_tag)
             where = (sess.start_stud, len(sess.studs))
             snap = self._snapshot_locked()
@@ -1400,6 +1392,28 @@ class JobManager:
             return snap
         self._complete_record(run_id, record, tags, sampled, where)
         return self.snapshot()
+
+    def _check_stud_progress(self, run_id: str) -> bool:
+        """Zero system variables 11 and 12 and read them back: True when both
+        exist and are 0, so the program may write them.
+
+        Writing a system variable the controller doesn't have is a Lua error.
+        On 2026-10-07 the upload check refused a program that wrote 11 ("failed
+        to query the database (the data does not exist)"), and weld.lua's fired
+        write sits just before the arc, so the program writes nothing unless
+        this passes. Zeroing first also means the last run's numbers can never
+        be read as this one's. A failure costs only the stud tracking.
+        """
+        try:
+            self._robot.reset_stud_progress()
+            tags = tuple(self._robot.read_stud_progress())
+            if tags != (0, 0):
+                raise RuntimeError(f"system variables 11/12 read back {tags} after zeroing")
+        except Exception as exc:  # noqa: BLE001 - recorded; the run goes ahead untracked
+            log.warning("stud progress unavailable run_id=%s: %s", run_id, exc)
+            self._event(run_id, "stud_progress_unavailable", {"error": str(exc)})
+            return False
+        return True
 
     def _read_progress(self, run_id: str) -> tuple[int, int] | None:
         try:

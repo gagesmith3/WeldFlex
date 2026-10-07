@@ -133,3 +133,18 @@ def test_the_reports_part_filter_lists_the_parts_however_the_page_is_reached(app
     html = app_env.client.get(url).get_data(as_text=True)
     select = re.search(r'<select id="mgr-report-part-filter".*?</select>', html, re.S).group(0)
     assert 'value="part-1"' in select and 'value="part-2"' in select
+
+
+@pytest.mark.parametrize("arm_mode, kept", [("live", False), ("dry", True)])
+def test_an_untracked_run_clears_a_stale_prefill_only_when_live(app_env, arm_mode, kept):
+    """A live run the controller couldn't track may have welded past where the
+    last tracked run stopped, so offering that number again would be wrong."""
+    saved = {"next_stud": 2, "last_stud": 1, "stud_count": 3, "exact": True,
+             "ended_at": "2026-10-04T10:00:00", "run_id": "older"}
+    app_env.write([_recipe(stud_progress=saved)])
+    record = {k: v for k, v in _run(arm_mode=arm_mode).items()
+              if k not in ("last_stud", "last_stud_cycle", "last_stud_partial",
+                           "next_stud", "stud_progress_exact")}
+    record["stud_progress_unavailable"] = True
+    app_env.module._on_job_finish(record)
+    assert ("stud_progress" in app_env.read()[0]) is kept

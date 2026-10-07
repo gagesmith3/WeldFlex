@@ -211,9 +211,14 @@ local SV_WELD_READY   = 7
 local SV_PRESS_LBF    = 8
 local SV_PRESS_HOLD_TRAVEL = 9
 local SV_WELD_JOLT_TRAVEL  = 10
--- The caller's WELD_STUD_TAG (cycle * 1000 + stud), written just before the arc
--- so a run stopped after it knows that stud is on the plate. WeldFlex.lua owns
--- slot 11, the last stud whose whole sequence finished.
+-- Stud progress, the caller's WELD_STUD_TAG (cycle * 1000 + stud). 11 is the
+-- last stud whose whole sequence finished, written at the end of
+-- weldOneStud(); 12 the last stud the arc was fired on, written just before
+-- the pulse so a run stopped after it knows that stud is on the plate. Both
+-- only when the caller publishes WELD_STUD_PROGRESS = 1, which lua_builder
+-- sets only after the host has checked the two variables exist: writing one
+-- the controller doesn't have is an error (2026-10-07, at the upload check).
+local SV_STUD_DONE         = 11
 local SV_STUD_FIRED        = 12
 
 local GUARD_RELEASED   = 0
@@ -260,6 +265,10 @@ local function encodeRet(v)
     if v == nil then return RET_NIL end
     if type(v) ~= "number" then return RET_NON_NUM end
     return v
+end
+
+local function studProgressOn()
+    return WELD_STUD_PROGRESS == 1 and type(WELD_STUD_TAG) == "number"
 end
 
 local function ftCall(fn, ...)
@@ -729,7 +738,7 @@ local function fireWeld()
     -- Before the pulse, not after: a stop in between then counts a stud that
     -- didn't weld (one stud skipped on the resume) rather than missing one that
     -- did (a new stud pressed onto it). Single Shot sets no tag.
-    if type(WELD_STUD_TAG) == "number" then
+    if studProgressOn() then
         pub(SV_STUD_FIRED, WELD_STUD_TAG)
     end
 
@@ -818,6 +827,9 @@ local function weldOneStud()
     feedNextStud()
     ftGuardTravel()
     pub(SV_PHASE, PH_DONE)
+    if studProgressOn() then
+        pub(SV_STUD_DONE, WELD_STUD_TAG)
+    end
 end
 
 if WELD_RUN == 1 then

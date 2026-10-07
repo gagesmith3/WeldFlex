@@ -110,11 +110,12 @@ GATE_LOOP_VAR = "cycleIndex"
 GATE_COUNT_VAR = "cycleCount"
 
 # Stud progress, published as system variables 11 and 12 (weld.lua's own
-# telemetry has 1-10): WeldFlex.lua writes the last stud whose whole weld.lua
-# sequence finished, and weld.lua the last stud it fired the arc on. Both hold a
-# stud tag, cycle * STUD_TAG_CYCLE + stud, and 0 until a stud gets that far in
-# the run. A tag stays an exact integer even if the controller keeps system
-# variables as float32 (2^24), which is what the two limits below guarantee.
+# telemetry has 1-10): weld.lua writes the last stud whose whole sequence
+# finished and the last stud it fired the arc on, and only when the program is
+# built with stud_progress=True. Both hold a stud tag, cycle * STUD_TAG_CYCLE +
+# stud, and 0 until a stud gets that far in the run. A tag stays an exact
+# integer even if the controller keeps system variables as float32 (2^24),
+# which is what the two limits below guarantee.
 STUD_TAG_CYCLE = 1000
 MAX_TAGGED_STUDS = STUD_TAG_CYCLE - 1
 MAX_TAGGED_CYCLES = 9999
@@ -547,6 +548,7 @@ def build_weldflex_lua(
     origin_corner: str = DEFAULT_CORNER,
     corner_ref: CornerRef | None = None,
     start_stud: int | str | None = 1,
+    stud_progress: bool = False,
 ) -> BuiltProgram:
     """Substitute the template's markers and report the generated line numbers.
 
@@ -566,6 +568,11 @@ def build_weldflex_lua(
     `start_stud` resumes a part that faulted partway: the first cycle starts
     at that stud (counted from 1, in the part's own stud order) and every
     later cycle runs them all. The default, 1, is the whole part.
+
+    `stud_progress` turns on weld.lua's writes to system variables 11 and 12.
+    Leave it False unless the host has just zeroed and read back both: a
+    write to a variable the controller doesn't have is a Lua error, and the
+    fired write sits just before the arc (see job_manager._launch).
 
     `studs` are as the part stores them, measured inward from `origin_corner`.
     They are resolved to offsets from zerozero here, once, so the program's
@@ -621,6 +628,7 @@ def build_weldflex_lua(
     search_speed_seen = False
     press_gain_seen = False
     start_stud_seen = False
+    stud_progress_seen = False
 
     for line in template_lines:
         indent = _indent_of(line)
@@ -631,6 +639,9 @@ def build_weldflex_lua(
         elif "--{{START_STUD}}" in line:
             out.append(f"{indent}START_STUD = {start_stud_val}")
             start_stud_seen = True
+        elif "--{{STUD_PROGRESS}}" in line:
+            out.append(f"{indent}STUD_PROGRESS = {1 if stud_progress else 0}")
+            stud_progress_seen = True
         elif "--{{BOUNDARY_MS}}" in line:
             out.append(f"{indent}BOUNDARY_MS = {dwell_ms}")
             boundary_seen = True
@@ -698,6 +709,7 @@ def build_weldflex_lua(
             ("--{{SEARCH_SPEED}}", search_speed_seen),
             ("--{{PRESS_GAIN}}", press_gain_seen),
             ("--{{START_STUD}}", start_stud_seen),
+            ("--{{STUD_PROGRESS}}", stud_progress_seen),
         )
         if not value
     ]

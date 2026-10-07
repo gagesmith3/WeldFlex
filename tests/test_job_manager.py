@@ -97,21 +97,30 @@ class FakeRobot:
         self._maybe_fail("stop_job_telemetry")
 
     # The two stud-progress system variables as the controller holds them:
-    # (done, fired), each cycle * 1000 + stud.
+    # (done, fired), each cycle * 1000 + stud. `final_reads_fail` makes the
+    # end-of-run read fail (XML-RPC still down after a mid-force stop) while
+    # the pre-run check, which reads before ProgramRun, still answers.
     stud_tags = (0, 0)
+    final_reads_fail = False
+    program_started = False
 
     def reset_stud_progress(self):
         self._maybe_fail("reset_stud_progress")
         with self._lock:
             self.stud_tags = (0, 0)
+            self.program_started = False
 
     def read_stud_progress(self):
         self._maybe_fail("read_stud_progress")
         with self._lock:
+            if self.final_reads_fail and self.program_started:
+                raise RuntimeError("GetSysVarValue(11) failed (code -4)")
             return self.stud_tags
 
     def run_program(self, name):
         self._maybe_fail("run_program")
+        with self._lock:
+            self.program_started = True
 
     def pause_program(self):
         self._maybe_fail("pause_program")
@@ -1258,7 +1267,20 @@ def _events(tmp_path):
 FIVE = [{"x": i, "y": i} for i in range(1, 6)]
 
 
-def test_a_part_run_zeroes_the_progress_slots_before_it_runs(tmp_path):
+def test_a_part_run_checks_the_progress_slots_before_it_builds(tmp_path, monkeypatch):
+    """Zeroed and read back before the build, and only then written by the
+    program: on 2026-10-07 the controller refused a program that wrote a
+    system variable it doesn't have."""
+    import job_manager as jm
+
+    built_with = []
+    real_build = jm.build_weldflex_lua
+
+    def spy(studs, cycles, **kwargs):
+        built_with.append(kwargs["stud_progress"])
+        return real_build(studs, cycles, **kwargs)
+
+    monkeypatch.setattr(jm, "build_weldflex_lua", spy)
     robot = FakeRobot()
     robot.stud_tags = (3005, 3005)  # what the last run left
     mgr = make_manager(tmp_path, robot)
@@ -1266,10 +1288,11 @@ def test_a_part_run_zeroes_the_progress_slots_before_it_runs(tmp_path):
     mgr.start()
     wait_state(mgr, JobState.RUNNING.value)
     calls = robot.calls
-    assert calls.index("upload_program") < calls.index("reset_stud_progress")
-    assert calls.index("reset_stud_progress") < calls.index("start_job_telemetry")
+    assert calls.index("reset_stud_progress") < calls.index("read_stud_progress")
+    assert calls.index("read_stud_progress") < calls.index("upload_program")
     assert calls.index("start_job_telemetry") < calls.index("run_program")
     assert robot.stud_tags == (0, 0)
+    assert built_with == [True]
     mgr.shutdown()
 
 
@@ -1353,7 +1376,8 @@ def test_an_unreadable_controller_delays_the_record_then_uses_the_sample(tmp_pat
     monkeypatch.setattr(jm, "FINAL_PROGRESS_READ_S", 0.6)
     monkeypatch.setattr(jm, "FINAL_PROGRESS_RETRY_S", 0.05)
     finished = []
-    robot = FakeRobot(fail={"read_stud_progress"})
+    robot = FakeRobot()
+    robot.final_reads_fail = True
     mgr = make_manager(tmp_path, robot, on_finish=finished.append)
     mgr.load("p1", "Polygon", FIVE, cycles=1, arm_mode="live", gate_mode="none")
     mgr.start()
@@ -1370,7 +1394,7 @@ def test_an_unreadable_controller_delays_the_record_then_uses_the_sample(tmp_pat
     [record] = _history(tmp_path)
     assert (record["last_stud"], record["last_stud_partial"], record["next_stud"]) == (3, True, 4)
     assert record["stud_progress_exact"] is False
-    assert robot.calls.count("read_stud_progress") > 2
+    assert robot.calls.count("read_stud_progress") > 3  # the check, then the retries
     assert finished == [record]
     assert mgr.snapshot().stud_progress_exact is False
 
@@ -1384,7 +1408,9 @@ def test_a_read_that_recovers_after_the_stop_is_exact(tmp_path, monkeypatch):
 
     def read():
         attempts.append(1)
-        if len(attempts) < 3:
+        if len(attempts) == 1:
+            return (0, 0)  # the pre-run check
+        if len(attempts) < 4:
             raise RuntimeError("GetSysVarValue(11) failed (code -4)")
         return (1003, 1004)
 
@@ -1405,7 +1431,8 @@ def test_the_next_launch_waits_for_a_pending_read(tmp_path, monkeypatch):
 
     monkeypatch.setattr(jm, "FINAL_PROGRESS_READ_S", 0.5)
     monkeypatch.setattr(jm, "FINAL_PROGRESS_RETRY_S", 0.05)
-    robot = FakeRobot(fail={"read_stud_progress"})
+    robot = FakeRobot()
+    robot.final_reads_fail = True
     mgr = make_manager(tmp_path, robot, on_finish=lambda record: robot.calls.append("recorded"))
     mgr.load("p1", "Polygon", FIVE, cycles=1, arm_mode="live", gate_mode="none")
     mgr.start()
@@ -1420,22 +1447,43 @@ def test_the_next_launch_waits_for_a_pending_read(tmp_path, monkeypatch):
     mgr.shutdown()
 
 
-def test_with_the_reset_failed_samples_wait_for_the_programs_own_zero(tmp_path):
-    robot = FakeRobot(fail={"reset_stud_progress"})
-    mgr = make_manager(tmp_path, robot)
+@pytest.mark.parametrize("trouble", ["reset fails", "read fails", "reads back nonzero"])
+def test_a_controller_without_the_progress_slots_runs_untracked(tmp_path, monkeypatch, trouble):
+    """2026-10-07: the controller has no system variable 11. The run must go
+    ahead exactly as before, built with no progress writes, and say so."""
+    import job_manager as jm
+
+    built_with = []
+    real_build = jm.build_weldflex_lua
+
+    def spy(studs, cycles, **kwargs):
+        built_with.append(kwargs["stud_progress"])
+        return real_build(studs, cycles, **kwargs)
+
+    monkeypatch.setattr(jm, "build_weldflex_lua", spy)
+    robot = FakeRobot(fail={"reset fails": {"reset_stud_progress"},
+                            "read fails": {"read_stud_progress"}}.get(trouble, set()))
+    if trouble == "reads back nonzero":
+        robot.read_stud_progress = lambda: (5005, 0)
+    finished = []
+    mgr = make_manager(tmp_path, robot, on_finish=finished.append)
     mgr.load("p1", "Polygon", FIVE, cycles=1, arm_mode="live", gate_mode="none")
-    _set_tags(robot, 5005, 5005)  # the last run's, never zeroed by the host
     mgr.start()
     wait_state(mgr, JobState.RUNNING.value)
-    time.sleep(MONITOR_INTERVAL_S * 3)
-    assert mgr.snapshot().last_stud is None
+    assert built_with == [False]
 
-    _set_tags(robot, 0, 0)  # WeldFlex.lua's first line
+    _set_tags(robot, 1002, 1002)  # nothing should be listening
     time.sleep(MONITOR_INTERVAL_S * 3)
-    _set_tags(robot, 1001, 1001)
-    assert wait_for(lambda: mgr.snapshot().last_stud == 1)
-    assert any(e["event"] == "progress_reset_failed" for e in _events(tmp_path))
-    mgr.shutdown()
+    snap = mgr.snapshot()
+    assert (snap.last_stud, snap.next_stud, snap.stud_progress_exact) == (None, None, None)
+
+    mgr.stop()
+    [record] = _history(tmp_path)
+    assert record["stud_progress_unavailable"] is True
+    assert "last_stud" not in record and "next_stud" not in record
+    assert finished == [record]
+    unavailable = [e for e in _events(tmp_path) if e["event"] == "stud_progress_unavailable"]
+    assert len(unavailable) == 1 and unavailable[0]["detail"]["error"]
 
 
 def test_shutdown_records_the_last_sample_without_reading(tmp_path):
@@ -1450,7 +1498,7 @@ def test_shutdown_records_the_last_sample_without_reading(tmp_path):
     [record] = _history(tmp_path)
     assert (record["status"], record["last_stud"], record["stud_progress_exact"]) == (
         "interrupted", 2, False)
-    assert "read_stud_progress" not in robot.calls
+    assert robot.calls.count("read_stud_progress") == 1  # the pre-run check only
 
 
 def test_runs_with_no_stud_progress_record_none(tmp_path):
@@ -1474,8 +1522,9 @@ def test_runs_with_no_stud_progress_record_none(tmp_path):
     for path in (tmp_path, unlaunched):
         [record] = _history(path)
         assert "last_stud" not in record and "next_stud" not in record
-    assert "read_stud_progress" not in robot.calls + failing.calls
-    assert "reset_stud_progress" not in robot.calls
+        assert "stud_progress_unavailable" not in record
+    assert "reset_stud_progress" not in robot.calls and "read_stud_progress" not in robot.calls
+    assert failing.calls.count("read_stud_progress") == 1  # the check, before the upload
     assert mgr.snapshot().last_stud is None
 
 

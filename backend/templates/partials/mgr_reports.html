@@ -235,6 +235,10 @@
 
   // Why a run's stud number needs a second look, or '' when it doesn't.
   function studNote(r) {
+    if (r.stud_progress_unavailable) {
+      return 'Studs were not tracked on this run: the controller would not zero and read back ' +
+             'system variables 11 and 12 before it started.';
+    }
     if (!hasStudProgress(r)) return '';
     const notes = [];
     if (r.last_stud_partial) {

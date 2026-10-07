@@ -78,23 +78,25 @@ Written via `pub(slot, value)` using `SetSysVarvalue` / `SetSysVarValue`:
   tool actually moved while the arc fired. A dry run never fires the arc, so
   its number is the sensor's own noise floor for comparison against a live
   shot. Diagnostic only.
-- **`s_var_11` (stud done, written by `WeldFlex.lua`)**: the last stud whose
-  whole `weld.lua` sequence finished, as `cycle * 1000 + stud`. The caller
-  writes it after `NewDofile` returns with `WELD_FAULT ~= 1`. `weld.lua` never
-  touches it.
-- **`s_var_12` (`SV_STUD_FIRED`)**: the caller's `WELD_STUD_TAG`, same
-  encoding, written **just before** the weld trigger goes high (live runs
-  only; a dry run returns before it, and Single Shot sets no tag). Before the
-  pulse on purpose: a stop between the two counts a stud that didn't weld,
-  which skips one stud on the resume, rather than missing one that did, which
-  presses a new stud onto it. It also covers a fault after the arc, such as a
-  retract trip, when `s_var_11` never gets written.
+- **`s_var_11` (`SV_STUD_DONE`)**: the last stud whose whole sequence finished,
+  as `cycle * 1000 + stud`, written at the end of `weldOneStud()`.
+- **`s_var_12` (`SV_STUD_FIRED`)**: same encoding, written **just before** the
+  weld trigger goes high (live only; a dry run returns before it). Before the
+  pulse on purpose: a stop between the two skips one stud on the resume rather
+  than pressing a new stud onto a welded one. It also covers a fault after the
+  arc, such as a retract trip, when `s_var_11` never gets written.
 
-`WeldFlex.lua` zeroes both at its first line, and the job manager zeroes them
-before `ProgramRun`. System variables outlive the program, so when a part run
-ends the host reads the two slots once more and records where the run got to
-(`last_stud`, `next_stud` in `run_history.jsonl`). See
-`job_manager.stud_progress()`.
+Both come from the caller's `WELD_STUD_TAG`, and are written only when the
+caller publishes `WELD_STUD_PROGRESS = 1`. `lua_builder` sets that only after
+the job manager has zeroed both variables and read them back as 0 before the
+build. A write to a system variable the controller doesn't have is a Lua
+error: on 2026-10-07 the upload check refused a `WeldFlex.lua` that wrote 11 at
+its top level ("failed to query the database (the data does not exist)"), so
+`WeldFlex.lua` itself never touches a system variable. If the check fails, the
+run goes ahead untracked (`stud_progress_unavailable` in the record). System
+variables outlive the program, so when a tracked run ends the host reads them
+once more (`last_stud`, `next_stud` in `run_history.jsonl`; see
+`job_manager.stud_progress()`).
 
 ### Beacon Lines (Fallback)
 After a fault, the program parks ~3s on a unique `WaitMs` line site (`1`, `4`, `5`, `9`, `10`, `11`) accessible via RPC `GetCurrentLine()`.

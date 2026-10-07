@@ -405,6 +405,8 @@ def _stud_progress_from(record: dict) -> dict | None:
         return None
     if record.get("next_stud") is None:
         return None
+    if record.get("stud_progress_unavailable"):
+        return None
     return {
         "next_stud": int(record["next_stud"]),
         "last_stud": record.get("last_stud"),
@@ -447,6 +449,10 @@ def _on_job_finish(record: dict) -> None:
         progress = _stud_progress_from(record)
         if progress is not None:
             recipe["stud_progress"] = progress
+        elif record.get("stud_progress_unavailable") and record.get("arm_mode") == "live":
+            # A live run the controller couldn't track may have welded past
+            # where the last tracked one stopped, so that number is stale.
+            recipe.pop("stud_progress", None)
         _recipes_save(recipes)
 
 

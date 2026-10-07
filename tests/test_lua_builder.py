@@ -1960,36 +1960,51 @@ def test_a_part_or_run_too_big_to_tag_is_refused():
         build_weldflex_lua([{"x": 1, "y": 1}] * (MAX_TAGGED_STUDS + 1), cycles=1, run_mode=LIVE)
 
 
-def test_weldflex_lua_tags_each_stud_and_publishes_done_after_a_clean_weld():
-    """Slot 11 is written only after weld.lua returns without a fault, with the
-    tag weld.lua was handed; both slots are zeroed before anything moves."""
-    built = build_weldflex_lua([{"x": 1, "y": 2}] * 3, cycles=2, run_mode=LIVE)
+@pytest.mark.parametrize("on", [False, True])
+def test_weldflex_lua_never_touches_a_system_variable(on):
+    """2026-10-07: the controller's upload check executes WeldFlex.lua's top
+    level and refused a version that wrote system variable 11 there ("failed
+    to query the database (the data does not exist)"). The caller only
+    publishes the tag and the switch; weld.lua does the writing."""
+    built = build_weldflex_lua([{"x": 1, "y": 2}] * 3, cycles=2, run_mode=LIVE, stud_progress=on)
     text = built.text
-    assert "SV_STUD_DONE = 11" in text
-    assert "SV_STUD_FIRED = 12" in text
-    zero_done = text.index("setSysVar(SV_STUD_DONE, 0)")
-    zero_fired = text.index("setSysVar(SV_STUD_FIRED, 0)")
-    assert max(zero_done, zero_fired) < text.index("Lin(homewf")
+    assert "SysVar" not in text and "setSysVar" not in text
+    assert f"STUD_PROGRESS = {1 if on else 0}" in text
     tag = text.index("WELD_STUD_TAG = cycleIndex * 1000 + studIndex")
+    switch = text.index("WELD_STUD_PROGRESS = STUD_PROGRESS")
     dofile = text.index('NewDofile("/fruser/weld.lua"')
-    fault_check = text.index("if WELD_FAULT == 1 then", dofile)
-    done = text.index("setSysVar(SV_STUD_DONE, WELD_STUD_TAG)")
-    assert tag < dofile < fault_check < done
-    # The fault branch breaks out before the done write.
-    assert "break" in text[fault_check:done]
+    assert tag < dofile and switch < dofile
 
 
-def test_weld_lua_publishes_fired_just_before_the_arc_and_only_with_a_tag():
+def test_stud_progress_is_off_unless_asked_for():
+    built = build_weldflex_lua([{"x": 1, "y": 2}], cycles=1, run_mode=LIVE)
+    assert "STUD_PROGRESS = 0" in built.text
+
+
+def test_weld_lua_writes_progress_only_when_switched_on():
+    """Fired just before the arc (live only, after the dry-run return), done
+    after the last step of a clean stud, and neither unless the caller
+    published WELD_STUD_PROGRESS = 1 with a tag."""
     text = WELD_PATH.read_text(encoding="utf-8")
+    assert "local SV_STUD_DONE         = 11" in text
     assert "local SV_STUD_FIRED        = 12" in text
+    switch = text.index("local function studProgressOn()")
+    assert 'WELD_STUD_PROGRESS == 1 and type(WELD_STUD_TAG) == "number"' in text[switch:switch + 200]
+
     fire = text.index("local function fireWeld()")
     dry_return = text.index("WELD_ARMED ~= 1", fire)
     publish = text.index("pub(SV_STUD_FIRED, WELD_STUD_TAG)", fire)
     trigger = text.index("writeDO(DO_WELD, 1)", fire)
-    # Live only (after the dry-run return), and before the trigger goes high.
     assert dry_return < publish < trigger
-    guard = text.rindex('type(WELD_STUD_TAG) == "number"', fire, publish)
-    assert guard > dry_return
+    assert text.rindex("if studProgressOn() then", fire, publish) > dry_return
+
+    one = text.index("local function weldOneStud()")
+    done_phase = text.index("pub(SV_PHASE, PH_DONE)", one)
+    done = text.index("pub(SV_STUD_DONE, WELD_STUD_TAG)", one)
+    assert done_phase < done
+    assert text.rindex("if studProgressOn() then", one, done) > done_phase
+    # Every progress write is behind the switch.
+    assert text.count("pub(SV_STUD_DONE") == 1 and text.count("pub(SV_STUD_FIRED") == 1
 
 
 def test_the_progress_slots_agree_with_robot_service():
@@ -1998,14 +2013,9 @@ def test_the_progress_slots_agree_with_robot_service():
     assert robot_service.SV_STUD_DONE == 11
     assert robot_service.SV_STUD_FIRED == 12
     assert {11, 12} <= set(robot_service.JOB_TELEMETRY_SLOTS)
-    template = TEMPLATE_PATH.read_text(encoding="utf-8")
-    assert f"SV_STUD_DONE = {robot_service.SV_STUD_DONE}" in template
-    assert f"SV_STUD_FIRED = {robot_service.SV_STUD_FIRED}" in template
-    # Slot 11 is the caller's alone: weld.lua writing it would fake a done stud.
     weld = WELD_PATH.read_text(encoding="utf-8")
-    slots = [int(n) for n in re.findall(r"local SV_\w+\s*=\s*(\d+)", weld)]
-    assert robot_service.SV_STUD_FIRED in slots
-    assert robot_service.SV_STUD_DONE not in slots
+    slots = {int(n) for n in re.findall(r"local SV_\w+\s*=\s*(\d+)", weld)}
+    assert {robot_service.SV_STUD_DONE, robot_service.SV_STUD_FIRED} <= slots
 
 
 @pytest.mark.parametrize("cycles", [1, 5, 999])

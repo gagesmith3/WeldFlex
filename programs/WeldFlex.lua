@@ -27,27 +27,14 @@ BOUNDARY_MS = 1500 --{{BOUNDARY_MS}}
 -- Home Position (homewf registered point on controller)
 USE_HOME_MOVE = 1
 
--- Stud progress for the host, as system variables (weld.lua's telemetry has
--- 1-10). Slot 11 is the last stud whose whole weld.lua sequence finished,
--- written below; slot 12 is the last stud weld.lua fired the arc on, written by
--- weld.lua from WELD_STUD_TAG. Both hold cycle * 1000 + stud, and 0 until a
--- stud gets that far. System variables outlive the program, so the host reads
--- where a stopped run got to after it stops. lua_builder.STUD_TAG_CYCLE.
-SV_STUD_DONE = 11
-SV_STUD_FIRED = 12
-
--- The manual spells the setter SetSysVarvalue, the SDK SetSysVarValue; take
--- whichever exists. A type check, not a call, so the upload check is safe.
-local function setSysVar(slot, value)
-    if type(SetSysVarvalue) == "function" then
-        SetSysVarvalue(slot, value)
-    elseif type(SetSysVarValue) == "function" then
-        SetSysVarValue(slot, value)
-    end
-end
-
-setSysVar(SV_STUD_DONE, 0)
-setSysVar(SV_STUD_FIRED, 0)
+-- Stud progress for the host: weld.lua writes system variables 11 and 12 from
+-- WELD_STUD_TAG (see weld.lua), and only when this is 1. lua_builder sets it
+-- only once the host has zeroed and read back both variables before the run.
+-- This file itself never touches a system variable: the controller's upload
+-- check executes its top-level code, and on 2026-10-07 it refused a version
+-- that wrote 11 there ("failed to query the database (the data does not
+-- exist)").
+STUD_PROGRESS = 0 --{{STUD_PROGRESS}}
 
 studs = {
 --{{STUDS}}
@@ -101,9 +88,10 @@ for cycleIndex = 1, cycleCount do --{{LOOP_START}}
         WELD_STUD_TYPE = STUD_TYPE
         WELD_SUBSTRATE = SUBSTRATE
         WELD_FEED_PULSE_MS = FEED_PULSE_MS
-        -- Which stud this is, for the progress slots (weld.lua writes slot 12
-        -- from it just before the arc).
+        -- Which stud this is, for weld.lua's stud-progress writes:
+        -- cycle * 1000 + stud (lua_builder.STUD_TAG_CYCLE).
         WELD_STUD_TAG = cycleIndex * 1000 + studIndex
+        WELD_STUD_PROGRESS = STUD_PROGRESS
 
         -- Z and XY never move together: every move below is straight up,
         -- straight down, or level. The first stud of a cycle is reached level
@@ -156,7 +144,6 @@ for cycleIndex = 1, cycleCount do --{{LOOP_START}}
             jobAborted = true
             break
         end
-        setSysVar(SV_STUD_DONE, WELD_STUD_TAG)
     end
     firstStud = 1
 

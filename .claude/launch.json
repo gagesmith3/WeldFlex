@@ -1,0 +1,23 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "weldflex-offline",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "set WELDFLEX_ROBOT_IP=192.0.2.1&& venv\\Scripts\\python.exe backend\\app.py"],
+      "port": 5000
+    },
+    {
+      "name": "stub-robot",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "venv\\Scripts\\python.exe tools\\stub_robot.py"],
+      "port": 8083
+    },
+    {
+      "name": "weldflex-stub",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "set WELDFLEX_ROBOT_IP=127.0.0.1&& venv\\Scripts\\python.exe backend\\app.py"],
+      "port": 5000
+    }
+  ]
+}

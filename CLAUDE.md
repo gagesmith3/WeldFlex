@@ -39,6 +39,26 @@ Layers, strictly one-way:
   the code and corrects the claims that went stale. Run it after landing
   anything that changes what one of them asserts.
 
+## Developing on this PC
+
+- **Run the app without the robot:** Browser pane → `weldflex-offline`
+  (`.claude/launch.json`, robot IP `192.0.2.1`, nothing answers). For the fake
+  controller, start `stub-robot` then `weldflex-stub` (IP `127.0.0.1`). Plain
+  `./venv/Scripts/python.exe backend/app.py` connects to the **real**
+  controller named in `.env`.
+- **Test:** `./venv/Scripts/python.exe -m pytest tests/ -q`. It migrates the
+  tracked `backend/recipes.json` in place, so back it up first or restore it
+  afterwards, and **commit by path, never `git add -A`**.
+- **Hooks** (`.claude/hooks/`, wired in `.claude/settings.json`):
+  `guard_robot.py` asks before any shell command that starts the app against
+  `.env`'s robot or runs Python importing `robot_link`/`robot_service`/
+  `fairino`/…; `check_edit.py` py_compiles edited `.py` and checks
+  `programs/*.lua` block balance and the `pcall` ban.
+- **Never, without the user's OK for that specific run:** a script against the
+  live controller (one crashed it on 2026-07-28); any write on the HMI (see
+  `hmi-ssh`); `git push`. Don't put run-mode logic in Lua.
+- Personal permission tweaks go in `.claude/settings.local.json` (gitignored).
+
 ## What's actually built, and what still isn't
 
 As of the `WeldFlex.lua`/`weld.lua` rewrite (2026-08-03, commits `11aff8c`/

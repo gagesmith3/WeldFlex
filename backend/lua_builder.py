@@ -45,14 +45,15 @@ IO_MONITOR_RUN_PROGRAM_NAME = "io_monitor_run.lua"
 IO_MONITOR_MAX_MS = 300000
 IO_MONITOR_DEFAULT_MS = 45000
 
-# Ceiling on the force-ladder rung a caller may ask for, in lbf. This leaves
-# margin below FT_LinInsertion's documented 100 N maximum. It mirrors
+# Ceiling on the force-ladder rung a caller may ask for, in lbf. Raised from 22
+# to 40 on 2026-11-13 for aluminum; weld.lua caps FT_LinInsertion's own end
+# threshold under its documented 100 N separately. It mirrors
 # PRESS_TARGET_MAX_LBF in programs/weld.lua, which clamps the same value on the
 # controller side — this copy exists so a bad number is refused before it is
 # uploaded, with a message, instead of silently pressing at the 20 lbf default.
 # Nothing enforces the two copies agree across the language boundary, so
 # tests/test_lua_builder.py asserts it.
-PRESS_LBF_MAX = 22.0
+PRESS_LBF_MAX = 40.0
 
 GATE_MODES = ("none", "pause", "di")
 ARM_MODES = ("live", "dry")

@@ -854,8 +854,22 @@ def test_the_press_force_ceiling_agrees_across_the_language_boundary():
     m = re.search(r"^local PRESS_TARGET_MAX_LBF\s*=\s*([\d.]+)", weld, re.M)
     assert m, "weld.lua no longer declares PRESS_TARGET_MAX_LBF"
     assert float(m.group(1)) == PRESS_LBF_MAX
-    assert PRESS_LBF_MAX * 4.448222 < 100.0, \
-        "FT_LinInsertion accepts at most a 100 N force threshold"
+
+
+def test_the_insertion_threshold_stays_under_its_100_n_limit():
+    """FT_LinInsertion's threshold is documented 0~100 N. A press target above
+    that (raised to 40 lbf for aluminum) must cap the insertion's threshold, not
+    pass it through, while FT_Control still presses at the full target.
+    """
+    weld = WELD_PATH.read_text(encoding="utf-8")
+    m = re.search(r"^local PRESS_INSERT_THRESHOLD_MAX_N\s*=\s*([\d.]+)", weld, re.M)
+    assert m, "weld.lua no longer caps the insertion threshold"
+    assert float(m.group(1)) < 100.0
+    code = strip_lua_comments(weld)
+    assert re.search(r"if PRESS_INSERT_CAPPED then\s+PRESS_INSERT_THRESHOLD_N = PRESS_INSERT_THRESHOLD_MAX_N",
+                     code), "the cap is declared but never applied"
+    m = re.search(r"^local FORCE_CEILING_LBF\s*=\s*([\d.]+)", weld, re.M)
+    assert float(m.group(1)) > PRESS_LBF_MAX
 
 
 def test_the_press_guard_declines_below_its_own_threshold():

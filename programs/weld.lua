@@ -27,8 +27,12 @@ local FEED_PULSE_MS = (type(WELD_FEED_PULSE_MS) == "number"
 local N_PER_LBF = 4.448222
 local CONTACT_FORCE_N = 10.0
 
--- FT_LinInsertion accepts at most 100 N; leave conversion margin below it.
-local PRESS_TARGET_MAX_LBF = 22.0
+-- The press target's ceiling. Raised from 22 to 40 lbf on 2026-11-13 for
+-- aluminum studs, to be climbed in small steps on dry shots. 22 was
+-- FT_LinInsertion's 100 N threshold limit; that limit now applies only to the
+-- insertion's end threshold (PRESS_INSERT_THRESHOLD_MAX_N below), not to the
+-- force FT_Control presses at. The F/T sensor is rated 200 N (~45 lbf).
+local PRESS_TARGET_MAX_LBF = 40.0
 local PRESS_TARGET_LBF     = 20.0
 if type(WELD_PRESS_LBF) == "number"
    and WELD_PRESS_LBF > 0
@@ -47,7 +51,19 @@ if PRESS_INSERT_THRESHOLD_LBF <= 0.0 then
 end
 local PRESS_INSERT_THRESHOLD_N = PRESS_INSERT_THRESHOLD_LBF * N_PER_LBF
 
-local FORCE_CEILING_LBF = 25.0
+-- FT_LinInsertion's threshold is documented as 0~100 N (Lua manual table
+-- 3-223). Above ~21.4 lbf the insertion therefore ends at this cap, and the
+-- rest of the climb to PRESS_TARGET_N is FT_Control alone during the
+-- PRESS_HOLD_MS hold. Untested on hardware: whether the hold is long enough to
+-- reach a target above the cap at the current gain.
+local PRESS_INSERT_THRESHOLD_MAX_N = 95.0
+local PRESS_INSERT_CAPPED = PRESS_INSERT_THRESHOLD_N > PRESS_INSERT_THRESHOLD_MAX_N
+if PRESS_INSERT_CAPPED then
+    PRESS_INSERT_THRESHOLD_N = PRESS_INSERT_THRESHOLD_MAX_N
+end
+
+-- Only used when USE_FT_GUARD = 1; kept above PRESS_TARGET_MAX_LBF.
+local FORCE_CEILING_LBF = 45.0
 local FORCE_CEILING_N   = FORCE_CEILING_LBF * N_PER_LBF
 
 local USE_FT_GUARD  = 0
@@ -648,6 +664,10 @@ local function pressToForce()
         PRESS_TARGET_LBF, PRESS_TARGET_N,
         pressNeedsGuard and "raised" or "not needed at this force"))
     print(string.format("[WELD] Press gain %.6f; FT_Control alone moves the gun.", FTC_GAIN_P))
+    if PRESS_INSERT_CAPPED then
+        print(string.format("[WELD] Insertion ends at its %.0f N cap; FT_Control climbs the rest during the %d ms hold.",
+            PRESS_INSERT_THRESHOLD_MAX_N, holdMs))
+    end
 
     ftGuardPress(1)
 
